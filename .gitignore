@@ -1,0 +1,22 @@
+# Ambientes virtuais
+.venv/
+
+# Bytecode e caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Empacotamento
+*.egg-info/
+dist/
+build/
+
+# Cobertura
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Dados baixados/cache
+data/cache/
