@@ -1,5 +1,26 @@
 """Elementos orbitais clássicos ↔ estado cartesiano ECI, e a equação de Kepler.
 
+Por que converter entre as duas descrições
+------------------------------------------
+Uma mesma órbita pode ser descrita por 6 números de duas formas (Sem4 §1, Figura 1b):
+
+- coordenadas cartesianas (r, v): é o que a física e a geometria "consomem". A equação de
+  movimento r̈ = −µ r/r³ (Sem4 eq. 1), a rotação para o referencial da Terra, a latitude e a
+  longitude do subponto, a elevação vista de uma estação e o desenho na GUI precisam saber onde
+  o satélite está no espaço;
+- elementos orbitais (a, e, i, Ω, ω, ψ): é como a órbita é pensada e projetada. Cada número
+  tem sentido geométrico direto (tamanho, forma, inclinação do plano, onde o plano cruza o
+  equador, onde fica o perigeu, onde está o satélite), e os requisitos de missão (altitude,
+  inclinação heliossíncrona, faseamento da constelação) são dados nessa forma.
+
+A conversão também é a chave da propagação. Em coordenadas tudo oscila a cada volta; em
+elementos, sob gravidade central, cinco números ficam constantes e só ψ avança linearmente,
+ψ(t) = ψ0 + n·t. Propagar a órbita kepleriana é então: elementos → avançar ψ → coordenadas
+(S1-05). Perturbações fracas, como J2, aparecem nos elementos como derivas lentas e fáceis de
+enxergar (Ω̇, ω̇ — Sem4 §3), enquanto em coordenadas ficariam escondidas na oscilação. No
+sentido inverso, coordenadas → elementos permite interpretar um estado vindo de integração
+numérica ou de outra fonte (ex.: "qual é a inclinação e a altitude desta órbita?").
+
 ECI (Earth-Centered Inertial, "centrado na Terra, inercial") é o referencial cartesiano em que
 posição r e velocidade v são expressas neste módulo:
 
