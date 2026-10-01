@@ -1,5 +1,20 @@
 """Elementos orbitais clássicos ↔ estado cartesiano ECI, e a equação de Kepler.
 
+ECI (Earth-Centered Inertial, "centrado na Terra, inercial") é o referencial cartesiano em que
+posição r e velocidade v são expressas neste módulo:
+
+- origem no centro da Terra;
+- eixo z ao longo do eixo de rotação da Terra, apontando para o polo norte;
+- eixo x no plano do equador, apontando para o equinócio vernal (a direção do Sol no início da
+  primavera do hemisfério norte, um ponto fixo entre as estrelas);
+- eixo y completa o triedro destro (y = z × x).
+
+"Inercial" quer dizer que os eixos não giram com a Terra: um satélite sob gravidade central
+descreve neste referencial uma elipse fixa, enquanto a Terra gira por baixo dela. O referencial
+que gira junto com a Terra (ECEF) é obtido do ECI por uma rotação em torno de z pelo tempo
+sideral θG (semana 2). Simplificação do projeto (ADR 0001): o ECI aqui ignora precessão e
+nutação do eixo terrestre.
+
 Notação dos documentos (ADR 0001): ``psi`` = anomalia média (o "M" da literatura), ``ell`` =
 momento angular específico r × v (o "h" da literatura), ``nu`` = anomalia verdadeira,
 ``argp`` = ω, ``raan`` = Ω, ``u`` = argp + nu (argumento de latitude). Unidades SI, ângulos em
@@ -210,35 +225,59 @@ def state_to_elements(r: ArrayLike, v: ArrayLike, mu: float = MU) -> KeplerianEl
     """
     r = np.asarray(r, dtype=float)
     v = np.asarray(v, dtype=float)
+    # Um único estado (3,) é promovido a (1, 3) para que todo o cálculo abaixo seja o mesmo
+    # código vetorizado; ``single`` lembra de devolver escalares no final.
     single = r.ndim == 1
     r = np.atleast_2d(r)
     v = np.atleast_2d(v)
 
+    # Grandezas linha a linha (axis=-1): |r|, v² e o produto escalar r·v de cada estado.
     r_norm = np.linalg.norm(r, axis=-1)
     v2 = np.sum(v * v, axis=-1)
     rv = np.sum(r * v, axis=-1)
+    # ℓ = r × v é perpendicular ao plano orbital (Sem4 §1): sua direção ℓ̂ define o plano e o
+    # sentido do movimento; é o eixo em torno do qual medimos Ω→ω→ν mais abaixo.
     ell = np.cross(r, v)
     ell_hat = _unit(ell)
 
+    # Energia específica ε = v²/2 − µ/r, constante sob gravidade central (Sem3 §1).
     energy = 0.5 * v2 - mu / r_norm
+    # Vetor excentricidade (vetor de Laplace-Runge-Lenz / µ): aponta do centro da Terra para o
+    # perigeu e seu módulo é e. [:, None] transforma os escalares (N,) em (N, 1) para que
+    # multipliquem cada vetor (N, 3) linha a linha.
     e_vec = ((v2 - mu / r_norm)[:, None] * r - rv[:, None] * v) / mu
     e = np.linalg.norm(e_vec, axis=-1)
+    # ε ≥ 0 ou e ≥ 1 significam trajetória parabólica/hiperbólica (escape), fora do escopo.
     if np.any(energy >= 0.0) or np.any(e >= 1.0):
         raise ValueError("somente órbitas elípticas são suportadas: exige 0 <= e < 1")
+    # Da relação ε = −µ/(2a), que só depende de a (Sem3 §3.1).
     a = -mu / (2.0 * energy)
+    # i é o ângulo entre ℓ e o eixo z. Mesma coisa que arccos(ℓz/|ℓ|), mas o arccos perde
+    # precisão perto de 0 e π (daria i ≈ 1e-8 rad numa órbita equatorial exata).
     inc = np.arctan2(np.hypot(ell[:, 0], ell[:, 1]), ell[:, 2])
 
+    # Máscaras booleanas (N,) dos casos degenerados (Sem4 §3.3), em que ω ou Ω não existem.
     circular = e < ECC_TOL
     equatorial = (inc < INC_TOL) | (inc > np.pi - INC_TOL)
 
+    # Direção de referência no plano orbital a partir da qual ω é medido: a linha dos nós
+    # n = ẑ × ℓ = (−ℓy, ℓx, 0), que aponta para o nó ascendente. Em órbita equatorial n = 0 (o
+    # plano não cruza o equador), então usamos o eixo x por convenção, o que faz Ω = 0.
     x_hat = np.broadcast_to(np.array([1.0, 0.0, 0.0]), r.shape)
-    node = np.stack([-ell[:, 1], ell[:, 0], np.zeros_like(r_norm)], axis=-1)  # ẑ × ℓ
+    node = np.stack([-ell[:, 1], ell[:, 0], np.zeros_like(r_norm)], axis=-1)
     node_hat = np.where(equatorial[:, None], x_hat, _unit(node))
+    # Direção do perigeu, a partir da qual ν é medido. Em órbita circular não há perigeu
+    # (e_vec ≈ 0, direção aleatória); tomamos o próprio nó, o que faz ω = 0 e ν = u.
     peri_hat = np.where(circular[:, None], node_hat, _unit(e_vec))
 
+    # Ω = azimute do nó no plano equatorial, medido a partir do eixo x.
     raan = np.mod(np.arctan2(node_hat[:, 1], node_hat[:, 0]), _TWO_PI)
+    # ω e ν são ângulos com sinal medidos em torno de ℓ̂ (sentido do movimento): o seno vem de
+    # ℓ̂·(a × b) e o cosseno de a·b, e arctan2 resolve o quadrante. Isso equivale às regras
+    # "ω < π se e_z > 0" e "ν < π se r·v > 0", sem casos especiais.
     argp = _signed_angle(node_hat, peri_hat, ell_hat)
     nu = _signed_angle(peri_hat, _unit(r), ell_hat)
+    # ν → ψ pela equação de Kepler (via anomalia excêntrica), reduzido a [0, 2π).
     psi = np.mod(np.asarray(true_to_mean(nu, e)), _TWO_PI)
 
     fields = (a, e, inc, raan, argp, psi)
