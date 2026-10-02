@@ -108,3 +108,15 @@ def test_gmst_matches_skyfield() -> None:
     theta_sky = ts.ut1_jd(jd).gmst * (TWO_PI / 24.0)  # horas → rad
     diff_s = np.abs(_wrap(gmst(jd) - theta_sky)) * 86400.0 / TWO_PI  # segundos de tempo
     assert np.max(diff_s) < 0.1
+
+
+def test_gmst_rate() -> None:
+    # Nota (c) do módulo / prompt S1-06: taxa do GMST ≈ 7,2921158553e-5 rad/s
+    from satsim.astrotime import gmst_rate
+
+    jd = 2461313.0
+    assert gmst_rate(jd) == pytest.approx(7.2921158553e-5, rel=1e-10)
+    # concorda com a diferença finita da própria fórmula (1 dia, com wrap)
+    finite = ((gmst(jd + 0.5) - gmst(jd - 0.5)) % TWO_PI + TWO_PI) / 86400.0
+    assert gmst_rate(jd) == pytest.approx(finite, rel=1e-9)
+    assert gmst_rate(np.array([jd, jd + 1.0])).shape == (2,)

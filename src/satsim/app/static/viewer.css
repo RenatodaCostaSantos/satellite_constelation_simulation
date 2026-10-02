@@ -1,0 +1,204 @@
+/* Viewer do satsim — tema escuro (R8). */
+:root {
+  --bg: #05070d;
+  --panel: #0b111c;
+  --panel-border: #1a2436;
+  --ink: #e6edf7;
+  --muted: #8a97ad;
+  --accent: #38bdf8;
+  --station: #ff4d8d;
+  --gap: 10px;
+  font-family: "Inter", "Segoe UI", "DejaVu Sans", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* --- barra superior ------------------------------------------------------------------------ */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, #0c1424, #070b14);
+  border-bottom: 1px solid var(--panel-border);
+}
+.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.5px; color: var(--accent); }
+.brand span { font-weight: 400; font-size: 13px; color: var(--muted); margin-left: 6px; }
+.clock {
+  font-family: "JetBrains Mono", "DejaVu Sans Mono", Menlo, monospace;
+  font-size: 18px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: #0f1a2c;
+  border: 1px solid var(--panel-border);
+  font-variant-numeric: tabular-nums;
+}
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.speeds { display: flex; gap: 4px; }
+.btn {
+  background: #111b2d;
+  color: var(--ink);
+  border: 1px solid #22314a;
+  border-radius: 6px;
+  padding: 6px 11px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn:hover { background: #17263f; border-color: #33507a; }
+.btn.active { background: var(--accent); border-color: var(--accent); color: #04121c; font-weight: 700; }
+.btn-play { min-width: 44px; font-size: 14px; }
+
+/* --- layout principal ---------------------------------------------------------------------- */
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--gap);
+  padding: var(--gap);
+  min-height: 0;
+}
+.side { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; }
+.panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.panel-title {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 2;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+}
+.globe-panel { min-height: 420px; background: #000; }
+#globe { position: absolute; inset: 0; }
+.hint {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(5, 8, 14, 0.6);
+  padding: 4px 10px;
+  border-radius: 12px;
+  pointer-events: none;
+}
+.map-panel { padding: 28px 10px 10px; }
+.map-wrap { position: relative; width: 100%; aspect-ratio: 2 / 1; }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 4px; }
+.legend-panel { padding: 30px 14px 12px; flex: 1; min-height: 140px; overflow: auto; }
+
+/* --- legenda ------------------------------------------------------------------------------- */
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.legend li {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.legend input { accent-color: var(--accent); cursor: pointer; }
+.swatch { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
+.legend .name { font-weight: 600; }
+.legend .readout {
+  grid-column: 3;
+  font-family: "JetBrains Mono", "DejaVu Sans Mono", Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.keys { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.keys i { display: inline-block; vertical-align: middle; margin-right: 4px; }
+.k-solid { width: 22px; border-top: 2px solid var(--ink); }
+.k-dash { width: 22px; border-top: 2px dashed var(--ink); }
+.k-station { width: 10px; height: 10px; border-radius: 50%; background: var(--station); box-shadow: 0 0 8px var(--station); }
+.frame-note { margin-top: 8px; font-size: 11px; color: #5d6a80; }
+
+/* --- marcadores HTML no globo -------------------------------------------------------------- */
+.sat-marker { pointer-events: none; transition: opacity 0.25s; transform: translate(-50%, -50%); }
+.sat-marker .dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px 2px currentColor, 0 0 18px 6px currentColor;
+}
+.sat-marker .label {
+  position: absolute;
+  left: 14px;
+  top: -4px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: currentColor;
+  text-shadow: 0 0 4px #000, 0 0 2px #000;
+}
+.station-marker { pointer-events: none; transition: opacity 0.25s; color: var(--station); }
+.station-marker .label {
+  position: absolute;
+  left: 10px;
+  top: -18px;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--station);
+  text-shadow: 0 0 4px #000;
+}
+
+/* --- linha do tempo ------------------------------------------------------------------------ */
+.timeline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--panel-border);
+  background: #070b14;
+}
+.timeline input { flex: 1; accent-color: var(--accent); cursor: pointer; }
+.tl-label {
+  font-family: "JetBrains Mono", "DejaVu Sans Mono", Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.error {
+  position: fixed;
+  inset: auto 16px 16px 16px;
+  padding: 12px 16px;
+  background: #3b0d16;
+  border: 1px solid #a3243b;
+  border-radius: 8px;
+  color: #ffd7de;
+}
+
+/* --- tela estreita: painéis empilhados (R8) ------------------------------------------------ */
+@media (max-width: 900px) {
+  /* painéis com altura natural; a página rola em vez de espremer o mapa */
+  .layout { grid-template-columns: 1fr; flex: none; }
+  .side .panel { flex: none; }
+  .globe-panel { min-height: 360px; height: 60vh; }
+  .controls { margin-left: 0; }
+}

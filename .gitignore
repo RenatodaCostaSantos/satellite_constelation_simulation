@@ -20,3 +20,6 @@ htmlcov/
 
 # Dados baixados/cache
 data/cache/
+
+# Demo visual gerada por scripts/build_demo.py
+demo/

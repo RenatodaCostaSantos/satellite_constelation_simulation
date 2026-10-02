@@ -97,3 +97,21 @@ def gmst(jd_ut1: ArrayLike) -> FloatOrArray:
         - 6.2e-6 * t_cent**3
     )
     return _as_scalar_if_0d(np.mod(theta_s, SECONDS_PER_DAY) * (2.0 * math.pi / SECONDS_PER_DAY))
+
+
+def gmst_rate(jd_ut1: ArrayLike) -> FloatOrArray:
+    """Taxa de variação do GMST dθG/dt [rad/s], derivada analítica da fórmula IAU-82.
+
+    dθ/dT [s/século] = 876600·3600 + 8640184,812866 + 2·0,093104·T − 3·6,2e-6·T²; dividindo por
+    36525·86400 s/século e convertendo s → rad (2π/86400). Vale ≈ 7,2921158553e-5 rad/s (ver nota
+    (c) do módulo). Útil para extrapolar θG linearmente numa janela curta sem depender da
+    resolução do float do JD (≈ 40 µs).
+    """
+    t_cent = (np.asarray(jd_ut1, dtype=float) - JD_J2000) / DAYS_PER_JULIAN_CENTURY
+    dtheta_dt_cent = (
+        876600.0 * 3600.0 + 8640184.812866 + 2.0 * 0.093104 * t_cent - 3.0 * 6.2e-6 * t_cent**2
+    )
+    seconds_per_century = DAYS_PER_JULIAN_CENTURY * SECONDS_PER_DAY
+    return _as_scalar_if_0d(
+        dtheta_dt_cent / seconds_per_century * (2.0 * math.pi / SECONDS_PER_DAY)
+    )
