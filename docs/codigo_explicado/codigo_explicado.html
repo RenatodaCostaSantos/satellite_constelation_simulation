@@ -1,0 +1,159 @@
+<!doctype html>
+<!--
+  Fonte do PDF docs/codigo_explicado/codigo_explicado.pdf.
+  Para acrescentar uma explicação: adicione uma nova <section class="script"> antes de </main>
+  e um item no sumário. Para regenerar o PDF (a partir da raiz do repositório):
+    google-chrome --headless --no-pdf-header-footer \
+      --print-to-pdf=docs/codigo_explicado/codigo_explicado.pdf \
+      docs/codigo_explicado/codigo_explicado.html
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>satsim — código explicado</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm 20mm 18mm; }
+  :root { --ink: #1d2330; --muted: #5b6475; --accent: #0b6e8a; --rule: #d5dae3; --code-bg: #f4f6f9; }
+  body { font-family: "DejaVu Serif", Georgia, serif; font-size: 10.5pt; line-height: 1.5;
+         color: var(--ink); background: #fff; margin: 0; }
+  h1, h2, h3 { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--ink);
+               line-height: 1.25; }
+  h2, h3 { break-after: avoid; page-break-after: avoid; }
+  h1 { font-size: 22pt; margin: 0 0 4pt; }
+  h2 { font-size: 15pt; margin: 22pt 0 6pt; padding-bottom: 3pt; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 11.5pt; margin: 14pt 0 4pt; color: var(--accent); }
+  p { margin: 0 0 7pt; text-align: justify; hyphens: auto; }
+  .subtitle { color: var(--muted); font-size: 11pt; margin-bottom: 14pt; }
+  .meta { font-family: "DejaVu Sans", sans-serif; font-size: 9pt; color: var(--muted); }
+  code, pre { font-family: "DejaVu Sans Mono", Menlo, monospace; font-size: 8.8pt; }
+  code { background: var(--code-bg); padding: 0 2px; border-radius: 2px; }
+  pre { background: var(--code-bg); border-left: 3px solid var(--accent); padding: 7pt 9pt;
+        white-space: pre-wrap; margin: 6pt 0 10pt; page-break-inside: avoid; line-height: 1.35; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 6pt 0 10pt; font-size: 9.5pt;
+          page-break-inside: avoid; }
+  th, td { border: 1px solid var(--rule); padding: 3pt 6pt; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-family: "DejaVu Sans", sans-serif; }
+  ul { margin: 0 0 7pt 16pt; padding: 0; }
+  li { margin-bottom: 3pt; }
+  .intro { border: 1px solid var(--rule); background: #fafbfc; padding: 10pt 12pt; margin: 8pt 0 14pt; }
+  .toc ol { margin: 4pt 0 0 18pt; padding: 0; }
+  .file { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; color: var(--muted); margin-top: -2pt; }
+  section.script + section.script { page-break-before: always; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>satsim — código explicado</h1>
+  <div class="subtitle">Simulador de posicionamento de satélites</div>
+  <div class="meta">Documento vivo · iniciado em 02/10/2026 · branch <code>semana-1</code></div>
+</header>
+
+<div class="intro">
+  <p><strong>Sobre este documento.</strong> Este arquivo contém a explicação detalhada de alguns
+  scripts do projeto satsim. Ele complementa as docstrings e os comentários do código: lá fica o
+  <em>o quê</em> de cada função; aqui fica o <em>porquê</em> das decisões, os conceitos de Python e de
+  mecânica orbital envolvidos e como cada peça se encaixa no restante do simulador. As
+  explicações são acrescentadas à medida que os scripts são revisados, uma seção por script.</p>
+  <p style="margin:0">Convenções gerais (unidades SI, ângulos em radianos, tempo em UTC, referencial
+  ECI) estão no ADR <code>docs/adr/0001-arquitetura.md</code>.</p>
+</div>
+
+<nav class="toc">
+  <strong>Scripts explicados</strong>
+  <ol>
+    <li><code>src/satsim/propagators/base.py</code> — interface base dos propagadores</li>
+  </ol>
+</nav>
+
+<!-- ============================================================================== -->
+<section class="script" id="base-py">
+<h2>1. base.py — a interface dos propagadores</h2>
+<div class="file">src/satsim/propagators/base.py · card S1-05</div>
+
+<p>O <code>base.py</code> não calcula nada: ele define o <strong>contrato</strong> que todo
+propagador do projeto precisa cumprir. O conteúdo é curto:</p>
+
+<pre><code>class Propagator(ABC):
+    """Propagador de órbita: estado ECI em função do tempo desde a época."""
+
+    @property
+    @abstractmethod
+    def epoch(self) -&gt; datetime:
+        """Época do propagador (UTC, tz-aware): o instante t = 0."""
+
+    @abstractmethod
+    def propagate(self, t: ArrayLike) -&gt; tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """t: segundos desde ``epoch``, shape () ou (N,).
+
+        Retorna (r, v) em ECI, SI [m, m/s], sempre com shape (N, 3).
+        """
+
+
+def as_time_array(t: ArrayLike) -&gt; NDArray[np.float64]:
+    arr = np.atleast_1d(np.asarray(t, dtype=float))
+    if arr.ndim != 1:
+        raise ValueError(f"t deve ser escalar ou 1D, recebido shape {arr.shape}")
+    return arr</code></pre>
+
+<h3>A classe abstrata Propagator(ABC)</h3>
+<p><code>ABC</code> (<em>Abstract Base Class</em>, do módulo <code>abc</code> da biblioteca padrão) é
+uma classe que <strong>não pode ser instanciada diretamente</strong>. Ela funciona como um molde:
+declara <em>quais</em> métodos as subclasses devem ter, sem dizer <em>como</em> eles funcionam.</p>
+<p>No satsim, ela materializa a regra central do ADR: <strong>todo propagador implementa
+<code>propagate(t) → (r, v)</code></strong>. Ao longo do projeto haverá vários propagadores:</p>
+
+<table>
+  <tr><th>Propagador</th><th>Semana</th><th>Como calcula</th></tr>
+  <tr><td><code>KeplerPropagator</code></td><td>1</td><td>dois corpos, analítico</td></tr>
+  <tr><td>J2 médio</td><td>2</td><td>elementos com deriva secular</td></tr>
+  <tr><td>Cowell</td><td>3</td><td>integração numérica com J2 e arrasto</td></tr>
+  <tr><td>SGP4</td><td>3</td><td>a partir de TLE (ISS real)</td></tr>
+</table>
+
+<p>O resto do código (conversão ECI → ECEF, visibilidade, constelação, exportação para a GUI)
+depende só de <code>Propagator</code>, nunca de um propagador específico. Isso garante duas
+coisas:</p>
+<ul>
+  <li><strong>Troca sem reescrita:</strong> <code>Satellite(propagator=KeplerPropagator(...))</code> vira
+  <code>Satellite(propagator=CowellPropagator(...))</code> e nada mais muda.</li>
+  <li><strong>Erro cedo:</strong> se alguém criar um propagador e esquecer <code>propagate</code> ou
+  <code>epoch</code>, o Python recusa a criação do objeto, em vez de falhar no meio de uma simulação:</li>
+</ul>
+<pre><code>TypeError: Can't instantiate abstract class MeuProp without an implementation
+for abstract method 'propagate'</code></pre>
+<p>Por isso os métodos na ABC só têm docstring, sem implementação: a docstring é a
+<strong>especificação do contrato</strong> (unidades, referencial e shapes).</p>
+
+<h3>O decorator @abstractmethod</h3>
+<p>Marca o método como <strong>obrigatório</strong>. No momento de instanciar, a ABC verifica se a
+subclasse sobrescreveu todos os métodos marcados. Sem esse decorator, a ABC não impediria nada:
+uma subclasse incompleta funcionaria até a primeira chamada e só então falharia.</p>
+
+<h3>O decorator @property</h3>
+<p>Transforma um método em um <strong>atributo de leitura</strong>: escreve-se
+<code>prop.epoch</code>, sem parênteses, em vez de <code>prop.epoch()</code>. Ele foi usado porque a
+época é um <em>dado</em> do propagador, não uma ação. Além disso, impede a atribuição acidental
+(<code>prop.epoch = outra_data</code> gera erro), o que protege a consistência: todos os
+<code>t</code> são medidos a partir dessa época, e mudá-la depois invalidaria os resultados.</p>
+
+<h3>Os dois decorators juntos em epoch</h3>
+<p>Significam que toda subclasse é obrigada a fornecer <code>epoch</code> como <em>property</em> de
+leitura. A ordem importa: <code>@property</code> por fora (em cima) e <code>@abstractmethod</code>
+por dentro. A ordem inversa não funciona corretamente no Python moderno.
+<code>propagate</code>, por sua vez, leva só <code>@abstractmethod</code>, porque é uma ação que
+recebe o argumento <code>t</code>.</p>
+
+<h3>A função as_time_array</h3>
+<p>Não é decorator nem faz parte da ABC: é um <em>helper</em> que todo propagador chama no início de
+<code>propagate</code>. Ele normaliza qualquer entrada de tempo (<code>5.0</code>,
+<code>[1, 2]</code>, <code>np.array(...)</code>) para um array 1D de floats com shape
+<code>(N,)</code>, rejeitando entradas com mais de uma dimensão. Assim, cada propagador não precisa
+repetir esse tratamento, e o contrato “sempre devolve <code>(N, 3)</code>” fica fácil de cumprir.</p>
+</section>
+
+</main>
+</body>
+</html>
