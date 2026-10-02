@@ -73,7 +73,11 @@ class DesignOrbit:
     grid_deg: float = 3.956
     grid_km: float = 440.4  # no equador
     rev_per_day: float = 15.167
-    h_inst_min_km: float = 502.5  # Sem4 §1: altitude instantânea
+    # Sem4 §1: altitude instantânea, como publicada. Diferença de arredondamento conhecida: pelos
+    # elementos, a(1 ∓ e) − R⊕ = 502,554 e 517,350 km; o PDF traz 502,5 e 517,4 (diferença
+    # 14,9 km vs. excursão 2ae = 14,8 km). Mantido como no PDF; ver o xfail
+    # test_design_orbit_instantaneous_altitude_sem4_s1 em tests/test_golden_consistency.py.
+    h_inst_min_km: float = 502.5
     h_inst_max_km: float = 517.4
     h_excursion_km: float = 14.8
     lat_max_deg: float = 82.56  # 180° − i
