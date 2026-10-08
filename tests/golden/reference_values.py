@@ -259,3 +259,42 @@ class GridCheckSem4:
 
 
 GRID_CHECK = GridCheckSem4()
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.1 do prompt da Semana 2: taxas seculares de J2 (Sem4 eqs. 23–25, 34) com
+#     mais casas que a A.5 acima, recalculadas a partir dos elementos de cada caso.
+#     ISS: a = R⊕ + 420 km. A inclinação crítica arccos(1/√5) vale para qualquer a e não entra
+#     aqui (é fórmula, não número tabelado).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class J2SecularCase:
+    orbit: str
+    a_km: float
+    e: float
+    i_deg: float
+    raan_dot_deg_day: float
+    argp_dot_deg_day: float
+
+
+J2_SECULAR_CASES_S2: tuple[J2SecularCase, ...] = (
+    J2SecularCase("ISS", 6378.137 + 420.0, 0.0, 51.64, -4.947, 3.690),
+    J2SecularCase("SSO de projeto", 6888.089, 1.074e-3, 97.4396, 0.9856, -3.487),
+    J2SecularCase("Polar exata", 6888.089, 0.0, 90.0, 0.0, -3.806),
+    J2SecularCase("Molniya", 26561.75, 0.74, 63.4349, -0.148, 0.0),
+)
+
+
+@dataclass(frozen=True)
+class J2SecularMiscS2:
+    # SSO de projeto (A.1): ψ̇/n − 1 com ω̇ de J2 isolado. Sem4 §3.5 traz "+0,0065%" por erro de
+    # digitação; o valor correto é −0,066% (≈ 3,8 s de Tnod − Tkep; ω̇ dá os outros ≈ 3,6 s).
+    sso_psi_dot_over_n_minus_1: float = -6.6e-4
+    # ISS (A.1): período de precessão do plano 360°/|Ω̇| e período nodal
+    iss_plane_precession_days: float = 72.8
+    iss_tnod_s: float = 5573.9
+    iss_rev_per_day: float = 15.50
+
+
+J2_SECULAR_MISC_S2 = J2SecularMiscS2()

@@ -165,7 +165,9 @@ def elements_to_state(
     sequência 3-1-3 Rz(Ω)·Rx(i)·Rz(ω), aplicada pelas colunas P e Q da matriz.
 
     Args:
-        el: elementos; ``psi`` (e os demais campos) podem ser arrays de shape (N,).
+        el: elementos; qualquer campo pode ser escalar ou array de shape (N,) (por exemplo
+            ``raan``, ``argp`` e ``psi`` variando no tempo, como no ``MeanJ2Propagator``),
+            combinados por broadcasting.
         mu: parâmetro gravitacional [m³/s²].
 
     Returns:

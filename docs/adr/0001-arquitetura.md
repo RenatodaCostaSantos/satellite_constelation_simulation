@@ -38,10 +38,14 @@ satsim/                          (raiz do repositório)
 │  └─ referencias/               (PDFs teóricos Sem3 e Sem4)
 ├─ src/satsim/
 │  ├─ __init__.py · constants.py · astrotime.py · elements.py        (semana 1)
+│  ├─ secular.py                 (taxas seculares de J2, período nodal) (semana 2, S2-01)
+│  ├─ forces/ __init__.py · j2.py (acelerações para o Cowell)         (semana 2, S2-02)
 │  ├─ propagators/
 │  │  ├─ __init__.py · base.py (ABC Propagator) · kepler.py          (semana 1)
 │  │  └─ mean_j2.py · cowell.py · sgp4_ref.py                        (semanas 2–3)
 │  ├─ frames.py · geodesy.py · sun.py · observer.py · visibility.py  (semanas 2–4)
+│  ├─ groundtrack.py             (subponto, segmentos, nós ascendentes) (semana 2, S2-04)
+│  ├─ analysis.py                (elementos osculadores e médios, ajustes) (semana 2, S2-02)
 │  ├─ orbit_design.py · satellite.py · constellation.py · coverage.py (semanas 2–5)
 │  └─ app/                       (GUI)
 │     ├─ __init__.py · scene_export.py                               (semana 1, S1-08)
@@ -51,6 +55,8 @@ satsim/                          (raiz do repositório)
 └─ tests/
    ├─ test_smoke.py · test_constants.py · test_elements.py
    ├─ test_kepler_propagator.py · test_astrotime.py · test_scene_export.py
+   ├─ test_secular.py · test_mean_j2.py · test_j2_force.py · test_cowell.py   (semana 2)
+   ├─ test_frames_geodesy.py · test_groundtrack.py · test_orbit_design_sso.py (semana 2)
    └─ golden/reference_values.py · test_golden_consistency.py
 ```
 
