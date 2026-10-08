@@ -1,0 +1,312 @@
+<!doctype html>
+<!--
+  Fonte do PDF docs/codigo_explicado/codigo_explicado.pdf.
+  Para acrescentar uma explicação: adicione uma nova <section class="script"> antes de </main>
+  e um item no sumário. Para regenerar o PDF (a partir da raiz do repositório):
+    google-chrome --headless --no-pdf-header-footer \
+      --print-to-pdf=docs/codigo_explicado/codigo_explicado.pdf \
+      docs/codigo_explicado/codigo_explicado.html
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>satsim — código explicado</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm 20mm 18mm; }
+  :root { --ink: #1d2330; --muted: #5b6475; --accent: #0b6e8a; --rule: #d5dae3; --code-bg: #f4f6f9; }
+  body { font-family: "DejaVu Serif", Georgia, serif; font-size: 10.5pt; line-height: 1.5;
+         color: var(--ink); background: #fff; margin: 0; }
+  h1, h2, h3 { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--ink);
+               line-height: 1.25; }
+  h2, h3 { break-after: avoid; page-break-after: avoid; }
+  h1 { font-size: 22pt; margin: 0 0 4pt; }
+  h2 { font-size: 15pt; margin: 22pt 0 6pt; padding-bottom: 3pt; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 11.5pt; margin: 14pt 0 4pt; color: var(--accent); }
+  p { margin: 0 0 7pt; text-align: justify; hyphens: auto; }
+  .subtitle { color: var(--muted); font-size: 11pt; margin-bottom: 14pt; }
+  .meta { font-family: "DejaVu Sans", sans-serif; font-size: 9pt; color: var(--muted); }
+  code, pre { font-family: "DejaVu Sans Mono", Menlo, monospace; font-size: 8.8pt; }
+  code { background: var(--code-bg); padding: 0 2px; border-radius: 2px; }
+  pre { background: var(--code-bg); border-left: 3px solid var(--accent); padding: 7pt 9pt;
+        white-space: pre-wrap; margin: 6pt 0 10pt; page-break-inside: avoid; line-height: 1.35; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 6pt 0 10pt; font-size: 9.5pt;
+          page-break-inside: avoid; }
+  th, td { border: 1px solid var(--rule); padding: 3pt 6pt; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-family: "DejaVu Sans", sans-serif; }
+  ul { margin: 0 0 7pt 16pt; padding: 0; }
+  li { margin-bottom: 3pt; }
+  .intro { border: 1px solid var(--rule); background: #fafbfc; padding: 10pt 12pt; margin: 8pt 0 14pt; }
+  .toc ol { margin: 4pt 0 0 18pt; padding: 0; }
+  figure { margin: 8pt 0 12pt; text-align: center; page-break-inside: avoid; }
+  figcaption { font-size: 9pt; color: var(--muted); margin-top: 4pt; text-align: left; }
+  .file { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; color: var(--muted); margin-top: -2pt; }
+  section.script + section.script { page-break-before: always; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>satsim — código explicado</h1>
+  <div class="subtitle">Simulador de posicionamento de satélites</div>
+  <div class="meta">Documento vivo · iniciado em 02/10/2026 · branch <code>semana-1</code></div>
+</header>
+
+<div class="intro">
+  <p><strong>Sobre este documento.</strong> Este arquivo contém a explicação detalhada de alguns
+  scripts do projeto satsim. Ele complementa as docstrings e os comentários do código: lá fica o
+  <em>o quê</em> de cada função; aqui fica o <em>porquê</em> das decisões, os conceitos de Python e de
+  mecânica orbital envolvidos e como cada peça se encaixa no restante do simulador. As
+  explicações são acrescentadas à medida que os scripts são revisados, uma seção por script.</p>
+  <p style="margin:0">Convenções gerais (unidades SI, ângulos em radianos, tempo em UTC, referencial
+  ECI) estão no ADR <code>docs/adr/0001-arquitetura.md</code>.</p>
+</div>
+
+<nav class="toc">
+  <strong>Scripts explicados</strong>
+  <ol>
+    <li><code>src/satsim/propagators/base.py</code> — interface base dos propagadores</li>
+    <li><code>src/satsim/astrotime.py</code> — tempo astronômico: UTC, Data Juliana e GMST (inclui ECI e ECEF)</li>
+  </ol>
+</nav>
+
+<!-- ============================================================================== -->
+<section class="script" id="base-py">
+<h2>1. base.py — a interface dos propagadores</h2>
+<div class="file">src/satsim/propagators/base.py · card S1-05</div>
+
+<p>O <code>base.py</code> não calcula nada: ele define o <strong>contrato</strong> que todo
+propagador do projeto precisa cumprir. O conteúdo é curto:</p>
+
+<pre><code>class Propagator(ABC):
+    """Propagador de órbita: estado ECI em função do tempo desde a época."""
+
+    @property
+    @abstractmethod
+    def epoch(self) -&gt; datetime:
+        """Época do propagador (UTC, tz-aware): o instante t = 0."""
+
+    @abstractmethod
+    def propagate(self, t: ArrayLike) -&gt; tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """t: segundos desde ``epoch``, shape () ou (N,).
+
+        Retorna (r, v) em ECI, SI [m, m/s], sempre com shape (N, 3).
+        """
+
+
+def as_time_array(t: ArrayLike) -&gt; NDArray[np.float64]:
+    arr = np.atleast_1d(np.asarray(t, dtype=float))
+    if arr.ndim != 1:
+        raise ValueError(f"t deve ser escalar ou 1D, recebido shape {arr.shape}")
+    return arr</code></pre>
+
+<h3>A classe abstrata Propagator(ABC)</h3>
+<p><code>ABC</code> (<em>Abstract Base Class</em>, do módulo <code>abc</code> da biblioteca padrão) é
+uma classe que <strong>não pode ser instanciada diretamente</strong>. Ela funciona como um molde:
+declara <em>quais</em> métodos as subclasses devem ter, sem dizer <em>como</em> eles funcionam.</p>
+<p>No satsim, ela materializa a regra central do ADR: <strong>todo propagador implementa
+<code>propagate(t) → (r, v)</code></strong>. Ao longo do projeto haverá vários propagadores:</p>
+
+<table>
+  <tr><th>Propagador</th><th>Semana</th><th>Como calcula</th></tr>
+  <tr><td><code>KeplerPropagator</code></td><td>1</td><td>dois corpos, analítico</td></tr>
+  <tr><td>J2 médio</td><td>2</td><td>elementos com deriva secular</td></tr>
+  <tr><td>Cowell</td><td>3</td><td>integração numérica com J2 e arrasto</td></tr>
+  <tr><td>SGP4</td><td>3</td><td>a partir de TLE (ISS real)</td></tr>
+</table>
+
+<p>O resto do código (conversão ECI → ECEF, visibilidade, constelação, exportação para a GUI)
+depende só de <code>Propagator</code>, nunca de um propagador específico. Isso garante duas
+coisas:</p>
+<ul>
+  <li><strong>Troca sem reescrita:</strong> <code>Satellite(propagator=KeplerPropagator(...))</code> vira
+  <code>Satellite(propagator=CowellPropagator(...))</code> e nada mais muda.</li>
+  <li><strong>Erro cedo:</strong> se alguém criar um propagador e esquecer <code>propagate</code> ou
+  <code>epoch</code>, o Python recusa a criação do objeto, em vez de falhar no meio de uma simulação:</li>
+</ul>
+<pre><code>TypeError: Can't instantiate abstract class MeuProp without an implementation
+for abstract method 'propagate'</code></pre>
+<p>Por isso os métodos na ABC só têm docstring, sem implementação: a docstring é a
+<strong>especificação do contrato</strong> (unidades, referencial e shapes).</p>
+
+<h3>O decorator @abstractmethod</h3>
+<p>Marca o método como <strong>obrigatório</strong>. No momento de instanciar, a ABC verifica se a
+subclasse sobrescreveu todos os métodos marcados. Sem esse decorator, a ABC não impediria nada:
+uma subclasse incompleta funcionaria até a primeira chamada e só então falharia.</p>
+
+<h3>O decorator @property</h3>
+<p>Transforma um método em um <strong>atributo de leitura</strong>: escreve-se
+<code>prop.epoch</code>, sem parênteses, em vez de <code>prop.epoch()</code>. Ele foi usado porque a
+época é um <em>dado</em> do propagador, não uma ação. Além disso, impede a atribuição acidental
+(<code>prop.epoch = outra_data</code> gera erro), o que protege a consistência: todos os
+<code>t</code> são medidos a partir dessa época, e mudá-la depois invalidaria os resultados.</p>
+
+<h3>Os dois decorators juntos em epoch</h3>
+<p>Significam que toda subclasse é obrigada a fornecer <code>epoch</code> como <em>property</em> de
+leitura. A ordem importa: <code>@property</code> por fora (em cima) e <code>@abstractmethod</code>
+por dentro. A ordem inversa não funciona corretamente no Python moderno.
+<code>propagate</code>, por sua vez, leva só <code>@abstractmethod</code>, porque é uma ação que
+recebe o argumento <code>t</code>.</p>
+
+<h3>A função as_time_array</h3>
+<p>Não é decorator nem faz parte da ABC: é um <em>helper</em> que todo propagador chama no início de
+<code>propagate</code>. Ele normaliza qualquer entrada de tempo (<code>5.0</code>,
+<code>[1, 2]</code>, <code>np.array(...)</code>) para um array 1D de floats com shape
+<code>(N,)</code>, rejeitando entradas com mais de uma dimensão. Assim, cada propagador não precisa
+repetir esse tratamento, e o contrato “sempre devolve <code>(N, 3)</code>” fica fácil de cumprir.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="astrotime-py">
+<h2>2. astrotime.py — tempo astronômico</h2>
+<div class="file">src/satsim/astrotime.py · card S1-06</div>
+
+<h3>Dois referenciais: ECI e ECEF</h3>
+<p>Para entender por que este script existe, é preciso distinguir os dois referenciais cartesianos
+do projeto. Ambos têm origem no centro da Terra e o eixo <strong>z</strong> ao longo do eixo de
+rotação, apontando para o polo norte. A diferença está em para onde aponta o eixo <strong>x</strong>
+e se ele gira ou não:</p>
+<table>
+  <tr><th></th><th>ECI — <em>Earth-Centered Inertial</em></th><th>ECEF — <em>Earth-Centered, Earth-Fixed</em></th></tr>
+  <tr><td>Eixo x</td><td>aponta para o equinócio vernal, uma direção fixa entre as estrelas</td>
+      <td>aponta para o meridiano de Greenwich (latitude 0°, longitude 0°)</td></tr>
+  <tr><td>Gira?</td><td>não: os eixos ficam parados em relação às estrelas</td>
+      <td>sim: os eixos giram junto com a Terra, uma volta por dia sideral</td></tr>
+  <tr><td>Órbita kepleriana</td><td>elipse fixa no espaço</td>
+      <td>curva que se desloca para oeste a cada volta (é o traço no solo)</td></tr>
+  <tr><td>Um ponto na superfície</td><td>gira uma volta por dia</td>
+      <td>fica parado: São Bento do Sapucaí tem coordenadas constantes</td></tr>
+  <tr><td>Serve para</td><td>a física: a equação de movimento só tem a forma simples
+      r̈ = −µr/r³ num referencial inercial; os propagadores trabalham aqui</td>
+      <td>a geografia: latitude, longitude, altitude, posição da estação de solo,
+      elevação vista do observador e o mapa 2D da GUI</td></tr>
+</table>
+<p>A passagem de um para o outro é uma única rotação em torno do eixo z, por um ângulo
+<strong>θG</strong> que cresce com o tempo:</p>
+<pre><code>r_ECEF = Rz(θG) · r_ECI        (ADR 0001, seção Convenções)</code></pre>
+
+<figure>
+<svg width="400" height="240" viewBox="0 0 400 240" xmlns="http://www.w3.org/2000/svg"
+     font-family="DejaVu Sans, sans-serif" font-size="11">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1d2330"/>
+    </marker>
+    <marker id="arrb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0b6e8a"/>
+    </marker>
+    <marker id="arrr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <circle cx="160" cy="125" r="62" fill="#e8f1f5" stroke="#8fb3c2"/>
+  <text x="160" y="146" text-anchor="middle" fill="#5b6475">Terra</text>
+  <text x="160" y="158" text-anchor="middle" fill="#5b6475" font-size="9">(vista do polo norte)</text>
+  <circle cx="160" cy="125" r="2.5" fill="#1d2330"/>
+  <line x1="160" y1="125" x2="292" y2="125" stroke="#1d2330" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="298" y="122" fill="#1d2330">x ECI</text>
+  <text x="298" y="136" fill="#1d2330" font-size="9.5">→ equinócio vernal</text>
+  <line x1="160" y1="125" x2="245" y2="24" stroke="#0b6e8a" stroke-width="1.6" marker-end="url(#arrb)"/>
+  <text x="252" y="22" fill="#0b6e8a">x ECEF</text>
+  <text x="252" y="36" fill="#0b6e8a" font-size="9.5">→ Greenwich</text>
+  <path d="M 210 125 A 50 50 0 0 0 192 87" fill="none" stroke="#c0392b" stroke-width="1.4" marker-end="url(#arrr)"/>
+  <text x="216" y="104" fill="#c0392b" font-weight="bold">θG</text>
+  <path d="M 118 172 A 62 62 0 0 0 202 172" fill="none" stroke="#5b6475" stroke-dasharray="3 3" marker-start="url(#arr)"/>
+  <text x="160" y="222" text-anchor="middle" fill="#5b6475">a Terra gira para leste: θG cresce ≈ 360,9856° por dia</text>
+</svg>
+<figcaption>Figura 1 — Plano do equador visto do polo norte. O eixo z (para fora da página) é o
+mesmo nos dois referenciais; o eixo x do ECEF acompanha Greenwich e está adiantado de θG em
+relação ao eixo x do ECI.</figcaption>
+</figure>
+
+<h3>Por que o astrotime.py é necessário</h3>
+<p>O ângulo θG é o <strong>tempo sideral médio de Greenwich (GMST)</strong>: quanto a Terra já girou,
+medido a partir do equinócio vernal. Ele depende do instante absoluto. Os propagadores, porém,
+trabalham com <code>t</code> = segundos desde a época, e o usuário fornece datas no calendário
+civil (<code>datetime</code> em UTC). O astrotime.py faz a ponte entre essas três formas de
+expressar o tempo:</p>
+<pre><code>datetime UTC ──datetime_to_jd──► JD ──gmst──► θG [rad] ──► Rz(θG): ECI → ECEF
+             ◄──jd_to_datetime───
+t do propagador ──jd_from_epoch(epoch_jd, t)──► JD</code></pre>
+<p>Sem este módulo não seria possível saber <em>sobre qual ponto da Terra</em> o satélite está:
+o propagador diz onde o satélite está no espaço (ECI), mas latitude, longitude, o traço no solo
+do mapa 2D (card S1-08) e a visibilidade sobre São Bento do Sapucaí (semana 4) exigem o ECEF,
+e o ECEF exige θG no instante certo.</p>
+
+<h3>A Data Juliana (JD)</h3>
+<p>A Data Juliana conta os dias, com fração decimal, desde o meio-dia de 1º de janeiro de 4713 a.C.
+É a escala de tempo padrão da astronomia porque é um <strong>único número contínuo</strong>: sem
+meses de tamanhos diferentes, anos bissextos ou fusos horários, a diferença entre dois instantes é
+uma simples subtração. Alguns valores de referência usados nos testes:</p>
+<table>
+  <tr><th>Instante (UTC)</th><th>JD</th><th>Observação</th></tr>
+  <tr><td>1970-01-01 00:00</td><td>2440587,5</td><td>época do <em>Unix timestamp</em></td></tr>
+  <tr><td>2000-01-01 00:00</td><td>2451544,5</td><td>o dia juliano começa ao meio-dia, daí o “,5”</td></tr>
+  <tr><td>2000-01-01 12:00</td><td>2451545,0</td><td>J2000.0, a época de referência da fórmula do GMST</td></tr>
+</table>
+<p><code>datetime_to_jd</code> usa a relação exata <code>JD = 2440587,5 + timestamp/86400</code>: o
+<code>timestamp()</code> do Python conta segundos desde 1970-01-01 UTC e já desconta o fuso horário,
+de modo que 09:00 no horário de Brasília (−03:00) e 12:00 UTC dão o mesmo JD. Um
+<code>datetime</code> sem fuso (<em>naive</em>) é rejeitado com <code>ValueError</code>, porque não
+dá para saber a qual instante ele se refere. <code>jd_to_datetime</code> faz o caminho inverso,
+arredondando a microssegundos; como um float com JD ≈ 2,5 milhões tem resolução de cerca de
+40 µs, a ida e volta tem erro de dezenas de microssegundos (o critério do card é &lt; 100 µs).
+<code>jd_from_epoch</code> converte o <code>t</code> do propagador em JD: <code>epoch_jd + t/86400</code>,
+vetorizado.</p>
+
+<h3>O GMST: a fórmula IAU-82</h3>
+<p>A função <code>gmst</code> implementa a fórmula de Vallado (eq. 3-47), com T em séculos julianos
+desde J2000:</p>
+<pre><code>T = (JD − 2451545,0) / 36525
+θ [s] = 67310,54841 + (876600·3600 + 8640184,812866)·T + 0,093104·T² − 6,2e-6·T³
+θG [rad] = (θ mod 86400) · 2π / 86400</code></pre>
+<p>O resultado intermediário está em <em>segundos de tempo sideral</em>: um dia inteiro (86 400 s)
+equivale a uma volta (2π). Cada termo tem um papel:</p>
+<ul>
+  <li><strong>67310,54841 s</strong> é o GMST em J2000.0, ou seja, 280,46061837° (teste
+  <code>test_gmst_j2000</code>);</li>
+  <li><strong>876600·3600·T</strong> são as voltas inteiras: 876 600 h = 36 525 dias × 24 h, isto é,
+  uma volta por dia solar;</li>
+  <li><strong>8640184,812866·T</strong> é o adiantamento sideral: a cada dia solar a Terra gira um
+  pouco mais que 360°, porque também avançou na órbita em volta do Sol;</li>
+  <li>os termos em <strong>T²</strong> e <strong>T³</strong> são correções lentas (precessão do
+  equinócio), desprezíveis em poucos anos.</li>
+</ul>
+<p>Esse “um pouco mais” é a chave do projeto: num dia o GMST avança 360° + <strong>0,9856°</strong>
+(teste <code>test_gmst_daily_rate</code>). Os 0,9856°/dia são exatamente o movimento aparente do
+Sol, o mesmo número que define a órbita heliossíncrona (Sem4 eq. 26): o plano da órbita precisa
+girar 0,9856° por dia para acompanhar o Sol.</p>
+
+<h3>Validação</h3>
+<ul>
+  <li><strong>Vallado, Exemplo 3-5</strong> (20/08/1992 12:14 UT1): JD = 2448855,009722 e
+  GMST = 152,5788°, reproduzidos.</li>
+  <li><strong>Skyfield</strong>, só nos testes: em 200 datas aleatórias entre 1990 e 2040, a
+  diferença máxima foi de 0,006 s de tempo sideral (critério: &lt; 0,1 s). O Skyfield usa uma
+  formulação mais recente (IAU 2000/2006, baseada no ângulo de rotação da Terra); a diferença
+  de milissegundos é a discrepância entre os dois modelos.</li>
+</ul>
+
+<h3>Simplificações assumidas</h3>
+<table>
+  <tr><th>Simplificação</th><th>Por quê</th><th>Impacto</th></tr>
+  <tr><td>UTC tratado como UT1</td>
+      <td>a fórmula pede UT1, o tempo da rotação real da Terra, que exige tabelas publicadas
+      pelo IERS; usamos UTC direto</td>
+      <td>|UT1 − UTC| &lt; 0,9 s ⇒ até ≈ 0,4 km no equador</td></tr>
+  <tr><td>Segundos intercalares ignorados</td>
+      <td><code>datetime</code> do Python não os representa (todo dia tem 86 400 s)</td>
+      <td>intervalos que cruzam um segundo intercalar ficam 1 s mais curtos</td></tr>
+  <tr><td>Taxa do GMST ≠ <code>OMEGA_EARTH</code></td>
+      <td>a fórmula dá ≈ 7,2921158553e-5 rad/s; os PDFs usam a constante 7,292115e-5 rad/s</td>
+      <td>≈ 5 m/dia no equador; por isso ECI → ECEF usa a fórmula completa, nunca
+      <code>OMEGA_EARTH · t</code></td></tr>
+</table>
+<p>Para visibilidade de satélites, em que importam centenas de metros, essas simplificações são
+aceitáveis. Estão registradas no ADR e na docstring do módulo.</p>
+</section>
+
+</main>
+</body>
+</html>
