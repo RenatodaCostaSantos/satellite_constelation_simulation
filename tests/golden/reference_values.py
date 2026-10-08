@@ -304,8 +304,14 @@ J2_SECULAR_MISC_S2 = J2SecularMiscS2()
 #     experimento independente (Cowell DOP853, rtol = 1e-11, atol = 1e-3, J2 apenas, 10 dias a
 #     60 s, raan0 = 30°, psi0 = 0). Diferenças de até ~30% são aceitáveis; os critérios de aceite
 #     dos cards são os que valem.
-#     argp0: SSO 90° e órbita de teste 30° (do prompt); ISS-like 0° *inferido* na S2-02: com
-#     argp0 = 90° o sinal de a_médio − a_nominal se inverte (+6,0 km), com 0° reproduz a tabela.
+#     argp0: SSO 90° e órbita de teste 30° (do prompt); ISS-like 0° *inferido* na S2-02, pois só
+#     ele reproduz a tabela. Motivo: em órbita quase circular o semieixo osculador oscila como
+#     a_osc − a_médio ≈ 1,5·J2·R⊕²/a·sin²i·cos 2u (u = ω + ν). Tomar os elementos nominais como
+#     osculadores em u0 = 0° (nó) põe a_médio ≈ 6,0 km *abaixo* do nominal; em u0 = 90° (argp0 =
+#     90°, latitude máxima), 6,0 km *acima*. Com argp0 = 90° a ISS-like dá a_médio − a_nominal =
+#     +6,0 km, Ω̇ ajustado −4,933 °/dia (teoria@médio −4,929, +0,08%; @nominal −0,27%) e diferença
+#     MeanJ2(médio) × Cowell de 3,4 km em 24 h: os critérios valem, mas os números não são os da
+#     tabela. A escolha de argp0 para a ISS-like na S2-06 deve ser coerente com esta linha.
 # ===============================================================================================
 
 

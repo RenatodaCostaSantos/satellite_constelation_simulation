@@ -27,11 +27,24 @@ from satsim.constants import J2, MU, R_EARTH
 FloatOrArray = float | NDArray[np.float64]
 
 
+# @dataclass gera automaticamente __init__, __repr__ e __eq__ a partir dos campos anotados abaixo;
+# frozen=True torna as instâncias imutáveis (atribuir a um campo levanta FrozenInstanceError).
 @dataclass(frozen=True)
 class SecularRates:
-    """Taxas seculares de J2 [rad/s] (Sem4 eqs. 23–25).
+    """Contêiner (só dados, sem cálculo) das taxas seculares de J2 [rad/s] (Sem4 eqs. 23–25).
 
-    n: movimento médio kepleriano √(µ/a³); raan_dot: Ω̇; argp_dot: ω̇; psi_dot: ψ̇.
+    Não é construído diretamente pelo usuário: é o valor de retorno de ``secular_rates``, que faz
+    as contas e empacota os resultados aqui para acesso por nome em vez de posição numa tupla::
+
+        rates = secular_rates(a=7000e3, e=0.001, i=np.radians(98.0))
+        rates.raan_dot      # Ω̇ [rad/s]
+
+    Attributes:
+        n: movimento médio kepleriano √(µ/a³).
+        raan_dot: Ω̇, regressão do nó ascendente (eq. 23).
+        argp_dot: ω̇, rotação da linha dos apsides (eq. 24).
+        psi_dot: ψ̇, movimento médio perturbado (eq. 25).
+
     Escalares para entrada escalar, arrays com o shape do broadcasting das entradas.
     """
 
@@ -55,6 +68,9 @@ def secular_rates(
 ) -> SecularRates:
     """Taxas seculares de J2 de primeira ordem (Sem4 eqs. 23, 24 e 25).
 
+    Função de módulo (não é método de ``SecularRates``): calcula n, Ω̇, ω̇ e ψ̇ e devolve os
+    quatro valores empacotados numa instância de ``SecularRates``.
+
     Args:
         a: semieixo maior médio [m], escalar ou array.
         e: excentricidade média, 0 ≤ e < 1, compatível com ``a`` por broadcasting.
@@ -64,7 +80,8 @@ def secular_rates(
         re: raio equatorial de referência de J2 [m].
 
     Returns:
-        SecularRates [rad/s]; campos escalares se todas as entradas forem escalares.
+        SecularRates com os campos n, raan_dot, argp_dot e psi_dot [rad/s]; campos escalares se
+        todas as entradas forem escalares.
 
     Raises:
         ValueError: se algum a ≤ 0 ou e fora de [0, 1).

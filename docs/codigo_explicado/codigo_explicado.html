@@ -68,6 +68,7 @@
   <ol>
     <li><code>src/satsim/propagators/base.py</code> — interface base dos propagadores</li>
     <li><code>src/satsim/astrotime.py</code> — tempo astronômico: UTC, Data Juliana e GMST (inclui ECI e ECEF)</li>
+    <li><code>src/satsim/secular.py</code> — taxas seculares de J2 e período nodal (inclui <code>@dataclass</code>)</li>
   </ol>
 </nav>
 
@@ -305,6 +306,202 @@ girar 0,9856° por dia para acompanhar o Sol.</p>
 </table>
 <p>Para visibilidade de satélites, em que importam centenas de metros, essas simplificações são
 aceitáveis. Estão registradas no ADR e na docstring do módulo.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="secular-py">
+<h2>3. secular.py — taxas seculares de J2</h2>
+<div class="file">src/satsim/secular.py · card S2-01</div>
+
+<h3>O que o script calcula</h3>
+<p>A Terra não é uma esfera perfeita: ela é achatada nos polos, com um “cinturão” de massa extra no
+equador. O coeficiente <strong>J2</strong> mede esse achatamento. Na média de muitas voltas, o
+efeito de J2 <strong>não muda a forma da órbita</strong> (o semieixo maior <code>a</code>, a
+excentricidade <code>e</code> e a inclinação <code>i</code> médios ficam constantes), mas faz três
+ângulos derivarem a uma taxa constante. São essas três taxas, mais o movimento médio kepleriano
+<code>n</code>, que o <code>secular.py</code> devolve:</p>
+<pre><code>p = a(1 − e²),   k = 1,5·J2·(R⊕/p)²,   n = √(µ/a³)
+
+Ω̇ = −k·n·cos i                               (Sem4 eq. 23)
+ω̇ = ½·k·n·(5cos²i − 1)                       (Sem4 eq. 24)
+ψ̇ = n·[1 + k·√(1 − e²)·(1 − 1,5·sin²i)]      (Sem4 eq. 25)</code></pre>
+<table>
+  <tr><th>Campo</th><th>Símbolo</th><th>Significado físico</th></tr>
+  <tr><td><code>n</code></td><td>n</td><td>movimento médio de dois corpos (sem J2): 2π / período kepleriano</td></tr>
+  <tr><td><code>raan_dot</code></td><td>Ω̇</td><td><strong>regressão do nó</strong>: o plano da órbita gira em
+      torno do eixo da Terra. É a taxa que, igualada a 0,9856°/dia, define a órbita heliossíncrona</td></tr>
+  <tr><td><code>argp_dot</code></td><td>ω̇</td><td><strong>rotação da linha dos apsides</strong>: o perigeu
+      gira dentro do plano da órbita. Zera na inclinação crítica arccos(1/√5) = 63,43°</td></tr>
+  <tr><td><code>psi_dot</code></td><td>ψ̇</td><td>movimento médio <em>perturbado</em>: a anomalia média avança
+      um pouco mais devagar (ou mais depressa) do que <code>n</code> por causa de J2</td></tr>
+</table>
+<p>As taxas são em rad/s. Um número para ter em mente: na órbita heliossíncrona de projeto, Ω̇ vale
+≈ 2·10⁻⁷ rad/s, o que parece desprezível, mas são 0,9856° por dia, ou uma volta completa do plano da
+órbita por ano.</p>
+
+<h3>O decorator @dataclass</h3>
+<p>Muitas classes só servem para <strong>guardar dados</strong>, sem lógica. Escrever essas classes à
+mão é repetitivo: o <code>__init__</code> recebe cada campo e o copia para <code>self</code>, o
+<code>__repr__</code> monta um texto legível e o <code>__eq__</code> compara campo a campo. O
+<code>@dataclass</code> (módulo <code>dataclasses</code> da biblioteca padrão) gera esses três métodos
+automaticamente a partir das anotações de tipo da classe. O código do script:</p>
+<pre><code>@dataclass(frozen=True)
+class SecularRates:
+    n: FloatOrArray
+    raan_dot: FloatOrArray
+    argp_dot: FloatOrArray
+    psi_dot: FloatOrArray</code></pre>
+<p>é equivalente a escrever à mão:</p>
+<pre><code>class SecularRates:
+    def __init__(self, n, raan_dot, argp_dot, psi_dot):
+        self.n = n
+        self.raan_dot = raan_dot
+        self.argp_dot = argp_dot
+        self.psi_dot = psi_dot
+
+    def __repr__(self):        # usado por print()
+        return f"SecularRates(n={self.n}, raan_dot={self.raan_dot}, ...)"
+
+    def __eq__(self, other):   # usado por ==
+        return (self.n, self.raan_dot, ...) == (other.n, other.raan_dot, ...)</code></pre>
+<p>O argumento <code>frozen=True</code> torna os objetos <strong>imutáveis</strong>: depois de criado, nenhum
+campo pode ser alterado. É a mesma ideia do <code>@property</code> em <code>epoch</code> (seção 1):
+as taxas valem para um <code>(a, e, i)</code> específico, e modificar uma delas isoladamente produziria
+um conjunto inconsistente. A tentativa gera erro:</p>
+<pre><code>&gt;&gt;&gt; rates.n = 1.0
+dataclasses.FrozenInstanceError: cannot assign to field 'n'</code></pre>
+
+<h3>A classe SecularRates e a função secular_rates</h3>
+<p>Os nomes são parecidos, mas as duas peças têm papéis diferentes, e <code>secular_rates</code>
+<strong>não é um método</strong> da classe: é uma função comum, definida no nível do módulo (fora da
+classe, sem indentação).</p>
+<ul>
+  <li><strong><code>SecularRates</code></strong> (com maiúsculas, convenção para classes) é a
+  <em>caixa</em>: quatro compartimentos com nome e nenhum cálculo.</li>
+  <li><strong><code>secular_rates(a, e, i)</code></strong> (com minúsculas, convenção para funções)
+  faz as contas e, na última linha, coloca os quatro resultados numa <code>SecularRates</code> nova e a
+  devolve.</li>
+</ul>
+<p>Um exemplo mínimo com a mesma estrutura, fora da mecânica orbital:</p>
+<pre><code>@dataclass(frozen=True)
+class Retangulo:                      # a caixa
+    area: float
+    perimetro: float
+
+def medir(largura, altura):           # a função que calcula
+    area = largura * altura
+    perimetro = 2 * (largura + altura)
+    return Retangulo(area, perimetro) # cria a caixa e a devolve
+
+r = medir(3, 4)
+print(r)        # Retangulo(area=12, perimetro=14)
+print(r.area)   # 12</code></pre>
+<p>No <code>secular.py</code>, o <code>return Retangulo(area, perimetro)</code> corresponde a
+<code>return SecularRates(n, raan_dot, argp_dot, psi_dot)</code>. O uso real, para a órbita
+heliossíncrona de projeto:</p>
+<pre><code>&gt;&gt;&gt; rates = secular_rates(a=6888.089e3, e=1.074e-3, i=np.radians(97.4396))
+&gt;&gt;&gt; rates
+SecularRates(n=0.0011043856704022533, raan_dot=1.991076039546266e-07,
+             argp_dot=-7.044166649355821e-07, psi_dot=0.0011036554735148136)
+&gt;&gt;&gt; np.degrees(rates.raan_dot) * 86400      # Ω̇ em °/dia
+0.98565...                                    # = taxa do Sol: órbita heliossíncrona</code></pre>
+<p><strong>Por que não devolver uma tupla?</strong> A função poderia terminar em
+<code>return n, raan_dot, argp_dot, psi_dot</code>. Mas aí quem chama teria de lembrar a ordem e
+escrever <code>rates[2]</code> para obter ω̇, e trocar a ordem por engano não daria erro, só um
+resultado errado. Com a dataclass, o acesso é por nome (<code>rates.argp_dot</code>), o
+<code>print</code> mostra o que é cada número e o editor completa os nomes dos campos.</p>
+
+<h3>Escalar ou vetor: broadcasting e _as_scalar_if_0d</h3>
+<p>A função aceita tanto números quanto arrays NumPy, para calcular as taxas de muitas órbitas de uma
+vez (por exemplo, uma varredura de altitudes para montar a tabela das órbitas heliossíncronas). A
+primeira linha</p>
+<pre><code>a, e, i = np.broadcast_arrays(*(np.asarray(x, dtype=float) for x in (a, e, i)))</code></pre>
+<p>converte as três entradas em arrays de float e as ajusta a um shape comum (<em>broadcasting</em>):
+19 altitudes com uma única <code>e</code> e uma única <code>i</code> viram três arrays de shape
+<code>(19,)</code>. A partir daí, cada fórmula opera elemento a elemento, sem laço
+<code>for</code>.</p>
+<p>O efeito colateral é que até uma entrada escalar vira um array de dimensão zero
+(<code>np.array(0.0011)</code>), que é incômodo de imprimir e comparar. O helper
+<code>_as_scalar_if_0d</code> desfaz isso no final: se o resultado tem <code>ndim == 0</code>, ele vira
+um <code>float</code> comum; senão, fica como array. Por isso o tipo dos campos é
+<code>FloatOrArray</code>. O <code>_</code> no início do nome indica que é um detalhe interno do
+módulo, não parte da interface pública.</p>
+<p>Antes das contas, a função valida as entradas: <code>a ≤ 0</code> ou <code>e</code> fora de
+<code>[0, 1)</code> levantam <code>ValueError</code>, já que as fórmulas só valem para órbitas
+elípticas.</p>
+
+<h3>O operador * de desempacotamento</h3>
+<p>A última linha de <code>secular_rates</code> tem um <code>*</code> que não é multiplicação:</p>
+<pre><code>return SecularRates(*(_as_scalar_if_0d(x) for x in (n, raan_dot, argp_dot, psi_dot)))</code></pre>
+<p>Ele é o operador de <strong>desempacotamento</strong> (<em>unpacking</em>): pega uma sequência de valores
+e passa cada um como um argumento separado da chamada. A linha se lê em duas partes:</p>
+<ul>
+  <li><code>(_as_scalar_if_0d(x) for x in (...))</code> é uma <em>expressão geradora</em>: aplica
+  <code>_as_scalar_if_0d</code> a cada uma das quatro taxas e produz quatro valores, em ordem;</li>
+  <li>o <code>*</code> na frente “abre” esse gerador e entrega os quatro valores como argumentos
+  posicionais.</li>
+</ul>
+<p>O resultado é idêntico a escrever:</p>
+<pre><code>return SecularRates(
+    _as_scalar_if_0d(n),
+    _as_scalar_if_0d(raan_dot),
+    _as_scalar_if_0d(argp_dot),
+    _as_scalar_if_0d(psi_dot),
+)</code></pre>
+<p>O <code>*</code> só evita repetir <code>_as_scalar_if_0d(...)</code> quatro vezes. A ordem importa: os
+valores entram nos campos na ordem em que foram declarados na dataclass (<code>n</code>,
+<code>raan_dot</code>, <code>argp_dot</code>, <code>psi_dot</code>). Um exemplo mínimo:</p>
+<pre><code>def soma3(a, b, c):
+    return a + b + c
+
+valores = [1, 2, 3]
+soma3(valores)    # TypeError: a lista inteira vai para a; faltam b e c
+soma3(*valores)   # 6, equivale a soma3(1, 2, 3)</code></pre>
+<p>Sem o <code>*</code>, o gerador inteiro entraria como um único argumento em <code>n</code> e o Python
+reclamaria da falta de <code>raan_dot</code>, <code>argp_dot</code> e <code>psi_dot</code>. A primeira
+linha da função usa o mesmo recurso:
+<code>np.broadcast_arrays(*(np.asarray(x, dtype=float) for x in (a, e, i)))</code> equivale a passar
+<code>np.asarray(a, ...)</code>, <code>np.asarray(e, ...)</code> e <code>np.asarray(i, ...)</code> como três
+argumentos separados.</p>
+<p>Os demais <code>*</code> da função são multiplicação comum (<code>k * n * cos_i</code>), e
+<code>**</code> é potência (<code>a**3</code>). A posição distingue os dois usos: o <code>*</code> de
+desempacotamento fica no início de um argumento, dentro dos parênteses de uma chamada; o de
+multiplicação fica entre dois valores.</p>
+
+<h3>O período nodal: nodal_period</h3>
+<p>O período nodal é o tempo entre duas passagens consecutivas do satélite pelo nó ascendente, isto é,
+cruzando o equador de sul para norte. É ele, e não o período kepleriano, que define quantas voltas por
+dia o satélite dá sobre a Terra e, portanto, o padrão de repetição do traço no solo. O argumento de
+latitude <code>u = ω + ν</code> avança em média à taxa ψ̇ + ω̇, então:</p>
+<pre><code>Tnod = 2π / (ψ̇ + ω̇)          (Sem4 eq. 34)</code></pre>
+<p><code>nodal_period</code> reaproveita <code>secular_rates</code> e usa os campos pelo nome
+(<code>rates.psi_dot + rates.argp_dot</code>), um exemplo direto da vantagem da dataclass. Na órbita de
+projeto, Tnod = 5696,70 s contra Tkep = 2π/n = 5689,30 s: J2 alonga a volta nodal em
+≈ 7,4 s.</p>
+
+<h3>Validação</h3>
+<p>Os testes em <code>tests/test_secular.py</code> comparam as taxas com o Apêndice A.1 do prompt da
+Semana 2 e verificam casos com resposta conhecida:</p>
+<table>
+  <tr><th>Caso</th><th>O que é verificado</th></tr>
+  <tr><td>ISS, SSO de projeto, polar, Molniya</td><td>Ω̇ e ω̇ em °/dia contra a tabela de referência</td></tr>
+  <tr><td>SSO de projeto</td><td>Tnod = 5696,70 s, Tkep = 5689,30 s e ψ̇/n − 1 = −6,6·10⁻⁴</td></tr>
+  <tr><td>Órbita polar (i = 90°)</td><td>Ω̇ = 0, porque cos 90° = 0</td></tr>
+  <tr><td>Inclinação crítica (63,43°)</td><td>ω̇ = 0 para qualquer <code>a</code> e <code>e</code></td></tr>
+  <tr><td>J2 = 0</td><td>Ω̇ = ω̇ = 0 e ψ̇ = n: volta ao caso kepleriano</td></tr>
+  <tr><td>Entrada vetorial</td><td>o resultado com 19 altitudes é idêntico a 19 chamadas escalares</td></tr>
+  <tr><td>Entradas inválidas</td><td><code>ValueError</code> para a ≤ 0 e e ∉ [0, 1)</td></tr>
+</table>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>Só J2, só primeira ordem.</strong> J3 e J4 ficam de fora. J3 importa para a órbita
+  congelada, em que ele cancela ω̇ (Semana 5).</li>
+  <li><strong>Só elementos médios.</strong> As oscilações de curto período dos elementos osculadores,
+  da ordem de quilômetros em <code>a</code>, não aparecem: o resultado é a tendência média.</li>
+  <li><strong>Sem singularidades.</strong> Nenhuma fórmula divide por <code>e</code> nem por
+  <code>sin i</code>, então as órbitas circulares e equatoriais funcionam sem tratamento especial.</li>
+</ul>
 </section>
 
 </main>
