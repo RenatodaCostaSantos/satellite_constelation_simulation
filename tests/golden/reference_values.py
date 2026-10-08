@@ -298,3 +298,75 @@ class J2SecularMiscS2:
 
 
 J2_SECULAR_MISC_S2 = J2SecularMiscS2()
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.4 do prompt da Semana 2: referências de comportamento do Cowell, de um
+#     experimento independente (Cowell DOP853, rtol = 1e-11, atol = 1e-3, J2 apenas, 10 dias a
+#     60 s, raan0 = 30°, psi0 = 0). Diferenças de até ~30% são aceitáveis; os critérios de aceite
+#     dos cards são os que valem.
+#     argp0: SSO 90° e órbita de teste 30° (do prompt); ISS-like 0° *inferido* na S2-02: com
+#     argp0 = 90° o sinal de a_médio − a_nominal se inverte (+6,0 km), com 0° reproduz a tabela.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class CowellReferenceCase:
+    orbit: str
+    a_km: float
+    e: float
+    i_deg: float
+    argp0_deg: float
+    a_mean_minus_nominal_km: float
+    raan_dot_fit_deg_day: float
+    raan_dot_theory_at_mean_deg_day: float
+    diff_mean_j2_mean_elements_24h_km: float
+    a_osc_peak_to_peak_km: float | None = None  # semieixo osculador numa revolução
+    nominal_error_1_6_12_24h_km: tuple[float, ...] | None = None  # MeanJ2 nominal vs Cowell
+
+
+COWELL_RAAN0_DEG: float = 30.0
+COWELL_PSI0_DEG: float = 0.0
+
+COWELL_REFERENCE_S2: tuple[CowellReferenceCase, ...] = (
+    CowellReferenceCase(
+        orbit="SSO",
+        a_km=6888.089,
+        e=1.074e-3,
+        i_deg=97.4396,
+        argp0_deg=90.0,
+        a_mean_minus_nominal_km=9.5,
+        raan_dot_fit_deg_day=0.9794,
+        raan_dot_theory_at_mean_deg_day=0.9803,
+        diff_mean_j2_mean_elements_24h_km=6.8,
+        a_osc_peak_to_peak_km=19.0,
+        nominal_error_1_6_12_24h_km=(79.0, 363.0, 688.0, 1333.0),
+    ),
+    CowellReferenceCase(
+        orbit="ISS-like",
+        a_km=6378.137 + 420.0,
+        e=5e-4,
+        i_deg=51.64,
+        argp0_deg=0.0,
+        a_mean_minus_nominal_km=-6.0,
+        raan_dot_fit_deg_day=-4.968,
+        raan_dot_theory_at_mean_deg_day=-4.9641,
+        diff_mean_j2_mean_elements_24h_km=14.0,
+        a_osc_peak_to_peak_km=12.0,
+        nominal_error_1_6_12_24h_km=(47.0, 226.0, 449.0, 874.0),
+    ),
+    CowellReferenceCase(
+        orbit="e = 0,02",
+        a_km=7200.0,
+        e=0.02,
+        i_deg=45.0,
+        argp0_deg=30.0,
+        a_mean_minus_nominal_km=-2.5,
+        raan_dot_fit_deg_day=-4.6251,
+        raan_dot_theory_at_mean_deg_day=-4.6197,
+        diff_mean_j2_mean_elements_24h_km=6.6,
+    ),
+)
+
+# ω-ponto na órbita e = 0,02 (A.4): ajustado vs teoria no semieixo médio
+COWELL_ARGP_DOT_FIT_E002_DEG_DAY: float = 4.9095
+COWELL_ARGP_DOT_THEORY_E002_DEG_DAY: float = 4.9018
