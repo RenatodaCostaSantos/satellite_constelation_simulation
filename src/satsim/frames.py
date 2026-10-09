@@ -38,7 +38,12 @@ def rot_z(theta: ArrayLike) -> NDArray[np.float64]:
     """
     theta = np.asarray(theta, dtype=float)
     c, s = np.cos(theta), np.sin(theta)
+    # zeros_like/ones_like criam arrays de 0 e de 1 com o mesmo shape e dtype de theta (escalar
+    # 0-D ou (N,)). O np.stack exige entradas de shapes iguais, então os 0 e 1 constantes da
+    # matriz precisam ter o shape de c e s; com um 0 literal o stack falharia para θ (N,).
     zero, one = np.zeros_like(theta), np.ones_like(theta)
+    # stack interno (axis=-1) monta cada linha [.., .., ..] no último eixo; o externo (axis=-2)
+    # empilha as 3 linhas no penúltimo: (3, 3) para θ escalar, (N, 3, 3) para θ (N,).
     return np.stack(
         [
             np.stack([c, s, zero], axis=-1),
@@ -52,12 +57,19 @@ def rot_z(theta: ArrayLike) -> NDArray[np.float64]:
 def _rotate(vec: NDArray[np.float64], theta: NDArray[np.float64]) -> NDArray[np.float64]:
     """Aplica Rz(θ) linha a linha, sem montar as matrizes: (x, y, z) → (cx + sy, −sx + cy, z)."""
     c, s = np.cos(theta), np.sin(theta)
+    # vec[..., k]: os "..." (Ellipsis) valem "todos os eixos anteriores, quantos forem", e k
+    # indexa o ÚLTIMO eixo, o das coordenadas. Para vec (3,) equivale a vec[k] (um número); para
+    # (N, 3), a vec[:, k] (shape (N,)); para (P, N, 3), a vec[:, :, k] (shape (P, N)).
     x, y, z = vec[..., 0], vec[..., 1], vec[..., 2]
+    # Operação inversa: axis=-1 recoloca as três componentes no último eixo, de modo que a
+    # saída tem sempre o shape da entrada, sem nenhum if.
     return np.stack([c * x + s * y, -s * x + c * y, z], axis=-1)
 
 
 def _omega_cross(r: NDArray[np.float64]) -> NDArray[np.float64]:
     """ω⊕ × r com ω⊕ = (0, 0, OMEGA_EARTH): (−ω y, ω x, 0)."""
+    # r[..., 1] = y e r[..., 0] = x de cada posição (ver _rotate); zeros_like(r[..., 2]) dá a
+    # componente z nula com o shape de uma coluna de r, como o stack exige.
     return np.stack(
         [-OMEGA_EARTH * r[..., 1], OMEGA_EARTH * r[..., 0], np.zeros_like(r[..., 2])], axis=-1
     )
