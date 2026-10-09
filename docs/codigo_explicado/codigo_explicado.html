@@ -748,6 +748,128 @@ agora vira uma função da biblioteca, reutilizável e testada. Dois detalhes:</
 <p>O helper <code>gmst_at(epoch, t)</code> devolve θ nos instantes t (segundos desde a época do
 propagador), para que quem chama não precise lidar com Datas Julianas.</p>
 
+<h3>ECI e ECEF lado a lado</h3>
+<table>
+  <tr><th></th><th>ECI (<em>Earth-Centered Inertial</em>)</th><th>ECEF (<em>Earth-Centered, Earth-Fixed</em>)</th></tr>
+  <tr><td>Origem</td><td>centro da Terra</td><td>centro da Terra</td></tr>
+  <tr><td>Eixo z</td><td>polo norte</td><td>polo norte (o mesmo)</td></tr>
+  <tr><td>Eixo x</td><td>equinócio vernal, uma direção fixa entre as estrelas</td>
+      <td>meridiano de Greenwich (lat 0°, lon 0°)</td></tr>
+  <tr><td>Gira?</td><td>não</td><td>sim, uma volta por dia sideral (23 h 56 min)</td></tr>
+  <tr><td>O que fica parado nele</td><td>a órbita kepleriana (uma elipse fixa)</td>
+      <td>São Bento do Sapucaí, os continentes, o mapa</td></tr>
+</table>
+<p>O ECI não <em>gira</em>, mas não é parado no espaço: a origem acompanha a Terra na volta ao redor do
+Sol. Por isso o nome técnico é “inercial” (rigorosamente, quase-inercial): os eixos mantêm a direção
+em relação às estrelas, e a aceleração da Terra em torno do Sol é desprezível para uma órbita em LEO.
+O ECI é usado para <strong>propagar</strong>, porque nele não aparecem forças fictícias (centrífuga,
+Coriolis); o ECEF, para tudo o que se refere <strong>ao chão</strong>. Uma órbita fixa no ECI
+descreve no ECEF o traço no solo, que se desloca para oeste a cada volta porque a Terra gira por
+baixo da órbita.</p>
+
+<h3>Velocidades entre um referencial fixo e um que gira</h3>
+<p>Com <code>v=</code>, as funções convertem também a velocidade. <code>v_eci</code> <strong>não</strong>
+é a velocidade relativa entre os dois referenciais: é a velocidade <em>do mesmo objeto</em> (satélite
+ou estação) medida por um observador no ECI, enquanto <code>v_ecef</code> é a velocidade desse objeto
+medida por quem gira junto com a Terra. A conversão tem duas parcelas:</p>
+<pre><code>v_eci = _rotate(v_ecef, -theta) + _omega_cross(r_eci)
+#        └──── parcela 1 ────┘   └──── parcela 2 ────┘</code></pre>
+<table>
+  <tr><th>Parcela</th><th>O que representa</th><th>É movimento?</th></tr>
+  <tr><td><code>v_ecef</code> (a entrada)</td><td>o movimento do objeto em relação ao chão</td><td>sim</td></tr>
+  <tr><td><code>_rotate(…, −θ)</code></td><td>só <strong>reescreve</strong> esse vetor nos eixos do ECI,
+      usando a orientação dos eixos naquele instante (θ = GMST, o ângulo que a Terra girou)</td>
+      <td>não: é uma troca de eixos; o vetor continua o mesmo</td></tr>
+  <tr><td><code>+ ω⊕ × r_eci</code></td><td>o movimento do próprio referencial ECEF naquele ponto, por
+      estar girando</td><td>sim</td></tr>
+</table>
+<p>Ou seja: <em>velocidade vista de fora = movimento do objeto em relação ao chão + movimento do próprio
+chão naquele ponto</em>. O <code>_rotate</code> apenas garante que as duas parcelas estejam escritas nos
+mesmos eixos antes da soma, como alinhar duas bússolas antes de somar velocidades medidas com
+elas. A parcela 2 é uma velocidade linear (m/s), não a taxa de rotação ω⊕ (rad/s): depende da posição,
+vale ≈ 465 m/s sobre o equador, ≈ 430 m/s em São Bento e zero sobre o eixo z.</p>
+
+<p><strong>Um exemplo em 2D.</strong> Sejam os eixos A fixos (o ECI) e os eixos B girando em relação a
+A com velocidade angular ω, de modo que o ângulo entre eles é θ(t) = ω·t (o ECEF).</p>
+<ul>
+  <li><strong>Ângulo fixo</strong> (B rotacionado de θ, sem girar): só o <code>_rotate</code> é
+  necessário, porque ele troca a representação do vetor de B para A. Um objeto parado em B também está
+  parado em A.</li>
+  <li><strong>B girando, objeto parado em B</strong> em (r, 0): quem gira com B vê o objeto parado,
+  <code>v_B = 0</code>; visto de A, ele descreve um círculo a ω·r. Só a parcela 2 contribui:
+  <code>v_A = ω × r_A = ω·(−y_A, x_A)</code>. É o caso da estação de solo.</li>
+  <li><strong>B girando, objeto se movendo em B</strong>: somam-se as duas coisas,
+  <code>v_A = R(−θ)·v_B + ω × r_A</code>. É o caso geral, o de um satélite.</li>
+</ul>
+<p>Em 2D, o produto vetorial com ω = (0, 0, ω) se reduz a girar o vetor posição 90° e multiplicá-lo por
+ω: <code>ω × (x, y) = ω·(−y, x)</code>. É exatamente o que <code>_omega_cross</code> calcula,
+<code>(−ω·y, ω·x, 0)</code>. O caso inverso também vale: um objeto parado em A aparece em B girando no
+sentido contrário. Por isso <code>eci_to_ecef</code> <strong>subtrai</strong> o termo antes de girar,
+<code>v_ecef = Rz(θ)·(v_eci − ω⊕ × r_eci)</code>; é o que faz uma estrela, parada no ECI, parecer
+cruzar o céu para quem está no chão.</p>
+
+<p><strong>De onde sai a fórmula.</strong> A posição converte como <code>r_eci = Rz(θ)ᵀ·r_ecef</code>,
+com θ = θ0 + ω⊕·t variando no tempo. Derivando o produto:</p>
+<pre><code>v_eci = Rz(θ)ᵀ·v_ecef  +  (d Rz(θ)ᵀ/dt)·r_ecef
+      = Rz(θ)ᵀ·v_ecef  +  ω⊕ × r_eci</code></pre>
+<p>O primeiro termo vem de <code>r_ecef</code> variar no tempo; o segundo, de a <em>matriz</em> variar
+no tempo (a Terra girando). A derivada de uma rotação em torno de z se reduz ao produto vetorial com
+ω⊕. Na física, esse resultado é o <strong>teorema do transporte</strong>.</p>
+
+<p><strong>A equação vale para qualquer órbita.</strong> A parcela 1 é a velocidade do satélite em
+relação ao ECEF, e em LEO ela é a maior parte da velocidade. Números reais da órbita de projeto
+(a = 6888 km), com o satélite sobre o equador:</p>
+<table>
+  <tr><th>Órbita</th><th>|v_eci|</th><th>|v_ecef| (relativa ao chão)</th><th>|ω⊕ × r|</th></tr>
+  <tr><td>SSO, i = 97,44°</td><td>7607 m/s</td><td>7688 m/s</td><td>502 m/s</td></tr>
+  <tr><td>prograda equatorial, i = 0°</td><td>7607 m/s</td><td>7105 m/s</td><td>502 m/s</td></tr>
+</table>
+<ul>
+  <li>A velocidade relativa ao chão, de 7,1 a 7,7 km/s, é a que faz o subponto correr pelo mapa
+  (uma volta em ~95 min).</li>
+  <li>Na prograda equatorial o satélite voa para leste, no sentido da rotação: o chão “foge” dele,
+  e as duas velocidades, paralelas, simplesmente se subtraem (7607 − 502 ≈ 7105 m/s).</li>
+  <li>Na SSO (retrógrada, quase polar) o satélite cruza a rotação quase de lado e ligeiramente contra
+  ela: a velocidade relativa fica um pouco <em>maior</em>, e a soma é vetorial.</li>
+  <li>Só num satélite <strong>geoestacionário</strong> <code>v_ecef = 0</code>: a velocidade orbital
+  (≈ 3,07 km/s) é exatamente ω⊕ × r, e a equação se reduz a <code>v_eci = ω⊕ × r</code>.</li>
+</ul>
+<p>Para que serve retornar a velocidade: na Semana 4, a taxa de aproximação do satélite à estação
+(efeito Doppler) exige as duas velocidades no mesmo referencial; e estados vindos de GPS ou de
+catálogos em ECEF precisam ser convertidos para ECI para iniciar o Cowell. Os testes verificam o ponto
+fixo no solo (<code>v_eci = ω⊕ × r</code> e, de volta, <code>v_ecef = 0</code>) e a ida e volta de
+10 000 estados.</p>
+
+<h3>Recursos de NumPy usados em frames.py</h3>
+<p><strong><code>np.zeros_like(x)</code> e <code>np.ones_like(x)</code></strong> criam um array novo, com
+o mesmo shape e dtype de <code>x</code>, preenchido com 0 ou com 1 (o conteúdo de <code>x</code> é
+ignorado). Equivalem a <code>np.zeros(x.shape, dtype=x.dtype)</code>:</p>
+<pre><code>theta = np.array([0.1, 0.2, 0.3])
+np.zeros_like(theta)          # array([0., 0., 0.])  shape (3,)
+np.ones_like(theta)           # array([1., 1., 1.])
+np.zeros_like(np.array(0.5))  # array(0.)  → 0-D, como a entrada escalar</code></pre>
+<p>Em <code>rot_z</code>, a matriz Rz(θ) tem entradas que variam com θ (cos θ, sin θ) e entradas
+constantes (0 e 1). Como o <code>np.stack</code> exige entradas de shapes iguais, os 0 e 1 precisam ter
+o shape de <code>cos θ</code>: com θ (N,), um <code>0</code> literal faria o stack falhar. Com os
+<code>_like</code>, a mesma linha gera (3, 3) para θ escalar e (N, 3, 3) para θ (N,).
+<code>_omega_cross</code> usa <code>np.zeros_like(r[..., 2])</code> para a componente z nula de
+ω⊕ × r, pelo mesmo motivo. (Parente: <code>np.full_like(t, valor)</code>, usado em
+<code>mean_j2.py</code>, preenche com um valor qualquer.)</p>
+<p><strong><code>r[..., k]</code></strong>: os <code>...</code> (Ellipsis) valem “todos os eixos anteriores,
+quantos forem”, e <code>k</code> indexa o <em>último</em> eixo, que no projeto é sempre o das
+coordenadas x, y, z.</p>
+<table>
+  <tr><th>Shape de <code>r</code></th><th><code>r[..., 1]</code> equivale a</th><th>Resultado</th></tr>
+  <tr><td>(3,): uma posição</td><td><code>r[1]</code></td><td>um número (o y)</td></tr>
+  <tr><td>(N, 3): N instantes</td><td><code>r[:, 1]</code></td><td>(N,): o y de cada linha</td></tr>
+  <tr><td>(P, N, 3): P satélites</td><td><code>r[:, :, 1]</code></td><td>(P, N)</td></tr>
+</table>
+<p>Escrever <code>r[:, 1]</code> só funcionaria para (N, 3) e daria <code>IndexError</code> com (3,).
+Com <code>[..., k]</code> as funções aceitam qualquer quantidade de posições. O <code>axis=-1</code> do
+<code>np.stack</code> é a operação inversa: tira as coordenadas do último eixo com <code>[..., k]</code>
+e as recoloca no último eixo, de modo que a saída tem sempre o shape da entrada, sem nenhum
+<code>if</code>.</p>
+
 <h3>Etapa 2 — geodesy.py: a Terra é achatada (ECEF → lat, lon, alt)</h3>
 <p>Aqui entra o WGS84. Na Semana 1, o subponto usava uma Terra esférica:
 <code>lat = arcsin(z/r)</code> e <code>alt = r − 6378 km</code>. Como a Terra é achatada, essa
