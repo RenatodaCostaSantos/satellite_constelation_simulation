@@ -9,8 +9,14 @@ e a aceleração é o seu gradiente, a = ∇R. Em coordenadas cartesianas ECI (S
     c = 1,5·J2·µ·R⊕²/r⁵
     a = c·[x(5z²/r² − 1), y(5z²/r² − 1), z(5z²/r² − 3)]
 
-No equador a aceleração é radial e atrativa (−1,5·J2·µ·R⊕²/r⁴); nos polos aponta ao longo de +z,
-para fora (+3·J2·µ·R⊕²/r⁴): o bojo equatorial puxa o satélite para o plano do equador.
+Ela é uma correção pequena (~1e-3) à gravidade central, que continua dominante: a aceleração
+total sempre aponta para dentro. No equador a correção é radial e para dentro
+(−1,5·J2·µ·R⊕²/r⁴), deixando a gravidade ali um pouco mais forte; sobre os polos é radial e para
+fora (+3·J2·µ·R⊕²/r⁴), deixando-a um pouco mais fraca. Nesses pontos ela é radial e não exerce
+torque. Nas latitudes intermediárias surge uma componente não central, perpendicular a r e
+voltada para o plano do equador, de módulo 3·J2·µ·R⊕²·sin φ·cos φ/r⁴ (máxima em φ = 45°). O
+torque r × a dessa componente é horizontal (sem componente z, por isso ℓz se conserva) e gira ℓ
+em torno de z: é a precessão do nó, Ω̇ (Sem4 eq. 23).
 
 A energia conservada sob gravidade central + J2 é ε = v²/2 − µ/r − R(r).
 """
