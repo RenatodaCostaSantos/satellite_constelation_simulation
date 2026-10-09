@@ -398,3 +398,21 @@ class Wgs84Reference:
 
 
 WGS84_REF = Wgs84Reference()
+
+# ===============================================================================================
+# Semana 2 — card S2-04 do prompt da Semana 2: traço no solo (MeanJ2Propagator, 24 h a 10 s).
+#     Latitude máxima geocêntrica = 180° − i (SSO, DESIGN_ORBIT.lat_max_deg) ou i (ISS-like);
+#     a geodésica é maior (≈ +0,05° na SSO). Deslocamento do nó por revolução e Tnod da SSO estão
+#     em DESIGN_ORBIT (Sem4 §7.1, §7.5).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class GroundTrackS2:
+    sso_lat_max_geodetic_deg: float = 82.61  # ≈ (abs 0,1°)
+    iss_like_i_deg: float = 51.64  # latitude máxima geocêntrica da ISS-like
+    closure_91_6_ref_deg: float = 1.3e-4  # |λ(nó k+91) − λ(nó k)| após 6 dias (≈)
+    sso_antimeridian_crossings_24h: tuple[int, ...] = (15, 16)
+
+
+GROUND_TRACK_S2 = GroundTrackS2()
