@@ -376,3 +376,25 @@ COWELL_REFERENCE_S2: tuple[CowellReferenceCase, ...] = (
 # ω-ponto na órbita e = 0,02 (A.4): ajustado vs teoria no semieixo médio
 COWELL_ARGP_DOT_FIT_E002_DEG_DAY: float = 4.9095
 COWELL_ARGP_DOT_THEORY_E002_DEG_DAY: float = 4.9018
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.3 do prompt da Semana 2: WGS84 e geometria. f com o valor completo do
+#     WGS84 (NIMA TR8350.2); o texto do Sem4 usa 1/298,257. São Bento do Sapucaí a confirmar na
+#     S3-04.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class Wgs84Reference:
+    a_m: float = 6378137.0
+    inv_f: float = 298.257223563
+    b_m: float = 6356752.314245  # a(1 − f)
+    e2: float = 6.69437999e-3  # f(2 − f)
+    equator_minus_pole_km: float = 21.385  # a − b
+    geocentric_minus_geodetic_45_deg: float = -0.1924  # latitude a 45° geodésicos, h = 0
+    sbs_lat_deg: float = -22.69  # São Bento do Sapucaí (≈)
+    sbs_lon_deg: float = -45.73
+    sbs_alt_m: float = 900.0
+
+
+WGS84_REF = Wgs84Reference()

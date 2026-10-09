@@ -1,8 +1,9 @@
-"""Testes das constantes físicas (S1-03)."""
+"""Testes das constantes físicas (S1-03; WGS84 na S2-03)."""
 
 import math
 
 import pytest
+from golden.reference_values import WGS84_REF
 
 from satsim import constants as c
 
@@ -58,3 +59,14 @@ def test_j3_j4_negative() -> None:
     # Sem4 §2.2: J3 = −2,533e-6, J4 = −1,620e-6
     assert c.J3 < 0
     assert c.J4 < 0
+
+
+def test_wgs84() -> None:
+    # Apêndice A.3 do prompt da Semana 2 (WGS84, NIMA TR8350.2)
+    assert c.WGS84_A == WGS84_REF.a_m
+    assert 1.0 / c.WGS84_F == pytest.approx(WGS84_REF.inv_f, rel=1e-15)
+    assert c.WGS84_B == pytest.approx(WGS84_REF.b_m, abs=1e-6)
+    assert c.WGS84_E2 == pytest.approx(WGS84_REF.e2, abs=1e-11)
+    assert (c.WGS84_A - c.WGS84_B) / 1e3 == pytest.approx(WGS84_REF.equator_minus_pole_km, abs=1e-3)
+    # consistência: e² = 1 − b²/a²
+    assert c.WGS84_E2 == pytest.approx(1.0 - (c.WGS84_B / c.WGS84_A) ** 2, rel=1e-14)
