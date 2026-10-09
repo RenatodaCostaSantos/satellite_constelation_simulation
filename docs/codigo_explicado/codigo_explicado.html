@@ -69,6 +69,7 @@
     <li><code>src/satsim/propagators/base.py</code> — interface base dos propagadores</li>
     <li><code>src/satsim/astrotime.py</code> — tempo astronômico: UTC, Data Juliana e GMST (inclui ECI e ECEF)</li>
     <li><code>src/satsim/secular.py</code> — taxas seculares de J2 e período nodal (inclui <code>@dataclass</code>)</li>
+    <li><code>src/satsim/forces/j2.py</code> — a aceleração de J2 (inclui <code>Protocol</code>, <code>np.stack</code> e <code>__call__</code>)</li>
   </ol>
 </nav>
 
@@ -501,6 +502,210 @@ Semana 2 e verificam casos com resposta conhecida:</p>
   da ordem de quilômetros em <code>a</code>, não aparecem: o resultado é a tendência média.</li>
   <li><strong>Sem singularidades.</strong> Nenhuma fórmula divide por <code>e</code> nem por
   <code>sin i</code>, então as órbitas circulares e equatoriais funcionam sem tratamento especial.</li>
+</ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="j2-py">
+<h2>4. forces/j2.py — a aceleração de J2</h2>
+<div class="file">src/satsim/forces/j2.py · card S2-02</div>
+
+<h3>Para que serve o script</h3>
+<p>O <code>secular.py</code> (seção 3) descreve o efeito de J2 <em>na média</em>: três ângulos que
+derivam a taxas constantes. O <code>CowellPropagator</code> faz o caminho oposto: em vez de usar o
+resultado médio, ele integra numericamente a equação de movimento, passo a passo, e para isso precisa
+saber a <strong>força</strong> (por unidade de massa, ou seja, a aceleração) que atua no satélite em
+cada ponto do espaço. O <code>j2.py</code> fornece essa peça: dada a posição <code>r</code> do
+satélite em ECI, ele devolve a aceleração extra causada pelo achatamento da Terra.</p>
+<p>A equação que o Cowell integra é</p>
+<pre><code>r̈ = −µ·r/r³  +  a_J2(r)
+    └ Terra esférica ┘   └ correção do achatamento (este script) ┘</code></pre>
+<p>O primeiro termo é a gravidade de uma Terra esférica; fica no próprio propagador. O segundo é o
+que este script calcula. Separar os dois permite ligar e desligar a perturbação
+(<code>models=()</code> volta ao problema de dois corpos) e, na Semana 3, somar o arrasto atmosférico
+sem mexer no propagador.</p>
+
+<h3>A física: um potencial e o seu gradiente</h3>
+<p>A gravidade de uma Terra achatada é a da esfera mais uma pequena correção, descrita por uma
+<strong>função perturbadora</strong> R (Sem4 §2.2), que depende da distância <code>r</code> e da
+latitude geocêntrica φ (sin φ = z/r):</p>
+<pre><code>R(r) = −µ·J2·R⊕²·(3 sin²φ − 1) / (2 r³)</code></pre>
+<p>A aceleração é o <strong>gradiente</strong> de R, isto é, a direção em que R cresce mais depressa,
+com intensidade igual à taxa desse crescimento. Fazendo as derivadas em x, y e z chega-se à forma
+cartesiana usada no código (Sem4 §9.3):</p>
+<pre><code>c = 1,5·J2·µ·R⊕² / r⁵
+a = c·[ x·(5z²/r² − 1),  y·(5z²/r² − 1),  z·(5z²/r² − 3) ]</code></pre>
+<p>Para ter noção da escala, a 500 km de altitude a gravidade central vale 8,43 m/s² e a correção de
+J2 fica entre 0,012 e 0,024 m/s²: cerca de <strong>0,14%</strong>. A gravidade total continua
+apontando para dentro, sempre. O que J2 faz é deformá-la ligeiramente, de três jeitos:</p>
+<table>
+  <tr><th>Onde</th><th>Correção de J2 (500 km)</th><th>Efeito</th></tr>
+  <tr><td>Sobre o equador</td><td>radial, para dentro: 0,0118 m/s²</td>
+      <td>a gravidade fica um pouco <strong>mais forte</strong> (o bojo equatorial está logo abaixo)</td></tr>
+  <tr><td>Sobre os polos</td><td>radial, para fora: 0,0235 m/s²</td>
+      <td>a gravidade fica um pouco <strong>mais fraca</strong> (a Terra é “mais baixa” ali)</td></tr>
+  <tr><td>Latitudes intermediárias</td><td>tem uma componente lateral, rumo ao plano do equador:
+      até 0,0118 m/s², máxima em φ = 45°</td>
+      <td>a força deixa de ser <strong>central</strong>: é isso que faz a órbita precessar</td></tr>
+</table>
+<p><strong>Por que só a componente lateral causa precessão.</strong> Uma força radial (apontando para o
+centro da Terra ou para longe dele) não exerce torque, porque <code>r × a = 0</code> quando
+<code>a</code> é paralela a <code>r</code>. Sem torque, o momento angular ℓ = r × v não muda de
+direção, e portanto o plano da órbita não gira. Nas latitudes intermediárias, porém, a aceleração de
+J2 tem uma componente perpendicular a <code>r</code>, de módulo
+<code>3·J2·µ·R⊕²·sin φ·cos φ / r⁴</code>, que puxa o satélite em direção ao plano do equador. Essa
+componente exerce torque. Como a Terra é simétrica em torno do eixo z, o torque é sempre horizontal
+(componente z nula): ele não altera ℓz, só faz o vetor ℓ girar em torno do eixo z, como um pião
+inclinado. O nó ascendente acompanha esse giro: é a regressão do nó, Ω̇ (Sem4 eq. 23).</p>
+<p>Uma consequência útil para testar o código: como a força vem de um potencial e não depende do
+tempo, a energia se conserva, e como o torque não tem componente z, ℓz também se conserva. A energia
+conservada é</p>
+<pre><code>ε = v²/2 − µ/r − R(r)</code></pre>
+<p>com sinal <strong>menos</strong> antes de R, porque R é definido de modo que a aceleração é
+<code>+∇R</code> (a energia potencial é −R).</p>
+
+<h3>A interface: AccelerationModel e o Protocol</h3>
+<pre><code>class AccelerationModel(Protocol):
+    def __call__(self, t: float, r: NDArray, v: NDArray) -&gt; NDArray: ...</code></pre>
+<p>O <code>AccelerationModel</code> descreve o que o Cowell espera de qualquer perturbação: algo que
+possa ser <em>chamado</em> com o tempo <code>t</code>, a posição <code>r</code> e a velocidade
+<code>v</code> (cada uma com shape <code>(3,)</code>) e devolva uma aceleração <code>(3,)</code>. J2
+usa só <code>r</code>; o arrasto da Semana 3 vai usar também <code>v</code> (e talvez <code>t</code>),
+por isso a assinatura já recebe os três.</p>
+<p>A diferença para a <code>Propagator(ABC)</code> da seção 1 está em como cada classe declara que
+cumpre o contrato:</p>
+<ul>
+  <li>com uma <strong>ABC</strong>, a classe precisa <em>herdar</em> explicitamente
+  (<code>class KeplerPropagator(Propagator)</code>); o Python verifica na hora de criar o objeto se
+  os métodos abstratos foram implementados;</li>
+  <li>com um <strong>Protocol</strong>, não há herança: qualquer objeto que tenha um
+  <code>__call__</code> com essa assinatura serve. É a ideia de <em>duck typing</em> (“se anda como
+  pato e grasna como pato, é pato”), mas escrita de forma que o editor e os verificadores de tipo
+  consigam conferir.</li>
+</ul>
+<p>Os <code>...</code> no corpo do método são literalmente o objeto <code>Ellipsis</code> do Python,
+usado aqui como “corpo vazio”: o Protocol só descreve a assinatura, não implementa nada.</p>
+
+<h3>A função j2_acceleration, linha a linha</h3>
+<pre><code>def j2_acceleration(r, mu=MU, j2=J2, re=R_EARTH):
+    r = np.asarray(r, dtype=float)
+    x, y, z = r[..., 0], r[..., 1], r[..., 2]
+    r2 = x * x + y * y + z * z
+    c = 1.5 * j2 * mu * re**2 / (r2 * r2 * np.sqrt(r2))
+    s = 5.0 * z * z / r2
+    return np.stack([c * x * (s - 1.0), c * y * (s - 1.0), c * z * (s - 3.0)], axis=-1)</code></pre>
+<ul>
+  <li><strong><code>np.asarray(r, dtype=float)</code></strong> aceita lista, tupla ou array e devolve um
+  array de float, sem copiar se já for um.</li>
+  <li><strong><code>r[..., 0]</code></strong>: os três pontos (de novo o <code>Ellipsis</code>) significam
+  “todos os eixos anteriores, quantos forem”, e o <code>0</code> escolhe a primeira coordenada do
+  <em>último</em> eixo. Para <code>r</code> de shape <code>(3,)</code>, <code>x</code> é um número;
+  para <code>(N, 3)</code>, <code>x</code> é a coluna inteira, com shape <code>(N,)</code>. A mesma
+  linha serve aos dois casos.</li>
+  <li><strong><code>r2</code></strong> é r² (quadrado da distância). O código evita calcular
+  <code>r</code> e depois elevá-lo: <code>r⁵</code> é escrito como
+  <code>r2 · r2 · √r2</code>, que é uma única raiz quadrada.</li>
+  <li><strong><code>c</code></strong> e <strong><code>s</code></strong> são os fatores comuns da fórmula:
+  <code>c = 1,5·J2·µ·R⊕²/r⁵</code> e <code>s = 5z²/r²</code>. Calculá-los uma vez evita repetir a
+  mesma conta nas três componentes.</li>
+  <li>A última linha monta o vetor aceleração com <code>np.stack</code>, explicado a seguir.</li>
+</ul>
+
+<h3>O que o np.stack faz</h3>
+<p><code>np.stack</code> junta vários arrays de <strong>mesmo shape</strong> num array novo, criando um
+<strong>eixo novo</strong>. O parâmetro <code>axis</code> diz onde esse eixo novo entra:</p>
+<pre><code>x = np.array([1, 2, 3])
+y = np.array([4, 5, 6])
+
+np.stack([x, y], axis=0)    # eixo novo na frente → shape (2, 3)
+# [[1, 2, 3],
+#  [4, 5, 6]]
+
+np.stack([x, y], axis=-1)   # eixo novo no fim → shape (3, 2)
+# [[1, 4],
+#  [2, 5],
+#  [3, 6]]</code></pre>
+<p>Em <code>j2_acceleration</code>, as três componentes (aₓ, a_y, a_z) são calculadas
+separadamente, e cada uma tem o shape de <code>x</code>:</p>
+<ul>
+  <li>para <code>r</code> com shape <strong>(N, 3)</strong> (N instantes), cada componente tem shape
+  <code>(N,)</code>; o <code>stack(..., axis=-1)</code> as coloca lado a lado, como colunas, e o
+  resultado é <strong>(N, 3)</strong>: uma linha por instante, com colunas aₓ, a_y, a_z;</li>
+  <li>para <code>r</code> com shape <strong>(3,)</strong> (um único ponto), cada componente é um número
+  e o resultado é um vetor <strong>(3,)</strong>.</li>
+</ul>
+<p>O <code>axis=-1</code> (o último eixo) é o que permite que a mesma linha sirva para um ponto e
+para N pontos, sem nenhum <code>if</code>: a saída sempre tem o shape da entrada.</p>
+<p><strong>Diferença para <code>np.concatenate</code>.</strong> <code>concatenate</code> emenda arrays
+ao longo de um eixo que <em>já existe</em>, sem criar eixo novo. O <code>CowellPropagator</code> usa
+<code>np.concatenate([r0, v0])</code> para formar o estado do integrador: dois vetores
+<code>(3,)</code> viram um único vetor <code>(6,)</code>, e não uma matriz <code>(2, 3)</code>, que
+seria o resultado de <code>np.stack</code>.</p>
+<pre><code>np.concatenate([x, y])      # [1, 2, 3, 4, 5, 6]   → shape (6,)
+np.stack([x, y])            # [[1, 2, 3], [4, 5, 6]] → shape (2, 3)</code></pre>
+
+<h3>A função j2_potential</h3>
+<p>Calcula a própria função perturbadora R. O propagador não precisa dela (só a aceleração entra na
+equação de movimento), mas ela serve para <strong>conferir</strong> o código: nos testes, o gradiente
+numérico de R tem de bater com <code>j2_acceleration</code>, e a energia
+<code>v²/2 − µ/r − R</code> tem de ficar constante ao longo da integração. Aqui a soma dos quadrados
+usa <code>np.sum(r * r, axis=-1)</code>, que soma ao longo do último eixo: <code>(N, 3)</code> vira
+<code>(N,)</code>, e <code>(3,)</code> vira um número.</p>
+
+<h3>A classe J2Acceleration e o método __call__</h3>
+<pre><code>class J2Acceleration:
+    def __init__(self, mu=MU, j2=J2, re=R_EARTH):
+        self.mu = mu
+        self.j2 = j2
+        self.re = re
+
+    def __call__(self, t, r, v):
+        return j2_acceleration(r, mu=self.mu, j2=self.j2, re=self.re)</code></pre>
+<p>Se a função <code>j2_acceleration</code> já faz a conta, para que uma classe? Por dois motivos:</p>
+<ul>
+  <li><strong>Adaptar a assinatura.</strong> O Cowell chama toda perturbação como
+  <code>modelo(t, r, v)</code>; a função recebe só <code>r</code>. A classe faz a ponte, ignorando
+  <code>t</code> e <code>v</code>.</li>
+  <li><strong>Guardar parâmetros.</strong> <code>J2Acceleration(j2=0.0)</code> cria um modelo com outro
+  valor de J2 (útil em testes) sem que o Cowell precise saber disso: ele só chama o objeto.</li>
+</ul>
+<p>O método especial <strong><code>__call__</code></strong> é o que torna um objeto “chamável” como se
+fosse uma função. Com ele, as duas formas abaixo são equivalentes:</p>
+<pre><code>modelo = J2Acceleration()
+modelo(0.0, r, v)             # o Python traduz para...
+modelo.__call__(0.0, r, v)    # ...esta chamada</code></pre>
+<p>É assim que o Cowell usa a perturbação, dentro da função que calcula a derivada do estado:</p>
+<pre><code>acc = -self._mu / r_norm**3 * r       # gravidade central
+for model in self._models:            # (J2Acceleration(),) por padrão
+    acc = acc + model(t, r, v)        # soma cada perturbação</code></pre>
+<p>O método <code>potential(r)</code> da classe chama <code>j2_potential</code> com os mesmos parâmetros
+do modelo, para que energia e aceleração sejam sempre calculadas com o mesmo J2.</p>
+
+<h3>Validação</h3>
+<p>Os testes em <code>tests/test_j2_force.py</code> verificam a aceleração isoladamente, e os de
+<code>tests/test_cowell.py</code> verificam o seu efeito numa órbita integrada:</p>
+<table>
+  <tr><th>Teste</th><th>O que é verificado</th></tr>
+  <tr><td>Gradiente numérico</td><td>em 20 pontos aleatórios entre 400 e 2000 km, a aceleração bate com
+      as diferenças centrais de R (passo de 1 m) a 10⁻⁶ relativo</td></tr>
+  <tr><td>Equador e polo</td><td>−1,5·J2·µ·R⊕²/r⁴ ao longo de r̂ e +3·J2·µ·R⊕²/r⁴ ao longo de +z, a
+      10⁻¹² relativo</td></tr>
+  <tr><td>Vetorização</td><td><code>(N, 3)</code> dá o mesmo resultado que N chamadas com
+      <code>(3,)</code></td></tr>
+  <tr><td>Energia e ℓz (Cowell, 10 dias)</td><td>constantes a 10⁻⁹ relativo</td></tr>
+  <tr><td>Regressão do nó (Cowell, 10 dias)</td><td>Ω̇ medido concorda com a teoria do
+      <code>secular.py</code> em menos de 0,5%</td></tr>
+</table>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>Só J2.</strong> J3, J4 e os harmônicos tesserais (que dependem da longitude) ficam de
+  fora. J2 é cerca de 400 vezes maior que J3 e responde pela quase totalidade do efeito em LEO.</li>
+  <li><strong>Terra sem rotação no modelo de força.</strong> Como J2 é simétrico em torno do eixo z,
+  girar a Terra não muda a aceleração; por isso a conta pode ser feita direto em ECI, sem passar por
+  ECEF.</li>
+  <li><strong>ECI simplificado.</strong> O eixo z é o polo da data, sem precessão nem nutação (ADR
+  0001).</li>
 </ul>
 </section>
 
