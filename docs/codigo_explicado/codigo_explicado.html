@@ -70,6 +70,7 @@
     <li><code>src/satsim/astrotime.py</code> — tempo astronômico: UTC, Data Juliana e GMST (inclui ECI e ECEF)</li>
     <li><code>src/satsim/secular.py</code> — taxas seculares de J2 e período nodal (inclui <code>@dataclass</code>)</li>
     <li><code>src/satsim/forces/j2.py</code> — a aceleração de J2 (inclui <code>Protocol</code>, <code>np.stack</code> e <code>__call__</code>)</li>
+    <li><code>src/satsim/frames.py</code> e <code>geodesy.py</code> — onde o satélite está sobre a Terra (ECI → ECEF → WGS84)</li>
   </ol>
 </nav>
 
@@ -706,6 +707,149 @@ do modelo, para que energia e aceleração sejam sempre calculadas com o mesmo J
   ECEF.</li>
   <li><strong>ECI simplificado.</strong> O eixo z é o polo da data, sem precessão nem nutação (ADR
   0001).</li>
+</ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="frames-geodesy-py">
+<h2>5. frames.py e geodesy.py — onde o satélite está sobre a Terra</h2>
+<div class="file">src/satsim/frames.py · src/satsim/geodesy.py · card S2-03</div>
+
+<h3>Para que servem (e para que não servem)</h3>
+<p>Estes dois módulos <strong>não mexem nos propagadores</strong>. Kepler, MeanJ2 e Cowell continuam
+calculando a órbita em ECI exatamente como antes. O que os módulos resolvem é outra pergunta:
+<strong>sobre que ponto da Terra o satélite está</strong>. É disso que precisam o mapa 2D, o traço no
+solo e, na Semana 4, a visibilidade do satélite a partir de São Bento do Sapucaí.</p>
+<p>O caminho de um ponto da órbita até o mapa tem duas etapas independentes:</p>
+<pre><code>Propagador ──(r em ECI)──► frames.py ──(r em ECEF)──► geodesy.py ──► lat, lon, alt
+ (órbita no espaço)       gira pela rotação         converte x, y, z em    (mapa, GUI,
+                          da Terra (GMST)           coordenadas de mapa     estação)</code></pre>
+
+<h3>Etapa 1 — frames.py: a Terra gira (ECI → ECEF)</h3>
+<p>O propagador dá a posição num referencial que <strong>não gira</strong> com a Terra (ECI, seção 2).
+Para saber sobre qual longitude o satélite está, é preciso descontar a rotação da Terra, girando o
+vetor em torno do eixo z pelo ângulo θ = GMST (o tempo sideral de Greenwich, calculado pelo
+<code>astrotime.py</code>):</p>
+<pre><code>r_ecef = Rz(θ)·r_eci,    Rz(θ) = [[ cos θ, sin θ, 0],
+                                  [−sin θ, cos θ, 0],
+                                  [   0,     0,   1]]</code></pre>
+<p>Essa etapa <strong>não tem nada a ver com a forma da Terra</strong>: valeria até para uma Terra
+perfeitamente esférica. Ela já existia na Semana 1, escondida dentro do <code>scene_export.py</code>;
+agora vira uma função da biblioteca, reutilizável e testada. Dois detalhes:</p>
+<ul>
+  <li><strong>Sinal da rotação.</strong> Rz(θ) é uma rotação <em>passiva</em>: são os eixos que giram,
+  não o ponto. Se a Terra girou 90° para leste, um ponto fixo no espaço sobre o equinócio vernal,
+  r_eci = (1, 0, 0), aparece em r_ecef = (0, −1, 0), isto é, na longitude −90° (a oeste). O teste
+  <code>test_rotation_sign</code> verifica exatamente esse caso.</li>
+  <li><strong>Velocidades.</strong> Além de girar o vetor, é preciso descontar o “arrasto” da rotação:
+  <code>v_ecef = Rz(θ)·(v_eci − ω⊕ × r_eci)</code>. Um ponto parado no solo tem velocidade
+  ECI = ω⊕ × r (cerca de 430 m/s no Brasil) e velocidade ECEF zero.</li>
+</ul>
+<p>O helper <code>gmst_at(epoch, t)</code> devolve θ nos instantes t (segundos desde a época do
+propagador), para que quem chama não precise lidar com Datas Julianas.</p>
+
+<h3>Etapa 2 — geodesy.py: a Terra é achatada (ECEF → lat, lon, alt)</h3>
+<p>Aqui entra o WGS84. Na Semana 1, o subponto usava uma Terra esférica:
+<code>lat = arcsin(z/r)</code> e <code>alt = r − 6378 km</code>. Como a Terra é achatada, essa
+aproximação erra, e não pouco:</p>
+<table>
+  <tr><th>Satélite a 500 km de altitude real</th><th>Esfera (Semana 1)</th><th>WGS84 (agora)</th></tr>
+  <tr><td>sobre o equador</td><td>500,0 km</td><td>500 km</td></tr>
+  <tr><td>a 45° de latitude</td><td>489,3 km</td><td>500 km</td></tr>
+  <tr><td>sobre o polo</td><td>478,6 km</td><td>500 km</td></tr>
+</table>
+<p>A latitude também muda. A esfera mede a <strong>latitude geocêntrica</strong>, o ângulo da reta que
+liga o ponto ao centro da Terra. Mapas e GPS usam a <strong>latitude geodésica</strong>, o ângulo da
+<em>normal à superfície</em> (a vertical local, a direção de um fio de prumo). As duas coincidem no
+equador e nos polos e diferem até 0,19° a 45°, o que dá cerca de 21 km no chão.</p>
+
+<h3>O que são as constantes WGS84</h3>
+<p>WGS84 (<em>World Geodetic System 1984</em>) é o elipsoide padrão que aproxima a forma da Terra. É o
+sistema do GPS e dos mapas: quando se diz que São Bento do Sapucaí fica em −22,69°, −45,73°, 900 m,
+esses números são coordenadas WGS84. O elipsoide é definido por dois números, e os outros dois
+derivam deles:</p>
+<table>
+  <tr><th>Constante</th><th>Valor</th><th>Significado</th></tr>
+  <tr><td><code>WGS84_A</code></td><td>6 378 137 m</td><td>raio equatorial (igual ao <code>R_EARTH</code>
+      que já usávamos)</td></tr>
+  <tr><td><code>WGS84_F</code></td><td>1/298,257223563</td><td>achatamento: quanto o polo é “amassado” em
+      relação ao equador</td></tr>
+  <tr><td><code>WGS84_B</code></td><td>6 356 752 m</td><td>raio polar, b = a(1 − f): 21,4 km menor que o
+      equatorial</td></tr>
+  <tr><td><code>WGS84_E2</code></td><td>0,00669</td><td>excentricidade² do elipsoide, e² = f(2 − f): a forma
+      em que o achatamento entra nas fórmulas de conversão</td></tr>
+</table>
+<p>Elas são necessárias porque, sem a forma da Terra, não dá para converter x, y, z em latitude e
+altitude corretas, nem fazer o caminho inverso: colocar a estação de São Bento do Sapucaí, dada em
+lat/lon/alt, no mesmo referencial do satélite.</p>
+
+<h3>As conversões</h3>
+<p><strong>Geodésico → ECEF</strong> (<code>geodetic_to_ecef</code>) tem fórmula fechada. N é o raio de
+curvatura do elipsoide na latitude φ (a distância do ponto da superfície até o eixo z, medida ao longo
+da normal):</p>
+<pre><code>N = a / √(1 − e²·sin²φ)
+x = (N + h)·cos φ·cos λ
+y = (N + h)·cos φ·sin λ
+z = (N·(1 − e²) + h)·sin φ</code></pre>
+<p><strong>ECEF → geodésico</strong> (<code>ecef_to_geodetic</code>) não tem fórmula fechada simples,
+porque φ aparece dentro de N. O código usa o método de <strong>Bowring</strong>: parte de um chute
+(a latitude de um ponto na superfície) e refina φ até a mudança entre iterações ficar abaixo de
+10⁻¹² rad, o que leva 2 ou 3 iterações. A longitude é direta, λ = atan2(y, x). A altitude é calculada
+por</p>
+<pre><code>h = p·cos φ + z·sin φ − a·√(1 − e²·sin²φ),     p = √(x² + y²)</code></pre>
+<p>e não pela forma mais comum <code>h = p/cos φ − N</code>, que divide por cos φ e explode nos polos.
+A forma usada não divide por nada que possa zerar, então funciona nos polos, no equador e também
+para h negativo (pontos abaixo do elipsoide).</p>
+<p><strong><code>ecef_to_spherical</code></strong> mantém a aproximação esférica da Semana 1 (latitude
+geocêntrica e r − R⊕), apenas para comparação: o S2-07 vai usá-la para medir quanto a GUI muda ao
+trocar a esfera pelo elipsoide.</p>
+<p>As funções seguem a convenção de shapes do projeto: uma posição <code>(3,)</code> gera três
+números, e <code>(N, 3)</code> gera três arrays <code>(N,)</code>.</p>
+
+<h3>A ligação com J2</h3>
+<p>O fato físico é o mesmo (a Terra é achatada), mas ele aparece em dois papéis diferentes:</p>
+<ul>
+  <li><strong>J2 (seções 3 e 4): dinâmica.</strong> O bojo equatorial altera a <em>gravidade</em> e,
+  com isso, a órbita (precessão do nó). Fica dentro dos propagadores.</li>
+  <li><strong>WGS84 (esta seção): geometria.</strong> A <em>forma da superfície</em> muda como
+  descrevemos a posição em coordenadas de mapa. Fica depois dos propagadores e não altera a
+  órbita.</li>
+</ul>
+<p>Os dois números estão relacionados (um planeta em rotação, em equilíbrio, fica achatado e por
+isso tem J2 ≠ 0), mas o código os usa de forma independente.</p>
+
+<h3>Onde isso será usado</h3>
+<ul>
+  <li><strong>S2-04:</strong> o subponto e o traço no solo, para qualquer propagador.</li>
+  <li><strong>S2-07:</strong> o <code>scene_export</code> troca a aproximação esférica pelo geodésico.
+  A GUI passa a mostrar a latitude e a altitude corretas; a latitude máxima da SSO aparece como
+  82,6° (geodésica) em vez de 82,56° (geocêntrica).</li>
+  <li><strong>Semana 4:</strong> a visibilidade. A elevação do satélite vista de São Bento depende de
+  onde a estação realmente está, o que exige converter a posição WGS84 da estação para ECEF.</li>
+</ul>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que é verificado</th></tr>
+  <tr><td>Sinal da rotação</td><td>(1, 0, 0) com θ = 90° → longitude −90°</td></tr>
+  <tr><td>ECI ↔ ECEF, ida e volta</td><td>10 000 pontos de LEO a GEO; erro no limite da precisão
+      de máquina: &lt; 10⁻¹⁵ relativo (medido: ≈ 2 nm em LEO)</td></tr>
+  <tr><td>Ponto fixo no solo</td><td>velocidade ECI = ω⊕ × r, e de volta v_ecef = 0</td></tr>
+  <tr><td>Valores conhecidos</td><td>(a, 0, 0) → (0°, 0°, 0 m); (0, 0, b) → (90°, h = 0);
+      a − b = 21,385 km; geocêntrica − geodésica a 45° = −0,1924°</td></tr>
+  <tr><td>Geodésico, ida e volta</td><td>10 000 pontos com h de −10 km a 40 000 km, mais polos e
+      equador: erro &lt; 1 mm (medido: ≈ 2·10⁻⁸ m)</td></tr>
+  <tr><td>Skyfield (oráculo)</td><td>20 pontos, incluindo São Bento do Sapucaí: diferença &lt; 10 m
+      (medida: ≈ 3·10⁻⁹ m na ida e 5·10⁻⁸ m na volta)</td></tr>
+</table>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>ECI do equinócio da data, sem precessão nem nutação.</strong> Por isso o ECI do satsim
+  não é comparável ao GCRS do Skyfield (diferem em ≈ 0,37° em 2026), e o Skyfield valida só a parte
+  ECEF ↔ geodésico.</li>
+  <li><strong>UT1 ≈ UTC</strong> no GMST: até 0,9 s, ≈ 0,4 km no equador.</li>
+  <li><strong>Sem movimento polar:</strong> ECI e ECEF compartilham o eixo z (erro de ~10 m).</li>
 </ul>
 </section>
 
