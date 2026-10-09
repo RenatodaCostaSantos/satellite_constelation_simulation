@@ -412,7 +412,14 @@ class GroundTrackS2:
     sso_lat_max_geodetic_deg: float = 82.61  # ≈ (abs 0,1°)
     iss_like_i_deg: float = 51.64  # latitude máxima geocêntrica da ISS-like
     closure_91_6_ref_deg: float = 1.3e-4  # |λ(nó k+91) − λ(nó k)| após 6 dias (≈)
-    sso_antimeridian_crossings_24h: tuple[int, ...] = (15, 16)
+    # Cruzamentos do antimeridiano na SSO. O card S2-04 dizia {15, 16} (≈ 15,17 rev/dia), mas a
+    # SSO é retrógrada: por revolução nodal a longitude do subponto recua 360° + 23,736°, logo
+    # (360 + 23,736)/360 × 86400/5696,70 = 16,17 cruzamentos/dia → 16 ou 17 em 24 h, conforme Ω0;
+    # no ciclo 91/6, (360 + 23,736)/360 × 91 = 97,0. Corrigido na revisão da S2-04 (dedução acima,
+    # confirmada por simulação com vários Ω0).
+    sso_antimeridian_crossings_24h: tuple[int, ...] = (16, 17)
+    sso_antimeridian_crossings_per_day: float = 16.17
+    sso_antimeridian_crossings_91_6_cycle: int = 97
 
 
 GROUND_TRACK_S2 = GroundTrackS2()

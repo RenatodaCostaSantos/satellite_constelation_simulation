@@ -5,6 +5,7 @@ card S2-04 do prompt da Semana 2).
 """
 
 import math
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import numpy as np
@@ -143,10 +144,7 @@ def test_ascending_nodes_synthetic() -> None:
 
 
 def test_split_at_antimeridian(sso_track) -> None:
-    # Critério S2-04: nenhum segmento com |Δλ| > 180°; pontos preservados; na SSO, 15 ou 16
-    # cruzamentos em 24 h (GROUND_TRACK_S2). Ressalva (reportada na S2-04): a SSO é retrógrada e a
-    # longitude recua 360° + 23,7° por revolução, ≈ 16,17 cruzamentos/dia; conforme Ω0 o número é
-    # 16 ou 17. Com Ω0 = 30° (usado aqui) dá 16.
+    # Critério S2-04: nenhum segmento com |Δλ| > 180°; nenhum ponto criado nem descartado
     lat, lon, _, _ = sso_track
     segments = split_at_antimeridian(lon, lat)
     for seg_lon, seg_lat in segments:
@@ -154,7 +152,29 @@ def test_split_at_antimeridian(sso_track) -> None:
         assert np.all(np.abs(np.diff(seg_lon)) <= math.pi)
     assert sum(seg_lon.size for seg_lon, _ in segments) == lon.size
     np.testing.assert_array_equal(np.concatenate([s for s, _ in segments]), lon)
-    assert len(segments) - 1 in GROUND_TRACK_S2.sso_antimeridian_crossings_24h
+
+
+def _sso_crossings(raan_deg: float, duration_s: float, step_s: float) -> int:
+    el = replace(SSO, raan=math.radians(raan_deg))
+    t = np.arange(0.0, duration_s + step_s / 2, step_s)
+    lat, lon, _ = subpoint(MeanJ2Propagator(el, EPOCH), t)
+    return len(split_at_antimeridian(lon, lat)) - 1
+
+
+@pytest.mark.parametrize("raan_deg", [0.0, 30.0, 100.0, 150.0, 250.0])
+def test_sso_antimeridian_crossings_24h(raan_deg: float) -> None:
+    # GROUND_TRACK_S2 (corrigido na revisão da S2-04): SSO retrógrada → 16,17 cruzamentos/dia,
+    # 16 ou 17 em 24 h conforme Ω0 (o card dizia {15, 16})
+    n = _sso_crossings(raan_deg, 86400.0, 10.0)
+    assert n in GROUND_TRACK_S2.sso_antimeridian_crossings_24h
+
+
+def test_sso_antimeridian_crossings_91_6_cycle() -> None:
+    # GROUND_TRACK_S2: no ciclo de 6 dias, (360° + 23,736°)/360° × 91 = 97,0 cruzamentos
+    rate = (360.0 - DESIGN_ORBIT.dlambda_per_rev_deg) / 360.0 * 86400.0 / DESIGN_ORBIT.tnod_s
+    assert rate == pytest.approx(GROUND_TRACK_S2.sso_antimeridian_crossings_per_day, abs=0.005)
+    n = _sso_crossings(30.0, DESIGN_ORBIT.d_days * 86400.0, 30.0)
+    assert n == GROUND_TRACK_S2.sso_antimeridian_crossings_91_6_cycle
 
 
 def test_split_without_crossing_is_single_segment() -> None:
