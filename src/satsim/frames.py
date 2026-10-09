@@ -116,6 +116,12 @@ def ecef_to_eci(
     if v is None:
         return r_eci
     v = np.asarray(v, dtype=float)
+    # v_eci é a velocidade do satélite em relação ao referencial ECI. A entrada v é a velocidade
+    # em relação ao ECEF (que gira com a Terra), escrita nos eixos do ECEF. Duas etapas:
+    # 1) _rotate(v, -theta): reescreve o mesmo vetor nos eixos do ECI (θ = GMST, o ângulo que a
+    #    Terra girou; é uma troca de eixos, que não altera o tamanho do vetor);
+    # 2) + ω⊕ × r_eci: soma a velocidade linear que o próprio ECEF tem naquele ponto por estar
+    #    girando (≈ 430 m/s em São Bento; zero sobre o eixo z).
     return r_eci, _rotate(v, -theta) + _omega_cross(r_eci)
 
 
