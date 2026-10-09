@@ -3,7 +3,7 @@
   Fonte do PDF docs/codigo_explicado/codigo_explicado.pdf.
   Para acrescentar uma explicação: adicione uma nova <section class="script"> antes de </main>
   e um item no sumário. Para regenerar o PDF (a partir da raiz do repositório):
-    google-chrome --headless --no-pdf-header-footer \
+    google-chrome --headless --no-pdf-header-footer --allow-file-access-from-files \
       --print-to-pdf=docs/codigo_explicado/codigo_explicado.pdf \
       docs/codigo_explicado/codigo_explicado.html
 -->
@@ -71,6 +71,7 @@
     <li><code>src/satsim/secular.py</code> — taxas seculares de J2 e período nodal (inclui <code>@dataclass</code>)</li>
     <li><code>src/satsim/forces/j2.py</code> — a aceleração de J2 (inclui <code>Protocol</code>, <code>np.stack</code> e <code>__call__</code>)</li>
     <li><code>src/satsim/frames.py</code> e <code>geodesy.py</code> — onde o satélite está sobre a Terra (ECI → ECEF → WGS84)</li>
+    <li><code>src/satsim/groundtrack.py</code> — o traço no solo: subponto, antimeridiano e nós ascendentes</li>
   </ol>
 </nav>
 
@@ -972,6 +973,118 @@ isso tem J2 ≠ 0), mas o código os usa de forma independente.</p>
   ECEF ↔ geodésico.</li>
   <li><strong>UT1 ≈ UTC</strong> no GMST: até 0,9 s, ≈ 0,4 km no equador.</li>
   <li><strong>Sem movimento polar:</strong> ECI e ECEF compartilham o eixo z (erro de ~10 m).</li>
+</ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="groundtrack-py">
+<h2>6. groundtrack.py — o traço no solo</h2>
+<div class="file">src/satsim/groundtrack.py · scripts/plot_ground_track.py · card S2-04</div>
+
+<h3>Para que serve</h3>
+<p>O <strong>traço no solo</strong> (<em>ground track</em>) é a linha que o subponto do satélite, o ponto
+da superfície logo abaixo dele, desenha no mapa ao longo do tempo. O <code>groundtrack.py</code> tem três
+funções:</p>
+<ul>
+  <li><code>subpoint(propagator, t)</code> responde “onde o satélite está sobre a Terra”, para qualquer
+  propagador: posição ECI → rotação pelo GMST → ECEF → latitude, longitude e altitude WGS84 (seção 5);</li>
+  <li><code>split_at_antimeridian(lon, lat)</code> prepara o traço para ser desenhado num mapa 2D sem
+  riscos atravessando a figura;</li>
+  <li><code>ascending_node_crossings(t, lat, lon)</code> encontra quando e onde o satélite cruza o
+  equador subindo.</li>
+</ul>
+<p>O card tem dois lados. O <code>groundtrack.py</code> é <strong>código de produção</strong>: o S2-07
+usa a mesma conta do subponto para alimentar a GUI, a Semana 4 parte dela para a visibilidade sobre
+São Bento, e a Semana 5 usa os nós ascendentes para a grade e o faseamento da constelação 91/6. Já o
+script <code>scripts/plot_ground_track.py</code> e as imagens em <code>reports/s2_comparacao/</code>
+são <strong>verificação</strong>: um gráfico estático (matplotlib), reprodutível e versionado, que
+mostra num comando só que toda a cadeia da semana funciona junta. A GUI interativa (o viewer) não muda
+neste card; ela é atualizada no S2-07.</p>
+<figure>
+  <img src="../../reports/s2_comparacao/ground_track_sso.png" style="width:100%"
+       alt="Traço no solo da SSO de projeto em 24 horas">
+  <figcaption>Traço no solo da SSO de projeto em 24 h (MeanJ2Propagator, passo de 10 s), gerado por
+  <code>python scripts/plot_ground_track.py --preset sso</code>. Os pontos vermelhos são os nós
+  ascendentes; cada um fica 23,7° a oeste do anterior.</figcaption>
+</figure>
+
+<h3>split_at_antimeridian: evitar o risco que atravessa o mapa</h3>
+<p><strong>O problema.</strong> No mapa 2D a longitude vai de −180° (borda esquerda) a +180° (borda
+direita), mas na Terra as duas bordas são a mesma linha: o antimeridiano, no meio do Pacífico. Quando o
+satélite passa por ela, a longitude salta de, por exemplo, +179° para −179°. Na Terra ele andou só 2°;
+no mapa, os dois pontos estão em lados opostos. Se o gráfico ligar os pontos em ordem, desenha uma linha
+horizontal atravessando o mapa inteiro:</p>
+<pre><code>lon [°]:  170   175   179  -179  -175  -170
+                         ↑
+                 salto de 358°: o satélite saiu pela borda direita
+                 e entrou pela esquerda</code></pre>
+<p><strong>O que a função faz.</strong> Percorre as longitudes em ordem e, onde a diferença entre duas
+amostras seguidas passa de 180°, corta o traço em dois pedaços:</p>
+<pre><code>segmento 1:  lon  170,  175,  179     → termina na borda direita
+segmento 2:  lon -179, -175, -170     → começa na borda esquerda</code></pre>
+<p>Cada pedaço é desenhado separadamente, sem linha atravessando o mapa. Nenhum ponto é criado nem
+descartado: o traço só é dividido. O critério “&gt; 180°” funciona porque, entre duas amostras próximas
+(10 s), o satélite anda bem menos que 180° em longitude; um salto aparente maior só pode significar que
+ele deu a volta pela borda. No código, os pontos de corte saem de
+<code>np.flatnonzero(np.abs(np.diff(lon)) &gt; π) + 1</code> e o traço é dividido com
+<code>np.split</code>.</p>
+<p><strong>Quantas vezes o traço cruza o antimeridiano.</strong> A SSO de projeto é
+<em>retrógrada</em> (i &gt; 90°): a cada revolução nodal a longitude do subponto recua uma volta inteira
+mais os 23,736° do deslocamento do nó. São (360 + 23,736)/360 × 86400/5696,70 ≈ 16,17 cruzamentos por
+dia, ou seja, 16 ou 17 em 24 h conforme a posição inicial, e exatamente 97 no ciclo de 6 dias
+((360 + 23,736)/360 × 91 = 97,0). A imagem acima tem 17 pedaços: 16 cruzamentos. O card S2-04 previa 15
+ou 16, com base nas 15,17 revoluções por dia; a correção foi registrada no golden file na revisão do
+card.</p>
+
+<h3>ascending_node_crossings: quando e onde o satélite cruza o equador subindo</h3>
+<p><strong>O que é o nó ascendente.</strong> É o ponto onde o satélite cruza o equador indo do hemisfério
+sul para o norte, com a latitude passando de negativa para positiva. Acontece uma vez por volta, e a
+sequência desses pontos mostra como o traço se desloca dia a dia.</p>
+<p><strong>O problema.</strong> O satélite só é amostrado a cada 10 s, então quase nunca há uma amostra
+com latitude exatamente 0. O cruzamento acontece <em>entre</em> duas amostras:</p>
+<pre><code>t [s]:     1000      1010
+lat [°]:   -0,30     +0,34     ← o sinal trocou: cruzou o equador aqui
+lon [°]:   -45,10    -45,05</code></pre>
+<p><strong>O que a função faz</strong>, em três passos:</p>
+<ol>
+  <li><strong>Acha os pares</strong> de amostras em que a latitude passa de negativa para não negativa
+  (sul → norte). Os pares em que ela desce (norte → sul) são nós descendentes e ficam de fora.</li>
+  <li><strong>Interpola linearmente</strong> o instante em que a latitude vale 0. No exemplo, a latitude
+  percorre 0,64° em 10 s e precisa subir 0,30° para chegar a zero: 0,30/0,64 = 47% do intervalo, logo
+  t ≈ 1004,7 s.</li>
+  <li><strong>Interpola a longitude</strong> na mesma fração: −45,10 + 0,47 × 0,05 ≈ −45,08°. Se o par
+  estiver dos dois lados do antimeridiano, a diferença de longitude é reduzida a [−180°, 180°) antes da
+  interpolação (2°, e não 358°), pelo mesmo motivo da função anterior.</li>
+</ol>
+<p>O resultado são duas listas: os instantes e as longitudes de cada nó ascendente. Com elas os testes
+verificam a física da semana:</p>
+<table>
+  <tr><th>Grandeza</th><th>Valor medido</th><th>O que confirma</th></tr>
+  <tr><td>Intervalo entre nós consecutivos</td><td>5696,70 s</td><td>o período nodal das taxas
+      seculares de J2 (seção 3)</td></tr>
+  <tr><td>Deslocamento entre nós consecutivos</td><td>−23,736°</td><td>a cada volta o traço anda 23,7°
+      para oeste, porque a Terra girou por baixo da órbita: −(ω⊕ − Ω̇)·Tnod</td></tr>
+  <tr><td>Nó da volta 91 contra o da volta 0, após 6 dias</td><td>4,5·10⁻⁴°</td><td>o fechamento do
+      ciclo de repetição 91/6, que a constelação da Semana 5 explora</td></tr>
+</table>
+
+<h3>Por que estes testes verificam toda a semana</h3>
+<p>Os números acima vêm da Sem4 e são independentes do código. Para eles baterem, todos os elos
+precisam estar certos ao mesmo tempo: as taxas de J2 (S2-01), o sinal da rotação ECI → ECEF e o GMST
+(S2-03), a conversão geodésica (S2-03) e a interpolação dos nós. Um erro em qualquer elo apareceria
+como um Δλ ou um Tnod errado, ou como um ciclo que não fecha. Na prática, o S2-04 é um teste de
+integração da semana. A latitude máxima completa o quadro: 82,56° geocêntrica (= 180° − i) e 82,61°
+geodésica, a diferença que o WGS84 introduz.</p>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>Interpolação linear</strong> dos nós: perto do equador a latitude varia quase linearmente
+  com o tempo, e o erro com passo de 10 s é muito menor que as tolerâncias.</li>
+  <li><strong>Sem pontos nas bordas</strong>: <code>split_at_antimeridian</code> não insere pontos em
+  ±180°, então cada pedaço termina a até um passo (10 s) da borda do mapa. Na escala do mapa isso não é
+  visível.</li>
+  <li><strong>O viewer JS</strong> faz a sua própria quebra no antimeridiano desde a Semana 1; esta
+  função serve aos gráficos em Python.</li>
 </ul>
 </section>
 
