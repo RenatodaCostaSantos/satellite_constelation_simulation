@@ -423,3 +423,25 @@ class GroundTrackS2:
 
 
 GROUND_TRACK_S2 = GroundTrackS2()
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.2 e card S2-05 do prompt da Semana 2: projeto de SSO (Sem4 §4.3, §6.1).
+#     Tabela 1, teto, tan i e derivas de LTAN já estão em SSO_CIRCULAR_TABLE1 e MISC_SEM4.
+#     A.5: convenção de ω̇ no ciclo 91/6 (pendência para a Semana 5).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SsoDesignS2:
+    di_dh_510_deg_per_km: float = 0.0038  # di/dh da SSO circular em 510 km
+    cos_i_rel_change_e001: float = -2.0e-4  # cos i ∝ (1 − e²)²: variação relativa para e = 0,01
+    # A.5: solução de repetição 91/6 com ω̇ de J2 isolado (código do PDF) vs órbita congelada
+    # (J3 cancela ω̇ → ω̇ líquido = 0); Tnod congelada para o mesmo a ≈ 5693,1 s
+    repeat_91_6_j2_only_h_km: float = 509.952
+    repeat_91_6_j2_only_i_deg: float = 97.4396
+    repeat_91_6_frozen_h_km: float = 512.89
+    repeat_91_6_frozen_i_deg: float = 97.4507
+    tnod_frozen_same_a_s: float = 5693.1
+
+
+SSO_DESIGN_S2 = SsoDesignS2()
