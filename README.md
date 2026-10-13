@@ -41,6 +41,8 @@ docs/creditos.md             créditos e licenças dos assets do viewer
 src/satsim/                  código da biblioteca
 src/satsim/app/              GUI: exportação da cena (Python) e viewer (static/)
 scripts/build_demo.py        gera a demo visual demo/index.html
+scripts/                     também: relatório da Semana 2, traço no solo, Tabela 1 (SSO)
+reports/s2_comparacao/       figuras e relatório da Semana 2 (versionados)
 tests/                       testes (pytest)
 ```
 
@@ -84,6 +86,28 @@ e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado c
 No mapa, a linha cheia é o traço já percorrido e a tracejada é o futuro. São Bento do Sapucaí
 aparece em rosa nos dois painéis. Nesta fase a vista mantém a Terra fixa (ECEF) e usa subponto
 esférico; os créditos e licenças dos assets estão em [`docs/creditos.md`](docs/creditos.md).
+
+## Relatório da Semana 2
+
+Comparação Kepler × MeanJ2 × Cowell (J2): o que J2 muda na órbita e o que cada propagador
+entrega. Um único comando gera as figuras e o relatório em
+[`reports/s2_comparacao/`](reports/s2_comparacao/):
+
+```bash
+python scripts/compare_propagators.py      # ~5 s; 5 figuras PNG + relatorio.md
+```
+
+O [`relatorio.md`](reports/s2_comparacao/relatorio.md) traz, para a SSO de projeto, uma órbita
+tipo ISS e uma órbita de teste com e = 0,02 (10 dias a 60 s): a regressão do nó medida no Cowell
+contra a teoria secular, a rotação do perigeu, a oscilação de curto período do semieixo, o erro
+de posição do MeanJ2 e do Kepler contra o Cowell, e um parágrafo de conclusões. A lição central é
+a diferença entre **elementos médios e osculadores**: os mesmos números nominais usados como
+condição inicial do Cowell descrevem uma órbita média alguns km diferente, o que separa os dois
+propagadores em ~1 000 km em 24 h; com os elementos médios medidos, a diferença cai para < 15 km.
+
+Também na pasta: o traço no solo da SSO e da órbita tipo ISS
+(`python scripts/plot_ground_track.py --preset sso` ou `--preset iss-like`), e a Tabela 1 do
+Sem4 (órbitas heliossíncronas) sai de `python scripts/print_sso_table.py`.
 
 ## Golden tests
 
