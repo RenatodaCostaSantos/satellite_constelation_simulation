@@ -42,6 +42,10 @@
   figcaption { font-size: 9pt; color: var(--muted); margin-top: 4pt; text-align: left; }
   .file { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; color: var(--muted); margin-top: -2pt; }
   section.script + section.script { page-break-before: always; }
+  /* Ω̇, ω̇, ψ̇ (taxas): as fontes desenham mal o ponto combinante; ele é posto por CSS */
+  .od { position: relative; display: inline-block; }
+  .od::after { content: "\02D9"; position: absolute; left: 0; right: 0; top: -0.28em;
+               text-align: center; }
 </style>
 </head>
 <body>
@@ -72,6 +76,7 @@
     <li><code>src/satsim/forces/j2.py</code> — a aceleração de J2 (inclui <code>Protocol</code>, <code>np.stack</code> e <code>__call__</code>)</li>
     <li><code>src/satsim/frames.py</code> e <code>geodesy.py</code> — onde o satélite está sobre a Terra (ECI → ECEF → WGS84)</li>
     <li><code>src/satsim/groundtrack.py</code> — o traço no solo: subponto, antimeridiano e nós ascendentes</li>
+    <li><code>scripts/compare_propagators.py</code> — médio × osculador na prática (relatório da Semana 2)</li>
   </ol>
 </nav>
 
@@ -325,20 +330,20 @@ excentricidade <code>e</code> e a inclinação <code>i</code> médios ficam cons
 <code>n</code>, que o <code>secular.py</code> devolve:</p>
 <pre><code>p = a(1 − e²),   k = 1,5·J2·(R⊕/p)²,   n = √(µ/a³)
 
-Ω̇ = −k·n·cos i                               (Sem4 eq. 23)
-ω̇ = ½·k·n·(5cos²i − 1)                       (Sem4 eq. 24)
-ψ̇ = n·[1 + k·√(1 − e²)·(1 − 1,5·sin²i)]      (Sem4 eq. 25)</code></pre>
+<span class="od">Ω</span> = −k·n·cos i                               (Sem4 eq. 23)
+<span class="od">ω</span> = ½·k·n·(5cos²i − 1)                       (Sem4 eq. 24)
+<span class="od">ψ</span> = n·[1 + k·√(1 − e²)·(1 − 1,5·sin²i)]      (Sem4 eq. 25)</code></pre>
 <table>
   <tr><th>Campo</th><th>Símbolo</th><th>Significado físico</th></tr>
   <tr><td><code>n</code></td><td>n</td><td>movimento médio de dois corpos (sem J2): 2π / período kepleriano</td></tr>
-  <tr><td><code>raan_dot</code></td><td>Ω̇</td><td><strong>regressão do nó</strong>: o plano da órbita gira em
+  <tr><td><code>raan_dot</code></td><td><span class="od">Ω</span></td><td><strong>regressão do nó</strong>: o plano da órbita gira em
       torno do eixo da Terra. É a taxa que, igualada a 0,9856°/dia, define a órbita heliossíncrona</td></tr>
-  <tr><td><code>argp_dot</code></td><td>ω̇</td><td><strong>rotação da linha dos apsides</strong>: o perigeu
+  <tr><td><code>argp_dot</code></td><td><span class="od">ω</span></td><td><strong>rotação da linha dos apsides</strong>: o perigeu
       gira dentro do plano da órbita. Zera na inclinação crítica arccos(1/√5) = 63,43°</td></tr>
-  <tr><td><code>psi_dot</code></td><td>ψ̇</td><td>movimento médio <em>perturbado</em>: a anomalia média avança
+  <tr><td><code>psi_dot</code></td><td><span class="od">ψ</span></td><td>movimento médio <em>perturbado</em>: a anomalia média avança
       um pouco mais devagar (ou mais depressa) do que <code>n</code> por causa de J2</td></tr>
 </table>
-<p>As taxas são em rad/s. Um número para ter em mente: na órbita heliossíncrona de projeto, Ω̇ vale
+<p>As taxas são em rad/s. Um número para ter em mente: na órbita heliossíncrona de projeto, <span class="od">Ω</span> vale
 ≈ 2·10⁻⁷ rad/s, o que parece desprezível, mas são 0,9856° por dia, ou uma volta completa do plano da
 órbita por ano.</p>
 
@@ -406,11 +411,11 @@ heliossíncrona de projeto:</p>
 &gt;&gt;&gt; rates
 SecularRates(n=0.0011043856704022533, raan_dot=1.991076039546266e-07,
              argp_dot=-7.044166649355821e-07, psi_dot=0.0011036554735148136)
-&gt;&gt;&gt; np.degrees(rates.raan_dot) * 86400      # Ω̇ em °/dia
+&gt;&gt;&gt; np.degrees(rates.raan_dot) * 86400      # <span class="od">Ω</span> em °/dia
 0.98565...                                    # = taxa do Sol: órbita heliossíncrona</code></pre>
 <p><strong>Por que não devolver uma tupla?</strong> A função poderia terminar em
 <code>return n, raan_dot, argp_dot, psi_dot</code>. Mas aí quem chama teria de lembrar a ordem e
-escrever <code>rates[2]</code> para obter ω̇, e trocar a ordem por engano não daria erro, só um
+escrever <code>rates[2]</code> para obter <span class="od">ω</span>, e trocar a ordem por engano não daria erro, só um
 resultado errado. Com a dataclass, o acesso é por nome (<code>rates.argp_dot</code>), o
 <code>print</code> mostra o que é cada número e o editor completa os nomes dos campos.</p>
 
@@ -475,8 +480,8 @@ multiplicação fica entre dois valores.</p>
 <p>O período nodal é o tempo entre duas passagens consecutivas do satélite pelo nó ascendente, isto é,
 cruzando o equador de sul para norte. É ele, e não o período kepleriano, que define quantas voltas por
 dia o satélite dá sobre a Terra e, portanto, o padrão de repetição do traço no solo. O argumento de
-latitude <code>u = ω + ν</code> avança em média à taxa ψ̇ + ω̇, então:</p>
-<pre><code>Tnod = 2π / (ψ̇ + ω̇)          (Sem4 eq. 34)</code></pre>
+latitude <code>u = ω + ν</code> avança em média à taxa <span class="od">ψ</span> + <span class="od">ω</span>, então:</p>
+<pre><code>Tnod = 2π / (<span class="od">ψ</span> + <span class="od">ω</span>)          (Sem4 eq. 34)</code></pre>
 <p><code>nodal_period</code> reaproveita <code>secular_rates</code> e usa os campos pelo nome
 (<code>rates.psi_dot + rates.argp_dot</code>), um exemplo direto da vantagem da dataclass. Na órbita de
 projeto, Tnod = 5696,70 s contra Tkep = 2π/n = 5689,30 s: J2 alonga a volta nodal em
@@ -487,11 +492,11 @@ projeto, Tnod = 5696,70 s contra Tkep = 2π/n = 5689,30 s: J2 alonga a volta nod
 Semana 2 e verificam casos com resposta conhecida:</p>
 <table>
   <tr><th>Caso</th><th>O que é verificado</th></tr>
-  <tr><td>ISS, SSO de projeto, polar, Molniya</td><td>Ω̇ e ω̇ em °/dia contra a tabela de referência</td></tr>
-  <tr><td>SSO de projeto</td><td>Tnod = 5696,70 s, Tkep = 5689,30 s e ψ̇/n − 1 = −6,6·10⁻⁴</td></tr>
-  <tr><td>Órbita polar (i = 90°)</td><td>Ω̇ = 0, porque cos 90° = 0</td></tr>
-  <tr><td>Inclinação crítica (63,43°)</td><td>ω̇ = 0 para qualquer <code>a</code> e <code>e</code></td></tr>
-  <tr><td>J2 = 0</td><td>Ω̇ = ω̇ = 0 e ψ̇ = n: volta ao caso kepleriano</td></tr>
+  <tr><td>ISS, SSO de projeto, polar, Molniya</td><td><span class="od">Ω</span> e <span class="od">ω</span> em °/dia contra a tabela de referência</td></tr>
+  <tr><td>SSO de projeto</td><td>Tnod = 5696,70 s, Tkep = 5689,30 s e <span class="od">ψ</span>/n − 1 = −6,6·10⁻⁴</td></tr>
+  <tr><td>Órbita polar (i = 90°)</td><td><span class="od">Ω</span> = 0, porque cos 90° = 0</td></tr>
+  <tr><td>Inclinação crítica (63,43°)</td><td><span class="od">ω</span> = 0 para qualquer <code>a</code> e <code>e</code></td></tr>
+  <tr><td>J2 = 0</td><td><span class="od">Ω</span> = <span class="od">ω</span> = 0 e <span class="od">ψ</span> = n: volta ao caso kepleriano</td></tr>
   <tr><td>Entrada vetorial</td><td>o resultado com 19 altitudes é idêntico a 19 chamadas escalares</td></tr>
   <tr><td>Entradas inválidas</td><td><code>ValueError</code> para a ≤ 0 e e ∉ [0, 1)</td></tr>
 </table>
@@ -499,7 +504,7 @@ Semana 2 e verificam casos com resposta conhecida:</p>
 <h3>Simplificações assumidas</h3>
 <ul>
   <li><strong>Só J2, só primeira ordem.</strong> J3 e J4 ficam de fora. J3 importa para a órbita
-  congelada, em que ele cancela ω̇ (Semana 5).</li>
+  congelada, em que ele cancela <span class="od">ω</span> (Semana 5).</li>
   <li><strong>Só elementos médios.</strong> As oscilações de curto período dos elementos osculadores,
   da ordem de quilômetros em <code>a</code>, não aparecem: o resultado é a tendência média.</li>
   <li><strong>Sem singularidades.</strong> Nenhuma fórmula divide por <code>e</code> nem por
@@ -558,7 +563,7 @@ J2 tem uma componente perpendicular a <code>r</code>, de módulo
 <code>3·J2·µ·R⊕²·sin φ·cos φ / r⁴</code>, que puxa o satélite em direção ao plano do equador. Essa
 componente exerce torque. Como a Terra é simétrica em torno do eixo z, o torque é sempre horizontal
 (componente z nula): ele não altera ℓz, só faz o vetor ℓ girar em torno do eixo z, como um pião
-inclinado. O nó ascendente acompanha esse giro: é a regressão do nó, Ω̇ (Sem4 eq. 23).</p>
+inclinado. O nó ascendente acompanha esse giro: é a regressão do nó, <span class="od">Ω</span> (Sem4 eq. 23).</p>
 <p>Uma consequência útil para testar o código: como a força vem de um potencial e não depende do
 tempo, a energia se conserva, e como o torque não tem componente z, ℓz também se conserva. A energia
 conservada é</p>
@@ -695,7 +700,7 @@ do modelo, para que energia e aceleração sejam sempre calculadas com o mesmo J
   <tr><td>Vetorização</td><td><code>(N, 3)</code> dá o mesmo resultado que N chamadas com
       <code>(3,)</code></td></tr>
   <tr><td>Energia e ℓz (Cowell, 10 dias)</td><td>constantes a 10⁻⁹ relativo</td></tr>
-  <tr><td>Regressão do nó (Cowell, 10 dias)</td><td>Ω̇ medido concorda com a teoria do
+  <tr><td>Regressão do nó (Cowell, 10 dias)</td><td><span class="od">Ω</span> medido concorda com a teoria do
       <code>secular.py</code> em menos de 0,5%</td></tr>
 </table>
 
@@ -1063,7 +1068,7 @@ verificam a física da semana:</p>
   <tr><td>Intervalo entre nós consecutivos</td><td>5696,70 s</td><td>o período nodal das taxas
       seculares de J2 (seção 3)</td></tr>
   <tr><td>Deslocamento entre nós consecutivos</td><td>−23,736°</td><td>a cada volta o traço anda 23,7°
-      para oeste, porque a Terra girou por baixo da órbita: −(ω⊕ − Ω̇)·Tnod</td></tr>
+      para oeste, porque a Terra girou por baixo da órbita: −(ω⊕ − <span class="od">Ω</span>)·Tnod</td></tr>
   <tr><td>Nó da volta 91 contra o da volta 0, após 6 dias</td><td>4,5·10⁻⁴°</td><td>o fechamento do
       ciclo de repetição 91/6, que a constelação da Semana 5 explora</td></tr>
 </table>
@@ -1086,6 +1091,86 @@ geodésica, a diferença que o WGS84 introduz.</p>
   <li><strong>O viewer JS</strong> faz a sua própria quebra no antimeridiano desde a Semana 1; esta
   função serve aos gráficos em Python.</li>
 </ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="compare-propagators-py">
+<h2>7. compare_propagators.py — médio × osculador na prática</h2>
+<div class="file">scripts/compare_propagators.py · reports/s2_comparacao/relatorio.md · card S2-06</div>
+
+<h3>O que o script faz</h3>
+<p>Num único comando (<code>python scripts/compare_propagators.py</code>, ≈ 5 s), o script propaga
+três órbitas por 10 dias com os três propagadores e gera cinco figuras e um relatório com a tabela de
+números e um parágrafo de conclusões. Ele não acrescenta nada à biblioteca: valida e documenta o que
+os cards S2-01 e S2-02 entregaram. Os papéis dos três propagadores:</p>
+<table>
+  <tr><th></th><th>CowellPropagator</th><th>MeanJ2Propagator</th><th>KeplerPropagator</th></tr>
+  <tr><td>O que faz</td><td>integra numericamente r̈ = −µr/r³ + perturbações</td>
+      <td>avança Ω, ω e ψ a taxas constantes (Sem4 eqs. 23–25)</td><td>só ψ avança; o plano fica fixo</td></tr>
+  <tr><td>Resultado</td><td>trajetória <strong>osculadora</strong> (a “verdadeira” dentro do modelo)</td>
+      <td>trajetória <strong>média</strong> (sem oscilações de curto período)</td><td>elipse fixa, sem J2</td></tr>
+  <tr><td>Elementos de entrada</td><td>osculadores (o estado real na época)</td><td>médios</td><td>—</td></tr>
+</table>
+<p>O MeanJ2 não é calculado a partir do Cowell: é uma fórmula analítica que <em>aproxima a média</em>
+do movimento que o Cowell produz. As duas coisas só coincidem se os elementos de entrada forem
+compatíveis, e é aí que mora a lição central do relatório.</p>
+<figure>
+  <img src="../../reports/s2_comparacao/fig3_semieixo.png" style="width:100%"
+       alt="Semieixo osculador do Cowell, semieixo médio e nominal">
+  <figcaption>Figura 3 do relatório: o semieixo osculador oscila cerca de 19 km (SSO) e 12 km
+  (ISS-like) a cada meia revolução. O semieixo médio da SSO fica 9,5 km acima do nominal; o da
+  ISS-like, 6,0 km abaixo.</figcaption>
+</figure>
+
+<h3>A SSO simulada não é exatamente heliossíncrona</h3>
+<p>Uma versão inicial das conclusões dizia que o <span class="od">Ω</span> medido na SSO, 0,979 °/dia, era “a taxa do Sol:
+a órbita é heliossíncrona”. Não é. Os números:</p>
+<table>
+  <tr><th></th><th><span class="od">Ω</span> [°/dia]</th></tr>
+  <tr><td>Taxa do Sol (a que define a heliossincronia)</td><td>0,9856</td></tr>
+  <tr><td>Teoria do MeanJ2 com os elementos nominais da SSO</td><td>0,9857, igual à do Sol, porque
+      os elementos nominais foram projetados para isso (S2-05)</td></tr>
+  <tr><td>Medido no Cowell, partindo dos elementos nominais</td><td><strong>0,9794</strong>, 0,63%
+      menor</td></tr>
+</table>
+<p><strong>Por que o Cowell dá menos.</strong> É a armadilha “osculador ≠ médio”:</p>
+<ol>
+  <li>Os elementos nominais (a = 6888,089 km, i = 97,4396°) foram calculados no S2-05 para que,
+  <em>como elementos médios</em>, deem <span class="od">Ω</span> igual à taxa do Sol.</li>
+  <li>O Cowell recebe esses números como <em>condição inicial osculadora</em>. A órbita média que
+  resulta tem um semieixo 9,5 km maior (Figura 3), porque o satélite começa num ponto da órbita
+  (latitude máxima) em que o semieixo osculador está abaixo da média.</li>
+  <li><span class="od">Ω</span> depende fortemente do semieixo (<span class="od">Ω</span> ∝ a<sup>−7/2</sup>, Sem4 eq. 23), então uma órbita média
+  mais alta precessa mais devagar:</li>
+</ol>
+<table>
+  <tr><th>Contribuição</th><th>Efeito em <span class="od">Ω</span></th></tr>
+  <tr><td>Semieixo médio 9,5 km acima: (1 + Δa/a)<sup>−7/2</sup> − 1</td><td>−0,48%</td></tr>
+  <tr><td>Somando os pequenos desvios de e e i médios (teoria em a, e, i médios)</td><td>−0,55%</td></tr>
+  <tr><td>Medido no Cowell (o −0,09% restante é o resíduo da teoria de primeira ordem)</td><td>−0,63%</td></tr>
+</table>
+<p>O satélite simulado pelo Cowell, portanto, <strong>não é exatamente heliossíncrono</strong>: o plano
+dele fica para trás do Sol 0,0062° por dia, ou 2,3° por ano, o que corresponde a uma deriva de
+<strong>≈ 9 minutos por ano</strong> no horário local de passagem pelo nó (LTAN). A frase corrigida
+das conclusões diz: “<span class="od">Ω</span> = 0,979 °/dia na SSO (a teoria nominal dá a taxa do Sol, 0,9856 °/dia; a
+diferença de −0,6% vem do semieixo médio)”, coerente com o resto do parágrafo, que explica exatamente
+esse efeito.</p>
+<p><strong>A lição prática.</strong> Para um satélite voar de fato numa SSO, não basta usar os
+elementos de projeto como estado inicial: é preciso convertê-los de médios para osculadores (a
+conversão de Brouwer/Kozai, fora do escopo desta semana). Do contrário, a órbita real fica alguns km
+acima ou abaixo do pretendido e o LTAN deriva. Esse ajuste volta na Semana 5, ao montar a constelação.
+A mesma lição aparece na Figura 4 do relatório: tratar os elementos nominais como osculadores separa o
+MeanJ2 do Cowell em ≈ 1 300 km em 24 h, enquanto o MeanJ2 com os elementos médios medidos fica a
+menos de 7 km.</p>
+
+<h3>Onde o semieixo médio depende do ponto de partida</h3>
+<p>O sinal do desvio depende de onde a órbita começa. Em primeira ordem, o semieixo osculador oscila
+como <code>a_osc − a_médio ≈ 1,5·J2·R⊕²/a·sin²i·cos 2u</code>, com u = ω + ν o argumento de
+latitude. Começando no equador (u = 0°), o semieixo osculador está ≈ 6 km <em>acima</em> da média, e a
+órbita média fica abaixo do nominal; começando na latitude máxima (u = 90°), o contrário. Por isso a
+ISS-like do relatório usa ω0 = 0° (média 6,0 km abaixo do nominal) e a SSO, com ω0 = 90°, fica 9,5 km
+acima. Os mesmos números nominais, em pontos diferentes da órbita, descrevem órbitas médias
+diferentes.</p>
 </section>
 
 </main>
