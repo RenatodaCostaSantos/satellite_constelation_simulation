@@ -4,9 +4,11 @@
 formato do contrato JSON do ADR: trajetórias em ECI (km) e o subponto (lat, lon, alt) em
 graus/km, estações de solo e passagens (vazio até a Semana 3).
 
-Subponto na Semana 1 (aproximação esférica): r_ECEF = Rz(θG)·r_ECI, com
-θG(t) = θG(época) + (dθG/dt)·t (IAU-82, ver ``build_scene``), lat = arcsin(z/r),
-lon = arctan2(y, x) em [−180°, 180°) e alt = r − R⊕. O geodésico WGS84 entra na S2-03.
+Subponto geodésico WGS84 (desde a S2-07): r_ECEF = Rz(θG)·r_ECI (``satsim.frames``), com
+θG(t) = θG(época) + (dθG/dt)·t (IAU-82, ver ``build_scene``), convertido em latitude geodésica,
+longitude em [−180°, 180°) e altitude elipsoidal (``satsim.geodesy``). Na Semana 1 o subponto
+era esférico (lat = arcsin(z/r), alt = r − R⊕); a diferença chega a ~0,2° em latitude e ~21 km
+em altitude. ``meta.geodesy = "WGS84"`` identifica cenas com o subponto geodésico.
 """
 
 import math
@@ -19,7 +21,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from satsim.astrotime import datetime_to_jd, gmst, gmst_rate
-from satsim.constants import R_EARTH
+from satsim.frames import eci_to_ecef
+from satsim.geodesy import ecef_to_geodetic
 from satsim.propagators import Propagator
 
 SCHEMA_VERSION = 1
@@ -37,6 +40,7 @@ ALT_DECIMALS = 4
 """Casas decimais de ``alt_km`` (1e-4 km = 0,1 m)."""
 
 _FRAME = "ECI simplificado (x -> equinócio vernal)"
+_GEODESY = "WGS84"
 
 
 @dataclass(frozen=True)
@@ -66,24 +70,11 @@ class SceneStation:
     alt_m: float
 
 
-def eci_to_ecef(r_eci: NDArray[np.float64], theta: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Rotação ECI → ECEF por θG em torno de z (rotação do referencial, ADR 0001).
-
-    x' = cos θ·x + sin θ·y, y' = −sin θ·x + cos θ·y, z' = z. ``r_eci`` (N, 3), ``theta`` (N,).
-    """
-    c, s = np.cos(theta), np.sin(theta)
-    x, y, z = r_eci[:, 0], r_eci[:, 1], r_eci[:, 2]
-    return np.stack([c * x + s * y, -s * x + c * y, z], axis=-1)
-
-
-def subpoint_spherical(r_ecef: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Subponto esférico: (lat [°], lon [°] em [−180, 180), alt [km]) com shape (N, 3)."""
-    r_norm = np.linalg.norm(r_ecef, axis=-1)
-    lat = np.degrees(np.arcsin(r_ecef[:, 2] / r_norm))
-    lon = np.degrees(np.arctan2(r_ecef[:, 1], r_ecef[:, 0]))
-    lon = np.mod(lon + 180.0, 360.0) - 180.0
-    alt_km = (r_norm - R_EARTH) / 1e3
-    return np.stack([lat, lon, alt_km], axis=-1)
+def subpoint_geodetic(r_ecef: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Subponto geodésico WGS84: (lat [°], lon [°] em [−180, 180), alt [km]) com shape (N, 3)."""
+    lat, lon, alt = ecef_to_geodetic(r_ecef)
+    lon_deg = np.mod(np.degrees(lon) + 180.0, 360.0) - 180.0
+    return np.stack([np.degrees(lat), lon_deg, alt / 1e3], axis=-1)
 
 
 def build_scene(
@@ -131,7 +122,7 @@ def build_scene(
     for sat in satellites:
         offset_s = (epoch - sat.propagator.epoch).total_seconds()
         r_eci, _ = sat.propagator.propagate(t + offset_s)
-        lla = subpoint_spherical(eci_to_ecef(r_eci, theta))
+        lla = subpoint_geodetic(eci_to_ecef(r_eci, theta))
         lla_rounded = np.column_stack(
             [
                 np.round(lla[:, 0], ANGLE_DECIMALS),
@@ -156,6 +147,7 @@ def build_scene(
             "duration_s": float(duration_s),
             "step_s": float(step_s),
             "frame": _FRAME,
+            "geodesy": _GEODESY,
         },
         "earth": {
             "gmst0_rad": gmst0,

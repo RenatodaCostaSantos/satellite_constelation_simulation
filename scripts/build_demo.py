@@ -4,8 +4,13 @@ Uso (na raiz do repositório, com o pacote instalado):
 
     python scripts/build_demo.py
 
-A cena é calculada em Python (KeplerPropagator) e embutida no HTML junto com o CSS, o JS do
-viewer, o bundle UMD do globe.gl e a textura da Terra (data URI). Nada é carregado da rede.
+A cena é calculada em Python (propagadores com J2 desde a S2-07, subponto geodésico WGS84) e
+embutida no HTML junto com o CSS, o JS do viewer, o bundle UMD do globe.gl e a textura da Terra
+(data URI). Nada é carregado da rede.
+
+A demo mostra o efeito de J2: a mesma órbita tipo ISS propagada com J2 (MeanJ2Propagator) e sem
+J2 (KeplerPropagator) se afasta no mapa ao longo de 48 h, porque J2 faz o plano da órbita girar
+(regressão do nó, ≈ −9,9° em 2 dias).
 
 Para adicionar um satélite à demo, acrescente UMA linha à lista SATELLITES abaixo.
 """
@@ -19,8 +24,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from satsim.app.scene_export import SceneSatellite, SceneStation, build_scene
+from satsim.constants import R_EARTH
 from satsim.elements import KeplerianElements
-from satsim.propagators import KeplerPropagator
+from satsim.propagators import KeplerPropagator, MeanJ2Propagator, Propagator
 
 logger = logging.getLogger("build_demo")
 
@@ -29,14 +35,17 @@ STATIC = ROOT / "src" / "satsim" / "app" / "static"
 OUTPUT = ROOT / "demo" / "index.html"
 
 EPOCH = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
-DURATION_S = 6 * 3600  # janela de 6 h
-STEP_S = 10  # passo de 10 s
+DURATION_S = 48 * 3600  # janela de 48 h: tempo para o efeito de J2 ficar visível
+STEP_S = 20  # passo de 20 s
+
+ISS_A_KM = R_EARTH / 1e3 + 420.0  # órbita tipo ISS (a = R⊕ + 420 km)
 
 
-def kepler_sat(
+def sat(
     sat_id: str,
     name: str,
     color: str,
+    propagator: type[Propagator],
     *,
     a_km: float,
     e: float,
@@ -45,7 +54,10 @@ def kepler_sat(
     argp_deg: float,
     psi_deg: float,
 ) -> SceneSatellite:
-    """Satélite kepleriano com elementos em km e graus, época = início da cena."""
+    """Satélite com elementos em km e graus, época = início da cena.
+
+    ``propagator`` é a classe do propagador (ex.: KeplerPropagator ou MeanJ2Propagator).
+    """
     elements = KeplerianElements(
         a=a_km * 1e3,
         e=e,
@@ -54,15 +66,16 @@ def kepler_sat(
         argp=math.radians(argp_deg),
         psi=math.radians(psi_deg),
     )
-    return SceneSatellite(sat_id, name, color, KeplerPropagator(elements, EPOCH))
+    return SceneSatellite(sat_id, name, color, propagator(elements, EPOCH))
 
 
 # fmt: off
 SATELLITES = [
     # SSO de projeto 91/6 (Sem4 §7.5): a = 6888,089 km, e = 1,074e-3, i = 97,4396°, ω = 90°
-    kepler_sat("sso1", "SSO-1", "#00e5ff", a_km=6888.089, e=1.074e-3, i_deg=97.4396, raan_deg=30.0, argp_deg=90.0, psi_deg=0.0),  # noqa: E501
-    # Só para provar o multi-satélite: NÃO é a ISS real (a ISS via TLE/SGP4 entra na Semana 3)
-    kepler_sat("kep1", "Exemplo kepleriano (i = 51,64°)", "#ffb020", a_km=6798.0, e=0.0, i_deg=51.64, raan_deg=120.0, argp_deg=0.0, psi_deg=0.0),  # noqa: E501
+    sat("sso1", "SSO-1 (J2)", "#00e5ff", MeanJ2Propagator, a_km=6888.089, e=1.074e-3, i_deg=97.4396, raan_deg=30.0, argp_deg=90.0, psi_deg=0.0),  # noqa: E501
+    # Mesma órbita tipo ISS com e sem J2. NÃO é a ISS real (a ISS via TLE/SGP4 entra na Semana 3)
+    sat("iss_j2", "ISS-like (exemplo J2)", "#ffb020", MeanJ2Propagator, a_km=ISS_A_KM, e=0.0, i_deg=51.64, raan_deg=120.0, argp_deg=0.0, psi_deg=0.0),  # noqa: E501
+    sat("iss_kep", "ISS-like sem J2 (Kepler)", "#9aa4b2", KeplerPropagator, a_km=ISS_A_KM, e=0.0, i_deg=51.64, raan_deg=120.0, argp_deg=0.0, psi_deg=0.0),  # noqa: E501
 ]
 # fmt: on
 

@@ -17,8 +17,8 @@
   var PAST_2D_S = 100 * 60; // traço passado no mapa
   var AHEAD_2D_S = 100 * 60; // traço futuro no mapa
   var EARTH_RADIUS_KM = 6378.137; // só para converter alt_km em raios do globo (escala de desenho)
-  var STRIDE_3D_AHEAD = 3; // órbita prevista no globo: 1 amostra a cada 3 passos (30 s)
-  var STRIDE_2D = 2; // traços no mapa: 1 amostra a cada 2 passos (20 s ≈ 1,2° na órbita)
+  var STRIDE_3D_AHEAD = 3; // órbita prevista no globo: 1 amostra a cada 3 passos
+  var STRIDE_2D = 2; // traços no mapa: 1 amostra a cada 2 passos
   var TEXTURE = window.SATSIM_TEXTURE || "textures/earth_2048.jpg";
 
   var scene = window.SATSIM_SCENE;
@@ -40,8 +40,16 @@
     return { id: s.id, name: s.name, color: s.color, lla: s.lla, visible: true, now: null };
   });
   var stations = scene.stations;
+  // Cenas da S2-07 em diante trazem meta.geodesy = "WGS84"; as anteriores, subponto esférico.
+  var GEODETIC = scene.meta.geodesy === "WGS84";
 
-  var state = { simTime: 0, playing: true, speed: DEFAULT_SPEED, dragging: false };
+  var state = {
+    simTime: 0,
+    playing: true,
+    speed: DEFAULT_SPEED,
+    dragging: false,
+    selected: sats.length ? sats[0] : null,
+  };
 
   // --- interpolação temporal (trata o salto de ±180° na longitude) -----------------------------
   function wrapLon(lon) {
@@ -338,10 +346,28 @@
     ctx.stroke();
   }
 
-  // Rótulo à direita do ponto; se não couber no mapa, vai para a esquerda.
-  function drawLabel(text, x, y, offset, w) {
+  // Rótulo à direita do ponto; se não couber no mapa, vai para a esquerda. ``placed`` guarda os
+  // rótulos já desenhados no quadro: um rótulo que colidiria com outro desce uma linha (ex.:
+  // dois satélites na mesma posição, como a órbita com e sem J2 no início da cena).
+  function drawLabel(text, x, y, offset, w, placed) {
     var width = ctx.measureText(text).width;
+    var lineH = parseFloat(ctx.font.match(/([\d.]+)px/)[1]) * 1.25;
     var tx = x + offset + width > w ? x - offset - width : x + offset;
+    if (placed) {
+      var moved = true;
+      while (moved) {
+        moved = false;
+        for (var i = 0; i < placed.length; i++) {
+          var p = placed[i];
+          // folga de 1 %: depois de mover, |y − p.y| = lineH exato pode sair um ulp abaixo
+          if (tx < p.x + p.w && tx + width > p.x && Math.abs(y - p.y) < 0.99 * lineH) {
+            y = p.y + lineH;
+            moved = true;
+          }
+        }
+      }
+      placed.push({ x: tx, y: y, w: width });
+    }
     ctx.fillText(text, tx, y);
   }
 
@@ -372,6 +398,7 @@
       drawLabel(st.name, x, y + 4 * dpr, 7 * dpr, w);
     });
 
+    var placedLabels = [];
     sats.forEach(function (s) {
       if (!s.visible) return;
       ctx.lineWidth = 2 * dpr;
@@ -397,9 +424,16 @@
       ctx.beginPath();
       ctx.arc(x, y, 3.5 * dpr, 0, 2 * Math.PI);
       ctx.fill();
+      if (s === state.selected) {
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.beginPath();
+        ctx.arc(x, y, 8 * dpr, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
       ctx.font = "600 " + 11.5 * dpr + "px DejaVu Sans, sans-serif";
       ctx.fillStyle = s.color;
-      drawLabel(s.name, x, y - 7 * dpr, 9 * dpr, w);
+      drawLabel(s.name, x, y - 7 * dpr, 9 * dpr, w, placedLabels);
     });
   }
 
@@ -420,9 +454,46 @@
     li.querySelector(".swatch").style.background = s.color;
     li.querySelector(".name").textContent = s.name;
     li.querySelector(".name").style.color = s.color;
+    li.querySelector(".name").title = "Clique para ver as informações de " + s.name;
     s.readoutEl = li.querySelector(".readout");
+    s.legendEl = li;
+    li.addEventListener("click", function (e) {
+      if (e.target === cb) return; // a caixa só mostra/oculta
+      selectSat(s);
+    });
     legend.appendChild(li);
   });
+
+  // --- painel de informações do satélite selecionado (clique na legenda) ---------------------
+  var info = {
+    name: document.getElementById("info-name"),
+    lat: document.getElementById("info-lat"),
+    lon: document.getElementById("info-lon"),
+    alt: document.getElementById("info-alt"),
+  };
+  document.getElementById("info-note").textContent = GEODETIC
+    ? "Coordenadas geodésicas WGS84: latitude da vertical local, altitude acima do elipsoide. " +
+      "Clique em outro satélite na lista para trocar."
+    : "Subponto esférico (cena antiga). Clique em outro satélite na lista para trocar.";
+
+  function selectSat(s) {
+    state.selected = s;
+    lastReadout = 0; // atualiza o painel já no próximo quadro
+    sats.forEach(function (o) {
+      o.legendEl.classList.toggle("selected", o === s);
+    });
+    render();
+  }
+
+  function updateInfo() {
+    var s = state.selected;
+    if (!s || !s.now) return;
+    info.name.textContent = s.name;
+    info.name.style.color = s.color;
+    info.lat.textContent = Math.abs(s.now[0]).toFixed(3) + "° " + (s.now[0] >= 0 ? "N" : "S");
+    info.lon.textContent = Math.abs(s.now[1]).toFixed(3) + "° " + (s.now[1] >= 0 ? "L" : "O");
+    info.alt.textContent = s.now[2].toFixed(2) + " km";
+  }
 
   var clockEl = document.getElementById("clock");
   var playBtn = document.getElementById("btn-play");
@@ -432,7 +503,9 @@
   document.getElementById("tl-start").textContent = fmtUtc(EPOCH_MS).slice(0, 16);
   document.getElementById("tl-end").textContent = fmtUtc(EPOCH_MS + DURATION * 1000).slice(0, 16);
   document.getElementById("frame-note").textContent =
-    "Vista com a Terra fixa (ECEF) · subponto esférico · janela de " +
+    "Vista com a Terra fixa (ECEF) · subponto " +
+    (GEODETIC ? "geodésico WGS84" : "esférico") +
+    " · janela de " +
     (DURATION / 3600).toFixed(1).replace(".", ",") +
     " h com passo de " +
     STEP +
@@ -504,6 +577,7 @@
         s.readoutEl.textContent =
           fmtLat(s.now[0]) + "  " + fmtLon(s.now[1]) + "  " + s.now[2].toFixed(1) + " km";
       });
+      updateInfo();
     }
   }
 
@@ -515,6 +589,7 @@
     resizeMap();
   });
   resizeGlobe();
+  if (state.selected) state.selected.legendEl.classList.add("selected");
 
   var lastWall = null;
   function frame(wallMs) {

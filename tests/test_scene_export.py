@@ -1,4 +1,4 @@
-"""Testes da exportação da cena para o viewer (S1-08)."""
+"""Testes da exportação da cena para o viewer (S1-08; subponto geodésico WGS84 na S2-07)."""
 
 import json
 import math
@@ -6,19 +6,19 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
-from golden.reference_values import DESIGN_ORBIT
+from golden.reference_values import DESIGN_ORBIT, SCENE_S2
 
 from satsim.app.scene_export import (
     SCHEMA_VERSION,
     SceneSatellite,
     SceneStation,
     build_scene,
-    eci_to_ecef,
-    subpoint_spherical,
 )
 from satsim.constants import R_EARTH
 from satsim.elements import KeplerianElements
-from satsim.propagators import KeplerPropagator
+from satsim.frames import eci_to_ecef
+from satsim.geodesy import ecef_to_geodetic, ecef_to_spherical
+from satsim.propagators import CowellPropagator, KeplerPropagator, MeanJ2Propagator
 
 EPOCH = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
 DURATION_S = 6 * 3600
@@ -59,6 +59,16 @@ def test_structure(scene: dict) -> None:
     assert scene["meta"]["schema_version"] == SCHEMA_VERSION
     assert scene["meta"]["epoch_utc"] == "2026-09-29T12:00:00Z"
     assert scene["meta"]["duration_s"] == DURATION_S and scene["meta"]["step_s"] == STEP_S
+    # S2-07: campo novo e compatível; o resto do contrato fica igual
+    assert set(scene["meta"]) == {
+        "schema_version",
+        "epoch_utc",
+        "duration_s",
+        "step_s",
+        "frame",
+        "geodesy",
+    }
+    assert scene["meta"]["geodesy"] == "WGS84"
     assert set(scene["earth"]) == {"gmst0_rad", "gmst_rate_rad_s"}
     assert scene["passes"] == []
     assert scene["stations"] == [
@@ -87,9 +97,12 @@ def test_json_serializable(scene: dict) -> None:
 
 def test_sso_latitude_and_longitude_range(scene: dict) -> None:
     lla = np.array(scene["satellites"][0]["lla"])
-    # Sem4 eq. 12 / golden: latitude máxima = 180° − i = 82,56°
-    assert np.max(np.abs(lla[:, 0])) <= D.lat_max_deg + 0.05
-    assert np.max(lla[:, 0]) == pytest.approx(D.lat_max_deg, abs=0.1)
+    eci = np.array(scene["satellites"][0]["eci_km"])
+    # Sem4 eq. 12 / golden: latitude geocêntrica máxima = 180° − i = 82,56°
+    lat_gc = np.degrees(np.arcsin(eci[:, 2] / np.linalg.norm(eci, axis=1)))
+    assert np.max(np.abs(lat_gc)) == pytest.approx(D.lat_max_deg, abs=0.01)
+    # SCENE_S2 (S2-07): latitude geodésica máxima ≈ 82,61°
+    assert np.max(np.abs(lla[:, 0])) == pytest.approx(SCENE_S2.sso_lat_max_geodetic_deg, abs=0.1)
     assert np.all((lla[:, 1] >= -180.0) & (lla[:, 1] < 180.0))
 
 
@@ -100,7 +113,9 @@ def test_sso_radius_and_altitude(scene: dict) -> None:
     a_km, e = D.a_km, D.e
     tol = 1e-5  # arredondamento de eci_km (1e-6 km por componente)
     assert np.all(r_km >= a_km * (1 - e) - tol) and np.all(r_km <= a_km * (1 + e) + tol)
-    np.testing.assert_allclose(lla[:, 2], r_km - R_EARTH / 1e3, atol=2e-4)
+    # altitude elipsoidal: entre a esférica (r − R⊕) e ela + (a − b) = 21,4 km (S2-07)
+    dalt = lla[:, 2] - (r_km - R_EARTH / 1e3)
+    assert np.all(dalt >= -2e-4) and np.all(dalt <= 21.4)
 
 
 # --- Consistência: lla recalculado a partir de eci_km e do GMST da cena -------------------------
@@ -113,14 +128,32 @@ def test_lla_consistent_with_eci_and_gmst(scene: dict) -> None:
     for sat in scene["satellites"]:
         eci_km = np.array(sat["eci_km"])
         lla = np.array(sat["lla"])
-        recomputed = subpoint_spherical(eci_to_ecef(eci_km * 1e3, theta))
-        np.testing.assert_allclose(recomputed[:, 0], lla[:, 0], atol=1e-6)
-        dlon = (recomputed[:, 1] - lla[:, 1] + 180.0) % 360.0 - 180.0
+        # S2-07: lla = ecef_to_geodetic(eci_to_ecef(eci)) a 1e-6°
+        lat, lon, alt = ecef_to_geodetic(eci_to_ecef(eci_km * 1e3, theta))
+        np.testing.assert_allclose(np.degrees(lat), lla[:, 0], atol=1e-6)
+        dlon = (np.degrees(lon) - lla[:, 1] + 180.0) % 360.0 - 180.0
         assert np.max(np.abs(dlon)) < 1e-6
+        np.testing.assert_allclose(alt / 1e3, lla[:, 2], atol=2e-4)
+
+
+def test_geodetic_vs_spherical_limits(scene: dict) -> None:
+    # SCENE_S2 (S2-07): |lat geodésica − geocêntrica| ≤ 0,2° e alt − (r − R⊕) em [−25, +25] km
+    earth = scene["earth"]
+    t = np.arange(DURATION_S // STEP_S + 1) * STEP_S
+    theta = earth["gmst0_rad"] + earth["gmst_rate_rad_s"] * t
+    lo, hi = SCENE_S2.alt_vs_spherical_km
+    for sat in scene["satellites"]:
+        lla = np.array(sat["lla"])
+        lat_gc, _, alt_sph = ecef_to_spherical(eci_to_ecef(np.array(sat["eci_km"]) * 1e3, theta))
+        dlat = lla[:, 0] - np.degrees(lat_gc)
+        assert np.max(np.abs(dlat)) <= SCENE_S2.max_abs_dlat_vs_spherical_deg
+        dalt = lla[:, 2] - alt_sph / 1e3
+        assert np.all((dalt >= lo) & (dalt <= hi))
 
 
 def test_eci_to_ecef_rotation() -> None:
-    # θ = 90°: o eixo x do ECI aparece em −y no ECEF (a Terra girou 90° para leste)
+    # θ = 90°: o eixo x do ECI aparece em −y no ECEF (a Terra girou 90° para leste). Desde a
+    # S2-07 a cena usa satsim.frames.eci_to_ecef (a função local da S1-08 foi removida).
     r = eci_to_ecef(np.array([[1.0, 0.0, 0.0]]), np.array([math.pi / 2]))
     np.testing.assert_allclose(r, [[0.0, -1.0, 0.0]], atol=1e-15)
 
@@ -171,3 +204,49 @@ def test_rejects_bad_inputs() -> None:
         build_scene([_sso()], [], EPOCH, 605, STEP_S)
     with pytest.raises(ValueError):
         build_scene([_sso()], [], EPOCH, 600, 0)
+
+
+# --- S2-07: propagadores com J2 e a ISS-like ---------------------------------------------------
+
+ISS_LIKE = KeplerianElements(
+    R_EARTH + 420e3, 0.0, math.radians(SCENE_S2.iss_like_lat_max_geocentric_deg),
+    math.radians(120.0), 0.0, 0.0,
+)  # fmt: skip
+
+
+def test_any_propagator_same_function() -> None:
+    # S2-07: Kepler, MeanJ2 e Cowell exportam com a mesma função, sem código por tipo
+    sats = [
+        SceneSatellite("sso", "SSO", "#00e5ff", MeanJ2Propagator(SSO_ELEMENTS, EPOCH)),
+        SceneSatellite("iss_j2", "ISS-like J2", "#ffb020", MeanJ2Propagator(ISS_LIKE, EPOCH)),
+        SceneSatellite("iss_kep", "ISS-like Kepler", "#9aa4b2", KeplerPropagator(ISS_LIKE, EPOCH)),
+        SceneSatellite("iss_cow", "ISS-like Cowell", "#ff4d8d", CowellPropagator(ISS_LIKE, EPOCH)),
+    ]
+    scene = build_scene(sats, [STATION], EPOCH, 3600, 60)
+    assert [s["id"] for s in scene["satellites"]] == ["sso", "iss_j2", "iss_kep", "iss_cow"]
+    assert all(len(s["lla"]) == 61 for s in scene["satellites"])
+    # em t = 0 os três ISS-like coincidem (MeanJ2 e Kepler partem dos mesmos elementos)
+    np.testing.assert_allclose(scene["satellites"][1]["lla"][0], scene["satellites"][2]["lla"][0])
+
+
+def test_iss_like_max_latitude() -> None:
+    # SCENE_S2 (S2-07): ISS-like 51,64° geocêntrica e 51,82° geodésica (o card dizia ≈ 51,7°;
+    # corrigido no golden file com a dedução)
+    sat = SceneSatellite("iss", "ISS-like", "#ffb020", MeanJ2Propagator(ISS_LIKE, EPOCH))
+    scene = build_scene([sat], [], EPOCH, 6 * 3600, 20)
+    eci = np.array(scene["satellites"][0]["eci_km"])
+    lla = np.array(scene["satellites"][0]["lla"])
+    lat_gc = np.degrees(np.arcsin(eci[:, 2] / np.linalg.norm(eci, axis=1)))
+    assert np.max(np.abs(lat_gc)) == pytest.approx(
+        SCENE_S2.iss_like_lat_max_geocentric_deg, abs=0.01
+    )
+    assert np.max(np.abs(lla[:, 0])) == pytest.approx(
+        SCENE_S2.iss_like_lat_max_geodetic_deg, abs=0.01
+    )
+
+
+def test_iss_like_j2_vs_kepler_after_48h() -> None:
+    # SCENE_S2: em 48 h a regressão do nó da ISS-like com J2 vale ≈ −9,9° (Ω̇ = −4,947 °/dia)
+    mean_j2 = MeanJ2Propagator(ISS_LIKE, EPOCH)
+    d_raan = math.degrees(mean_j2.elements_at(2 * 86400.0).raan[0] - ISS_LIKE.raan)
+    assert d_raan == pytest.approx(SCENE_S2.iss_raan_regression_48h_deg, abs=0.05)

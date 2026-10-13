@@ -445,3 +445,25 @@ class SsoDesignS2:
 
 
 SSO_DESIGN_S2 = SsoDesignS2()
+
+# ===============================================================================================
+# Semana 2 — card S2-07 do prompt da Semana 2: cena da GUI com subponto geodésico WGS84.
+#     O card dizia "≈ 51,7° (abs 0,1°)" para a latitude geodésica máxima da ISS-like. Corrigido:
+#     a diferença geodésica − geocêntrica na latitude φ e altitude h é ≈ f·sin 2φ·R⊕/(R⊕ + h)
+#     [rad] → 0,1924°·sin(103,3°)·6378/6798 ≈ 0,176° a 51,64° e 420 km, logo 51,64 + 0,176 =
+#     51,82° (a mesma conta dá os 82,61° da SSO). Confirmado pela conversão validada contra o
+#     Skyfield (S2-03) e pelo traço no solo (S2-04: 51,815°).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SceneS2:
+    iss_like_lat_max_geocentric_deg: float = 51.64  # = i
+    iss_like_lat_max_geodetic_deg: float = 51.82
+    sso_lat_max_geodetic_deg: float = 82.61
+    max_abs_dlat_vs_spherical_deg: float = 0.2  # |lat geodésica − geocêntrica| ≤ 0,2°
+    alt_vs_spherical_km: tuple[float, float] = (-25.0, 25.0)  # alt geodésica − (r − R⊕)
+    iss_raan_regression_48h_deg: float = -9.9  # Ω̇·2 dias, ISS-like (−4,947 °/dia)
+
+
+SCENE_S2 = SceneS2()

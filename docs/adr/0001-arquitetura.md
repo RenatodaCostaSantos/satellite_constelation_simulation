@@ -182,18 +182,20 @@ todas as etapas sem laços explícitos.
 
 ### Contrato de dados da cena (JSON)
 
-Python calcula; o viewer só desenha. Gerado por `satsim.app.scene_export.build_scene` (S1-08).
+Python calcula; o viewer só desenha. Gerado por `satsim.app.scene_export.build_scene` (S1-08;
+subponto geodésico WGS84 desde a S2-07). Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell).
 
 ```jsonc
 {
   "meta": {"schema_version": 1,
            "epoch_utc": "2026-09-29T12:00:00Z", "duration_s": 21600, "step_s": 10,
-           "frame": "ECI simplificado (x -> equinócio vernal)"},
+           "frame": "ECI simplificado (x -> equinócio vernal)",
+           "geodesy": "WGS84"},                   // S2-07: lla geodésico (campo novo)
   "earth": {"gmst0_rad": 1.234, "gmst_rate_rad_s": 7.2921158553e-5},
   "satellites": [
     {"id": "sso1", "name": "SSO-1", "color": "#00e5ff",
      "eci_km": [[x, y, z], ...],                  // N pontos, um por passo
-     "lla":    [[lat_deg, lon_deg, alt_km], ...]} // subponto (aprox. esférica na Semana 1)
+     "lla":    [[lat_deg, lon_deg, alt_km], ...]} // subponto geodésico WGS84 (S2-07)
   ],
   "stations": [{"id": "sbs", "name": "São Bento do Sapucaí",
                 "lat_deg": -22.69, "lon_deg": -45.73, "alt_m": 900}],
@@ -206,6 +208,11 @@ Python calcula; o viewer só desenha. Gerado por `satsim.app.scene_export.build_
   antimeridiano. `earth` permite girar a Terra (modo inercial) com θG ≈ `gmst0 + rate·t`.
 - **Ajuste ao prompt:** `meta.schema_version`, para o viewer detectar cenas de formato antigo
   quando o contrato evoluir (passagens na Semana 3).
+- **S2-07 (compatível, `schema_version` continua 1):** `lla` passa a ser geodésico WGS84
+  (`frames.eci_to_ecef` + `geodesy.ecef_to_geodetic`): latitude da normal ao elipsoide e
+  altitude elipsoidal. Novo campo `meta.geodesy = "WGS84"`; sem ele (cenas da Semana 1) o
+  subponto é esférico (lat = arcsin(z/r), alt = r − R⊕). A diferença chega a ~0,2° em latitude e
+  ~21 km em altitude (polos). O viewer só muda o texto que exibe.
 
 ### Decisão de stack
 
@@ -250,9 +257,9 @@ usamos scripts clássicos (UMD) e embutimos textura (data URI) e cena (`<script>
   ISS por mais de poucos dias sem TLE fresco.
 - **Taxa de GMST vs. `OMEGA_EARTH`**: diferem levemente (≈ 5 m/dia no equador); a conversão
   ECI → ECEF usa a fórmula completa do GMST.
-- **Subponto esférico na Semana 1**: `lla` usa lat = arcsin(z/r) e alt = r − R⊕; o geodésico
-  WGS84 entra na S2-03.
-- **Cena pré-amostrada**: o viewer só mostra a janela exportada (ex.: 6 h a cada 10 s); tempos
+- **Subponto**: geodésico WGS84 desde a S2-07 (na Semana 1 era esférico). O globo 3D continua
+  sendo uma esfera: desenha o `lla` geodésico sobre ela, o que é só uma escolha de exibição.
+- **Cena pré-amostrada**: o viewer só mostra a janela exportada (ex.: 48 h a cada 20 s); tempos
   fora dela exigem gerar nova cena.
 
 ## Consequências
