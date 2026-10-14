@@ -41,7 +41,8 @@ docs/creditos.md             créditos e licenças dos assets do viewer
 src/satsim/                  código da biblioteca
 src/satsim/app/              GUI: exportação da cena (Python) e viewer (static/)
 scripts/build_demo.py        gera a demo visual demo/index.html
-scripts/                     também: relatório da Semana 2, traço no solo, Tabela 1 (SSO)
+scripts/                     também: relatório da Semana 2, traço no solo, Tabela 1 (SSO),
+                             TLE da ISS (fetch_tle.py)
 reports/s2_comparacao/       figuras e relatório da Semana 2 (versionados)
 tests/                       testes (pytest)
 ```
@@ -123,6 +124,43 @@ propagadores em ~1 000 km em 24 h; com os elementos médios medidos, a diferenç
 Também na pasta: o traço no solo da SSO e da órbita tipo ISS
 (`python scripts/plot_ground_track.py --preset sso` ou `--preset iss-like`), e a Tabela 1 do
 Sem4 (órbitas heliossíncronas) sai de `python scripts/print_sso_table.py`.
+
+## TLE da ISS (Semana 3)
+
+A ISS real entra pelo seu TLE (Two-Line Element set), baixado da
+[CelesTrak](https://celestrak.org/). Para o simulador funcionar sem internet,
+`satsim.tle.get_tle()` busca o TLE em camadas:
+
+1. **cache** em disco com menos de 2 h (a CelesTrak pede no máximo 1 consulta a cada 2 h);
+2. **rede** (CelesTrak), gravando o cache;
+3. falha de rede ou resposta inválida → **cache de qualquer idade**, com aviso;
+4. sem cache → **TLE embarcado** no pacote (`src/satsim/data/iss_fallback.tle`), com aviso.
+
+O cache fica em `data/cache/tle/<norad>.json` (relativo ao diretório de trabalho, não
+versionado); mude com `--cache-dir` ou com a variável de ambiente `SATSIM_CACHE_DIR`. A precisão
+cai com a idade do TLE: acima de 3 dias sai um aviso de precisão degradada, acima de 14 dias um
+aviso forte.
+
+```bash
+python scripts/fetch_tle.py              # usa o cache (< 2 h) ou baixa da CelesTrak
+python scripts/fetch_tle.py --offline    # nunca acessa a rede (cache ou TLE embarcado)
+python scripts/fetch_tle.py --norad 25544 --cache-dir /tmp/tle
+```
+
+Saída (o TLE, depois fonte, data do download, época e idade; avisos no stderr):
+
+```text
+ISS (ZARYA)
+1 25544U 98067A   26286.82178372  .00006592  00000+0  12831-3 0  9991
+2 25544  51.6325  73.0089 0006710 259.3258 100.6975 15.48855783590140
+fonte:      network
+baixado em: 2026-10-14T11:47:21+00:00
+época:      2026-10-13T19:43:22+00:00
+idade:      0.67 dias
+```
+
+Os testes não acessam a rede: usam o TLE congelado de `tests/data/iss_sample.tle` (época
+2019-12-09) e simulam a CelesTrak.
 
 ## Golden tests
 

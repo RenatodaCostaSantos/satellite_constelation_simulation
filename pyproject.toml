@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
+    "sgp4>=2.23",  # S3-02: oráculo SGP4 (TLE da ISS)
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,8 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/satsim"]
+# Dados do pacote (TLE embarcado em satsim/data/, assets do viewer em satsim/app/static/):
+# o hatchling inclui todo arquivo não ignorado dentro de src/satsim; lidos via importlib.resources.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

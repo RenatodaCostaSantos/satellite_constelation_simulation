@@ -467,3 +467,35 @@ class SceneS2:
 
 
 SCENE_S2 = SceneS2()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.1 do prompt da Semana 3: TLE de teste da ISS (congelado em
+#     tests/data/iss_sample.tle). Época 2019-12-09 16:38:29 UTC (mínimo solar); checksums válidos.
+#     B* = 0,38792e-4; movimento médio 15,50103472 rev/dia. Apêndice A.6: limiares de idade do TLE
+#     (aviso > 3 dias, aviso forte > 14 dias) e a CelesTrak pede ≤ 1 consulta a cada 2 h.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class IssTleA1:
+    name: str = "ISS (ZARYA)"
+    line1: str = "1 25544U 98067A   19343.69339541  .00001764  00000-0  38792-4 0  9991"
+    line2: str = "2 25544  51.6439 211.2001 0007417  17.6667  85.6398 15.50103472202482"
+    norad_id: int = 25544
+    epoch_utc_iso: str = "2019-12-09T16:38:29+00:00"  # tolerância do card: abs = 1 s
+    inclination_deg: float = 51.6439
+    mean_motion_rev_day: float = 15.50103472
+    bstar: float = 3.8792e-5
+
+
+ISS_TLE_A1 = IssTleA1()
+
+
+@dataclass(frozen=True)
+class TleAgingA6:
+    warning_days: float = 3.0  # aviso "precisão degradada"
+    strong_warning_days: float = 14.0  # aviso forte
+    celestrak_min_interval_h: float = 2.0  # padrão de max_cache_age
+
+
+TLE_AGING = TleAgingA6()
