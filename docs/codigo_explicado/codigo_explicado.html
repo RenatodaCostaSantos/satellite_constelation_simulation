@@ -77,6 +77,7 @@
     <li><code>src/satsim/frames.py</code> e <code>geodesy.py</code> — onde o satélite está sobre a Terra (ECI → ECEF → WGS84)</li>
     <li><code>src/satsim/groundtrack.py</code> — o traço no solo: subponto, antimeridiano e nós ascendentes</li>
     <li><code>scripts/compare_propagators.py</code> — médio × osculador na prática (relatório da Semana 2)</li>
+    <li><code>src/satsim/tle.py</code> — o TLE da ISS: o que é, onde fica guardado e como vira condição inicial (inclui WGS72 × WGS84)</li>
   </ol>
 </nav>
 
@@ -1171,6 +1172,178 @@ latitude. Começando no equador (u = 0°), o semieixo osculador está ≈ 6 km <
 ISS-like do relatório usa ω0 = 0° (média 6,0 km abaixo do nominal) e a SSO, com ω0 = 90°, fica 9,5 km
 acima. Os mesmos números nominais, em pontos diferentes da órbita, descrevem órbitas médias
 diferentes.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="tle-py">
+<h2>8. tle.py — o TLE da ISS e de onde vêm as condições iniciais</h2>
+<div class="file">src/satsim/tle.py · scripts/fetch_tle.py · card S3-01</div>
+
+<h3>Para que serve o script</h3>
+<p>A partir da Semana 3 o simulador mostra a <strong>ISS real</strong>, não mais uma órbita
+“tipo ISS” inventada. Para isso ele precisa saber qual é a órbita da ISS hoje, e essa informação é
+publicada pelo NORAD num formato chamado TLE. O <code>tle.py</code> resolve <em>de onde vem</em>
+esse TLE de forma confiável: baixa da CelesTrak, guarda uma cópia local, valida o formato, registra a
+idade e funciona mesmo sem internet. Ele não calcula nenhuma posição; isso é papel do SGP4 (card
+S3-02).</p>
+
+<h3>O que é um TLE</h3>
+<p>TLE significa <strong>Two-Line Element set</strong>, “conjunto de elementos em duas linhas”. É um
+formato de texto dos anos 1960, pensado para cartões perfurados de 80 colunas: cada linha tem
+exatamente 69 caracteres e cada número ocupa colunas fixas. Este é o TLE embarcado no pacote:</p>
+<pre><code>ISS (ZARYA)
+1 25544U 98067A   26286.82178372  .00006592  00000+0  12831-3 0  9991
+2 25544  51.6325  73.0089 0006710 259.3258 100.6975 15.48855783590140</code></pre>
+<table>
+  <tr><th>Campo</th><th>No exemplo</th><th>Significado</th></tr>
+  <tr><td>nome (linha opcional)</td><td><code>ISS (ZARYA)</code></td><td>só informativo; o TLE também
+      pode vir em 2 linhas, sem nome</td></tr>
+  <tr><td>nº de catálogo (linhas 1 e 2)</td><td><code>25544</code></td><td>identifica o objeto: 25544 é a
+      ISS; tem de ser igual nas duas linhas</td></tr>
+  <tr><td>época (linha 1)</td><td><code>26286.82178372</code></td><td>ano 2026, dia 286,82 do ano →
+      13/10/2026 às 19:43 UTC: o instante em que os elementos valem</td></tr>
+  <tr><td>B* (linha 1)</td><td><code>12831-3</code></td><td>termo de arrasto, com ponto decimal implícito:
+      0,12831·10⁻³</td></tr>
+  <tr><td>i, Ω, e, ω, ψ (linha 2)</td><td><code>51.6325 … 100.6975</code></td><td>os elementos
+      orbitais em graus; a excentricidade <code>0006710</code> também tem ponto implícito: 0,000671</td></tr>
+  <tr><td>movimento médio (linha 2)</td><td><code>15.48855783</code></td><td>voltas por dia; dá o
+      período (≈ 93 min) e, com µ, o semieixo</td></tr>
+  <tr><td>checksum (último dígito de cada linha)</td><td><code>1</code>, <code>0</code></td><td>soma dos
+      dígitos (cada “−” conta 1) módulo 10; detecta erros de transcrição</td></tr>
+</table>
+<p>O ano tem só dois dígitos; a convenção é: menor que 57 → 20xx, senão 19xx (o primeiro satélite,
+o Sputnik, é de 1957).</p>
+
+<h3>Um TLE é uma foto, não um filme</h3>
+<p>A órbita da ISS muda com o tempo, mas um TLE <strong>não é uma série temporal</strong>: é um único
+conjunto de cerca de oito números, válido <strong>num único instante</strong>, a época. Dois pontos
+tornam isso suficiente:</p>
+<ul>
+  <li>Os elementos são <strong>médios</strong>: as oscilações rápidas de cada volta foram retiradas
+  (a mesma ideia de elementos médios × osculadores da seção 7).</li>
+  <li>O modelo <strong>SGP4</strong> sabe como esses elementos médios evoluem: o plano gira por causa
+  de J2 (a regressão do nó da seção 3), a órbita decai por arrasto (via B*) e ele recoloca as
+  oscilações periódicas. Por isso <strong>1 TLE + SGP4 → posição em qualquer instante</strong>.</li>
+</ul>
+<p>O limite é a realidade: o SGP4 é um modelo aproximado, a ISS faz manobras (<em>reboosts</em>) e o
+arrasto varia com a atividade solar. Quanto mais longe da época, maior o erro. Por isso o NORAD
+publica <strong>novos TLEs</strong> com frequência (para a ISS, várias vezes por dia), e cada um
+<strong>substitui</strong> o anterior. O <code>tle.py</code> avisa quando o TLE em uso tem mais de
+3 dias (“precisão degradada”) e mais de 14 dias (aviso forte).</p>
+
+<h3>Onde o TLE fica guardado</h3>
+<table>
+  <tr><th>Arquivo</th><th>O que é</th><th>No git?</th></tr>
+  <tr><td><code>src/satsim/data/iss_fallback.tle</code></td><td>TLE <strong>embarcado</strong> no pacote:
+      último recurso quando não há internet nem cache (data e fonte em <code>docs/creditos.md</code>)</td>
+      <td>sim</td></tr>
+  <tr><td><code>data/cache/tle/25544.json</code></td><td><strong>cache</strong>: a última cópia baixada
+      da CelesTrak e o instante do download</td><td>não</td></tr>
+  <tr><td><code>tests/data/iss_sample.tle</code></td><td>TLE <strong>congelado</strong> de 2019, usado só
+      nos testes, para que os números de referência sejam reproduzíveis</td><td>sim</td></tr>
+</table>
+<p>O <strong>cache</strong> é um armazenamento local: uma cópia em disco do último TLE baixado. Ele
+existe por dois motivos: a CelesTrak pede no máximo uma consulta a cada 2 h (com cache recente o
+programa nem acessa a rede) e, sem internet, o programa continua funcionando com o que tem. O cache
+guarda só o TLE mais recente; cada download sobrescreve o anterior, sem histórico. O diretório é
+<code>data/cache/tle</code> relativo ao diretório de trabalho e pode ser trocado por
+<code>cache_dir</code> ou pela variável de ambiente <code>SATSIM_CACHE_DIR</code>.</p>
+
+<h3>get_tle: a busca em camadas</h3>
+<pre><code>1. cache com menos de 2 h        → usa sem rede            source = "cache"
+2. rede (CelesTrak)              → grava o cache           source = "network"
+3. falha de rede / TLE inválido  → cache de qualquer idade source = "cache"   + aviso
+4. sem cache                     → TLE embarcado           source = "bundled" + aviso</code></pre>
+<p>Com <code>offline=True</code> o passo 2 é pulado. O resultado é um <code>TleResult</code> com o TLE,
+a fonte (<code>source</code>), o instante do download (<code>fetched_at</code>) e a idade do TLE
+(<code>age</code> = agora − época). Para quem usa o TLE depois, a origem não importa: rede, cache ou
+embarcado devolvem o mesmo objeto <code>Tle</code>.</p>
+<p>Dois cuidados de robustez: uma resposta inválida da rede (página HTML de erro, TLE de outro objeto)
+conta como falha, e um cache corrompido é ignorado com aviso, nunca derruba o programa. A gravação
+do cache é <strong>atômica</strong>: o JSON é escrito num arquivo temporário no mesmo diretório e só
+então renomeado por cima do antigo com <code>os.replace</code>. Se algo falhar no meio da escrita, o
+cache anterior continua íntegro, porque a renomeação é uma operação única do sistema de arquivos.</p>
+
+<h3>Validação no __post_init__</h3>
+<p><code>Tle</code> é um <code>@dataclass(frozen=True)</code> (seção 3) com só três campos de texto:
+<code>name</code>, <code>line1</code>, <code>line2</code>. Os números (época, inclinação, B*…) são
+<code>@property</code> que interpretam as colunas quando pedidos. O método especial
+<code>__post_init__</code>, que o <code>@dataclass</code> chama logo depois de preencher os campos,
+valida comprimento, primeiro caractere, checksum e nº de catálogo e levanta <code>TleError</code> se algo
+estiver errado. Assim <strong>não existe</strong> um objeto <code>Tle</code> inválido: se a construção
+deu certo, as linhas são boas.</p>
+
+<h3>Como o TLE vira condição inicial</h3>
+<p>O código usa o TLE para obter as condições iniciais, mas não diretamente: os números escritos no
+TLE precisam antes ser “traduzidos” pelo SGP4.</p>
+<pre><code>TLE ──(SGP4 traduz)──► r₀, v₀ (posição e velocidade iniciais) ──► Cowell simula</code></pre>
+<table>
+  <tr><th>Peça</th><th>Papel</th></tr>
+  <tr><td>TLE (S3-01)</td><td>dados de entrada: a “receita” da órbita</td></tr>
+  <tr><td>SGP4 (S3-02)</td><td>lê o TLE e calcula r(t), v(t); em t = 0 fornece r₀, v₀</td></tr>
+  <tr><td>r₀, v₀</td><td><strong>condições iniciais</strong> do Cowell
+      (<code>CowellPropagator.from_state</code>, S3-03)</td></tr>
+  <tr><td>Cowell (S3-03)</td><td>integra J2 + arrasto a partir de r₀, v₀; depois comparamos com o SGP4</td></tr>
+</table>
+<p><strong>Por que a tradução é necessária.</strong> Os números do TLE não são a órbita “crua” naquele
+instante: são valores <strong>médios</strong>, calculados pelo NORAD de um jeito específico do SGP4, e
+só o SGP4 sabe desfazer essa média. Se o Cowell lesse os números diretamente como elementos
+osculadores, partiria de um ponto alguns km errado, e o erro cresceria para centenas de km em um dia:
+a mesma armadilha da seção 7, em que elementos médios tratados como osculadores separaram o MeanJ2 do
+Cowell em ≈ 1 300 km em 24 h. Partindo de r₀, v₀ do SGP4, Cowell e SGP4 começam exatamente no mesmo
+ponto, e a diferença ao longo do tempo mede só os modelos de força.</p>
+<p>Kepler e MeanJ2 não recebem TLE: continuam com elementos de projeto (SSO, ISS-like). Nos testes e
+na comparação do S3-03 usa-se o TLE congelado de 2019; na demo (S3-06) e na lista de passagens
+(S3-05) usa-se <code>get_tle()</code>, para mostrar a ISS onde ela está de fato.</p>
+
+<h3>WGS72 dentro do SGP4, WGS84 no resto</h3>
+<p>WGS72 não é condição inicial: é um conjunto de <strong>constantes físicas da Terra</strong> (raio,
+µ, J2), como o WGS84 da seção 5, só que mais antigo. O NORAD gera os TLEs com WGS72, e o SGP4 usa
+essas mesmas constantes internamente. Cada parte do código usa as constantes coerentes com os seus
+dados:</p>
+<table>
+  <tr><th>Onde</th><th>Constantes</th><th>Por quê</th></tr>
+  <tr><td>SGP4 (S3-02)</td><td><strong>WGS72</strong></td><td>o TLE foi ajustado com WGS72; o SGP4 precisa
+      das mesmas constantes para desfazer a média corretamente</td></tr>
+  <tr><td>Todo o resto (Kepler, J2, Cowell, geodésia, estação, mapa)</td><td><strong>WGS84</strong> e os
+      valores do Sem4</td><td>é o padrão atual (GPS, mapas, coordenadas de São Bento do Sapucaí,
+      Skyfield) e o que os PDFs da disciplina usam</td></tr>
+</table>
+<p><strong>Por que não usar WGS72 em tudo.</strong> É de 1972 e foi substituído pelo WGS84 em 1984.
+As coordenadas geográficas que usamos (estação, textura do mapa, GPS) são WGS84, e convertê-las
+deslocaria a estação e o subponto em alguns metros sem ganho nenhum. Os golden tests vêm dos PDFs,
+que usam R⊕ = 6378,137 km e µ = 3,986004418·10¹⁴ m³/s²; trocar as constantes quebraria a verificação.
+O SGP4 é uma exceção histórica: o formato TLE ficou preso ao WGS72 por compatibilidade.</p>
+<p><strong>Por que não trocar o SGP4 para WGS84.</strong> A biblioteca <code>sgp4</code> até permite,
+mas o TLE foi ajustado com WGS72; rodá-lo com outras constantes interpretaria os elementos médios de
+forma ligeiramente errada, e o resultado ficaria <em>pior</em>. As diferenças são pequenas:</p>
+<table>
+  <tr><th></th><th>WGS72</th><th>Nosso (WGS84 / Sem4)</th></tr>
+  <tr><td>Raio equatorial</td><td>6378,135 km</td><td>6378,137 km</td></tr>
+  <tr><td>µ</td><td>398 600,8 km³/s²</td><td>398 600,4418 km³/s²</td></tr>
+  <tr><td>J2</td><td>1,082616·10⁻³</td><td>1,08262668·10⁻³</td></tr>
+</table>
+<p>O ponto de encontro é a <strong>saída do SGP4</strong>: ele devolve posição e velocidade, que
+convertemos para m e m/s, e daí em diante tudo é WGS84. A pequena incoerência que sobra é muito menor
+que o erro típico de um TLE da ISS (≈ 1 km na época).</p>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que verifica</th></tr>
+  <tr><td>TLE de exemplo (Apêndice A.1)</td><td>nº 25544, época 2019-12-09 16:38:29 UTC (±1 s),
+      inclinação 51,6439°, 15,50103472 rev/dia, B* = 3,8792·10⁻⁵</td></tr>
+  <tr><td>Rejeições</td><td>checksum alterado em 1 dígito, linha com 68 ou 70 caracteres, linhas trocadas e
+      catálogos diferentes levantam <code>TleError</code></td></tr>
+  <tr><td>Regra do ano</td><td>56 → 2056, 57 → 1957</td></tr>
+  <tr><td>Camadas do <code>get_tle</code></td><td>com <code>urlopen</code> simulado: rede, cache dentro de 2 h
+      (sem 2ª consulta), falha de rede → cache antigo, sem cache → embarcado, <code>offline</code> nunca
+      acessa a rede, resposta HTML → falha</td></tr>
+  <tr><td>Robustez</td><td>cache corrompido é ignorado; falha no meio da escrita mantém o cache anterior</td></tr>
+  <tr><td>Idade</td><td>avisos acima de 3 e de 14 dias, com <code>now</code> injetado</td></tr>
+</table>
+<p>Nenhum teste acessa a rede: <code>urllib.request.urlopen</code> é substituído (via
+<code>monkeypatch</code> do pytest) por uma função que falha, e cada teste que precisa da CelesTrak
+instala uma versão simulada.</p>
 </section>
 
 </main>
