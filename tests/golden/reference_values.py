@@ -259,3 +259,211 @@ class GridCheckSem4:
 
 
 GRID_CHECK = GridCheckSem4()
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.1 do prompt da Semana 2: taxas seculares de J2 (Sem4 eqs. 23–25, 34) com
+#     mais casas que a A.5 acima, recalculadas a partir dos elementos de cada caso.
+#     ISS: a = R⊕ + 420 km. A inclinação crítica arccos(1/√5) vale para qualquer a e não entra
+#     aqui (é fórmula, não número tabelado).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class J2SecularCase:
+    orbit: str
+    a_km: float
+    e: float
+    i_deg: float
+    raan_dot_deg_day: float
+    argp_dot_deg_day: float
+
+
+J2_SECULAR_CASES_S2: tuple[J2SecularCase, ...] = (
+    J2SecularCase("ISS", 6378.137 + 420.0, 0.0, 51.64, -4.947, 3.690),
+    J2SecularCase("SSO de projeto", 6888.089, 1.074e-3, 97.4396, 0.9856, -3.487),
+    J2SecularCase("Polar exata", 6888.089, 0.0, 90.0, 0.0, -3.806),
+    J2SecularCase("Molniya", 26561.75, 0.74, 63.4349, -0.148, 0.0),
+)
+
+
+@dataclass(frozen=True)
+class J2SecularMiscS2:
+    # SSO de projeto (A.1): ψ̇/n − 1 com ω̇ de J2 isolado. Sem4 §3.5 traz "+0,0065%" por erro de
+    # digitação; o valor correto é −0,066% (≈ 3,8 s de Tnod − Tkep; ω̇ dá os outros ≈ 3,6 s).
+    sso_psi_dot_over_n_minus_1: float = -6.6e-4
+    # ISS (A.1): período de precessão do plano 360°/|Ω̇| e período nodal
+    iss_plane_precession_days: float = 72.8
+    iss_tnod_s: float = 5573.9
+    iss_rev_per_day: float = 15.50
+
+
+J2_SECULAR_MISC_S2 = J2SecularMiscS2()
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.4 do prompt da Semana 2: referências de comportamento do Cowell, de um
+#     experimento independente (Cowell DOP853, rtol = 1e-11, atol = 1e-3, J2 apenas, 10 dias a
+#     60 s, raan0 = 30°, psi0 = 0). Diferenças de até ~30% são aceitáveis; os critérios de aceite
+#     dos cards são os que valem.
+#     argp0: SSO 90° e órbita de teste 30° (do prompt); ISS-like 0° *inferido* na S2-02, pois só
+#     ele reproduz a tabela. Motivo: em órbita quase circular o semieixo osculador oscila como
+#     a_osc − a_médio ≈ 1,5·J2·R⊕²/a·sin²i·cos 2u (u = ω + ν). Tomar os elementos nominais como
+#     osculadores em u0 = 0° (nó) põe a_médio ≈ 6,0 km *abaixo* do nominal; em u0 = 90° (argp0 =
+#     90°, latitude máxima), 6,0 km *acima*. Com argp0 = 90° a ISS-like dá a_médio − a_nominal =
+#     +6,0 km, Ω̇ ajustado −4,933 °/dia (teoria@médio −4,929, +0,08%; @nominal −0,27%) e diferença
+#     MeanJ2(médio) × Cowell de 3,4 km em 24 h: os critérios valem, mas os números não são os da
+#     tabela. A escolha de argp0 para a ISS-like na S2-06 deve ser coerente com esta linha.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class CowellReferenceCase:
+    orbit: str
+    a_km: float
+    e: float
+    i_deg: float
+    argp0_deg: float
+    a_mean_minus_nominal_km: float
+    raan_dot_fit_deg_day: float
+    raan_dot_theory_at_mean_deg_day: float
+    diff_mean_j2_mean_elements_24h_km: float
+    a_osc_peak_to_peak_km: float | None = None  # semieixo osculador numa revolução
+    nominal_error_1_6_12_24h_km: tuple[float, ...] | None = None  # MeanJ2 nominal vs Cowell
+
+
+COWELL_RAAN0_DEG: float = 30.0
+COWELL_PSI0_DEG: float = 0.0
+
+COWELL_REFERENCE_S2: tuple[CowellReferenceCase, ...] = (
+    CowellReferenceCase(
+        orbit="SSO",
+        a_km=6888.089,
+        e=1.074e-3,
+        i_deg=97.4396,
+        argp0_deg=90.0,
+        a_mean_minus_nominal_km=9.5,
+        raan_dot_fit_deg_day=0.9794,
+        raan_dot_theory_at_mean_deg_day=0.9803,
+        diff_mean_j2_mean_elements_24h_km=6.8,
+        a_osc_peak_to_peak_km=19.0,
+        nominal_error_1_6_12_24h_km=(79.0, 363.0, 688.0, 1333.0),
+    ),
+    CowellReferenceCase(
+        orbit="ISS-like",
+        a_km=6378.137 + 420.0,
+        e=5e-4,
+        i_deg=51.64,
+        argp0_deg=0.0,
+        a_mean_minus_nominal_km=-6.0,
+        raan_dot_fit_deg_day=-4.968,
+        raan_dot_theory_at_mean_deg_day=-4.9641,
+        diff_mean_j2_mean_elements_24h_km=14.0,
+        a_osc_peak_to_peak_km=12.0,
+        nominal_error_1_6_12_24h_km=(47.0, 226.0, 449.0, 874.0),
+    ),
+    CowellReferenceCase(
+        orbit="e = 0,02",
+        a_km=7200.0,
+        e=0.02,
+        i_deg=45.0,
+        argp0_deg=30.0,
+        a_mean_minus_nominal_km=-2.5,
+        raan_dot_fit_deg_day=-4.6251,
+        raan_dot_theory_at_mean_deg_day=-4.6197,
+        diff_mean_j2_mean_elements_24h_km=6.6,
+    ),
+)
+
+# ω-ponto na órbita e = 0,02 (A.4): ajustado vs teoria no semieixo médio
+COWELL_ARGP_DOT_FIT_E002_DEG_DAY: float = 4.9095
+COWELL_ARGP_DOT_THEORY_E002_DEG_DAY: float = 4.9018
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.3 do prompt da Semana 2: WGS84 e geometria. f com o valor completo do
+#     WGS84 (NIMA TR8350.2); o texto do Sem4 usa 1/298,257. São Bento do Sapucaí a confirmar na
+#     S3-04.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class Wgs84Reference:
+    a_m: float = 6378137.0
+    inv_f: float = 298.257223563
+    b_m: float = 6356752.314245  # a(1 − f)
+    e2: float = 6.69437999e-3  # f(2 − f)
+    equator_minus_pole_km: float = 21.385  # a − b
+    geocentric_minus_geodetic_45_deg: float = -0.1924  # latitude a 45° geodésicos, h = 0
+    sbs_lat_deg: float = -22.69  # São Bento do Sapucaí (≈)
+    sbs_lon_deg: float = -45.73
+    sbs_alt_m: float = 900.0
+
+
+WGS84_REF = Wgs84Reference()
+
+# ===============================================================================================
+# Semana 2 — card S2-04 do prompt da Semana 2: traço no solo (MeanJ2Propagator, 24 h a 10 s).
+#     Latitude máxima geocêntrica = 180° − i (SSO, DESIGN_ORBIT.lat_max_deg) ou i (ISS-like);
+#     a geodésica é maior (≈ +0,05° na SSO). Deslocamento do nó por revolução e Tnod da SSO estão
+#     em DESIGN_ORBIT (Sem4 §7.1, §7.5).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class GroundTrackS2:
+    sso_lat_max_geodetic_deg: float = 82.61  # ≈ (abs 0,1°)
+    iss_like_i_deg: float = 51.64  # latitude máxima geocêntrica da ISS-like
+    closure_91_6_ref_deg: float = 1.3e-4  # |λ(nó k+91) − λ(nó k)| após 6 dias (≈)
+    # Cruzamentos do antimeridiano na SSO. O card S2-04 dizia {15, 16} (≈ 15,17 rev/dia), mas a
+    # SSO é retrógrada: por revolução nodal a longitude do subponto recua 360° + 23,736°, logo
+    # (360 + 23,736)/360 × 86400/5696,70 = 16,17 cruzamentos/dia → 16 ou 17 em 24 h, conforme Ω0;
+    # no ciclo 91/6, (360 + 23,736)/360 × 91 = 97,0. Corrigido na revisão da S2-04 (dedução acima,
+    # confirmada por simulação com vários Ω0).
+    sso_antimeridian_crossings_24h: tuple[int, ...] = (16, 17)
+    sso_antimeridian_crossings_per_day: float = 16.17
+    sso_antimeridian_crossings_91_6_cycle: int = 97
+
+
+GROUND_TRACK_S2 = GroundTrackS2()
+
+# ===============================================================================================
+# Semana 2 — Apêndice A.2 e card S2-05 do prompt da Semana 2: projeto de SSO (Sem4 §4.3, §6.1).
+#     Tabela 1, teto, tan i e derivas de LTAN já estão em SSO_CIRCULAR_TABLE1 e MISC_SEM4.
+#     A.5: convenção de ω̇ no ciclo 91/6 (pendência para a Semana 5).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SsoDesignS2:
+    di_dh_510_deg_per_km: float = 0.0038  # di/dh da SSO circular em 510 km
+    cos_i_rel_change_e001: float = -2.0e-4  # cos i ∝ (1 − e²)²: variação relativa para e = 0,01
+    # A.5: solução de repetição 91/6 com ω̇ de J2 isolado (código do PDF) vs órbita congelada
+    # (J3 cancela ω̇ → ω̇ líquido = 0); Tnod congelada para o mesmo a ≈ 5693,1 s
+    repeat_91_6_j2_only_h_km: float = 509.952
+    repeat_91_6_j2_only_i_deg: float = 97.4396
+    repeat_91_6_frozen_h_km: float = 512.89
+    repeat_91_6_frozen_i_deg: float = 97.4507
+    tnod_frozen_same_a_s: float = 5693.1
+
+
+SSO_DESIGN_S2 = SsoDesignS2()
+
+# ===============================================================================================
+# Semana 2 — card S2-07 do prompt da Semana 2: cena da GUI com subponto geodésico WGS84.
+#     O card dizia "≈ 51,7° (abs 0,1°)" para a latitude geodésica máxima da ISS-like. Corrigido:
+#     a diferença geodésica − geocêntrica na latitude φ e altitude h é ≈ f·sin 2φ·R⊕/(R⊕ + h)
+#     [rad] → 0,1924°·sin(103,3°)·6378/6798 ≈ 0,176° a 51,64° e 420 km, logo 51,64 + 0,176 =
+#     51,82° (a mesma conta dá os 82,61° da SSO). Confirmado pela conversão validada contra o
+#     Skyfield (S2-03) e pelo traço no solo (S2-04: 51,815°).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SceneS2:
+    iss_like_lat_max_geocentric_deg: float = 51.64  # = i
+    iss_like_lat_max_geodetic_deg: float = 51.82
+    sso_lat_max_geodetic_deg: float = 82.61
+    max_abs_dlat_vs_spherical_deg: float = 0.2  # |lat geodésica − geocêntrica| ≤ 0,2°
+    alt_vs_spherical_km: tuple[float, float] = (-25.0, 25.0)  # alt geodésica − (r − R⊕)
+    iss_raan_regression_48h_deg: float = -9.9  # Ω̇·2 dias, ISS-like (−4,947 °/dia)
+
+
+SCENE_S2 = SceneS2()

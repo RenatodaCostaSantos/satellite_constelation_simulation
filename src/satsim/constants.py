@@ -28,6 +28,20 @@ R_EARTH: Final[float] = 6378.137e3
 OMEGA_EARTH: Final[float] = 7.292115e-5
 """Velocidade de rotação da Terra ω⊕ [rad/s] (Sem4, tabela de símbolos)."""
 
+# --- Elipsoide WGS84 (NIMA TR8350.2) ----------------------------------------------------------
+
+WGS84_A: Final[float] = R_EARTH
+"""Semieixo maior do elipsoide WGS84 a [m] (= R⊕, raio equatorial)."""
+
+WGS84_F: Final[float] = 1.0 / 298.257223563
+"""Achatamento do WGS84 f [adimensional] (valor completo; o texto do Sem4 usa 1/298,257)."""
+
+WGS84_B: Final[float] = WGS84_A * (1.0 - WGS84_F)
+"""Semieixo menor (polar) do WGS84 b = a(1 − f) [m] ≈ 6 356 752,314245 m."""
+
+WGS84_E2: Final[float] = WGS84_F * (2.0 - WGS84_F)
+"""Excentricidade ao quadrado do WGS84 e² = f(2 − f) [adimensional] ≈ 6,69437999e-3."""
+
 # --- Harmônicos zonais, não normalizados (Sem4 §2.2 e código §9.1) ----------------------------
 
 J2: Final[float] = 1.08262668e-3

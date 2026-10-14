@@ -19,6 +19,7 @@ dev = [
     "pytest-cov",
     "ruff",
     "skyfield",
+    "matplotlib",  # só em scripts/ (gráficos dos relatórios)
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -41,20 +41,33 @@ docs/creditos.md             créditos e licenças dos assets do viewer
 src/satsim/                  código da biblioteca
 src/satsim/app/              GUI: exportação da cena (Python) e viewer (static/)
 scripts/build_demo.py        gera a demo visual demo/index.html
+scripts/                     também: relatório da Semana 2, traço no solo, Tabela 1 (SSO)
+reports/s2_comparacao/       figuras e relatório da Semana 2 (versionados)
 tests/                       testes (pytest)
 ```
 
 ## Demo visual
 
-![Demo do satsim: globo 3D e traço no solo 2D](docs/img/demo.png)
+![Demo do satsim: globo 3D e traço no solo 2D, fim da janela de 48 h, com as órbitas tipo ISS com e sem J2 deslocadas](docs/img/demo.png)
 
 Globo 3D e mapa 2D com o traço no solo, na mesma tela e sincronizados. As órbitas são calculadas
-em Python (propagador kepleriano) e o viewer só desenha.
+em Python e o viewer só desenha. A demo cobre **48 h** (passo de 20 s) com três satélites:
+
+| Satélite | Propagador | O que mostra |
+|---|---|---|
+| SSO-1 (J2) | `MeanJ2Propagator` | a órbita heliossíncrona de projeto 91/6 |
+| ISS-like (exemplo J2) | `MeanJ2Propagator` | órbita tipo ISS (a = R⊕ + 420 km, i = 51,64°) com J2 |
+| ISS-like sem J2 (Kepler) | `KeplerPropagator` | a mesma órbita sem J2, em cinza |
+
+**O efeito de J2 fica visível:** as duas ISS-like começam juntas e se separam no mapa, porque J2
+faz o plano da órbita girar (regressão do nó, ≈ −9,9° em 2 dias). Arraste a linha do tempo até o
+fim da janela para ver os dois traços deslocados. A ISS-like é só um exemplo: a ISS real (TLE/SGP4)
+entra na Semana 3.
 
 **Gerar** (na raiz do repositório, com o venv ativo):
 
 ```bash
-python scripts/build_demo.py      # cria demo/index.html (~2,5 MB, autocontido)
+python scripts/build_demo.py      # cria demo/index.html (~4 MB, autocontido)
 ```
 
 **Abrir:** dê dois cliques em `demo/index.html`, ou rode `xdg-open demo/index.html` no Linux
@@ -65,8 +78,10 @@ embutidas no arquivo. A pasta `demo/` não é versionada; gere de novo quando o 
 [`scripts/build_demo.py`](scripts/build_demo.py), por exemplo
 
 ```text
-kepler_sat("kep2", "Terceiro (i = 30°)", "#b26bff", a_km=7200.0, e=0.01, i_deg=30.0, raan_deg=200.0, argp_deg=0.0, psi_deg=90.0),
+sat("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator, a_km=7200.0, e=0.01, i_deg=30.0, raan_deg=200.0, argp_deg=0.0, psi_deg=90.0),
 ```
+
+(o quarto argumento é o propagador: `MeanJ2Propagator` com J2, `KeplerPropagator` sem J2)
 
 e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado com 18).
 
@@ -76,14 +91,38 @@ e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado c
 |---|---|
 | ▶ / ❚❚ (ou barra de espaço) | reproduzir / pausar |
 | 1x · 10x · 60x · 300x · 1000x | velocidade da simulação |
-| linha do tempo (embaixo) | arrastar para qualquer instante da janela de 6 h |
+| linha do tempo (embaixo) | arrastar para qualquer instante da janela de 48 h |
 | ⏮ início | voltar ao início da janela |
 | caixas na lista de satélites | mostrar / ocultar cada satélite |
+| nome na lista de satélites | selecionar: o painel **Informações** mostra latitude, longitude e altitude geodésicas atuais |
 | arrastar / roda do mouse no globo | girar / zoom |
 
 No mapa, a linha cheia é o traço já percorrido e a tracejada é o futuro. São Bento do Sapucaí
-aparece em rosa nos dois painéis. Nesta fase a vista mantém a Terra fixa (ECEF) e usa subponto
-esférico; os créditos e licenças dos assets estão em [`docs/creditos.md`](docs/creditos.md).
+aparece em rosa nos dois painéis. A vista mantém a Terra fixa (ECEF); o subponto é geodésico
+WGS84 desde a Semana 2 (latitude da vertical local, altitude acima do elipsoide). Os créditos e
+licenças dos assets estão em [`docs/creditos.md`](docs/creditos.md).
+
+## Relatório da Semana 2
+
+Comparação Kepler × MeanJ2 × Cowell (J2): o que J2 muda na órbita e o que cada propagador
+entrega. Um único comando gera as figuras e o relatório em
+[`reports/s2_comparacao/`](reports/s2_comparacao/):
+
+```bash
+python scripts/compare_propagators.py      # ~5 s; 5 figuras PNG + relatorio.md
+```
+
+O [`relatorio.md`](reports/s2_comparacao/relatorio.md) traz, para a SSO de projeto, uma órbita
+tipo ISS e uma órbita de teste com e = 0,02 (10 dias a 60 s): a regressão do nó medida no Cowell
+contra a teoria secular, a rotação do perigeu, a oscilação de curto período do semieixo, o erro
+de posição do MeanJ2 e do Kepler contra o Cowell, e um parágrafo de conclusões. A lição central é
+a diferença entre **elementos médios e osculadores**: os mesmos números nominais usados como
+condição inicial do Cowell descrevem uma órbita média alguns km diferente, o que separa os dois
+propagadores em ~1 000 km em 24 h; com os elementos médios medidos, a diferença cai para < 15 km.
+
+Também na pasta: o traço no solo da SSO e da órbita tipo ISS
+(`python scripts/plot_ground_track.py --preset sso` ou `--preset iss-like`), e a Tabela 1 do
+Sem4 (órbitas heliossíncronas) sai de `python scripts/print_sso_table.py`.
 
 ## Golden tests
 

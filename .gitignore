@@ -23,3 +23,7 @@ data/cache/
 
 # Demo visual gerada por scripts/build_demo.py
 demo/
+
+# PDFs: só os teóricos de docs/referencias/ são versionados
+*.pdf
+!docs/referencias/*.pdf

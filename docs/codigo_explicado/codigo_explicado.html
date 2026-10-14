@@ -3,7 +3,7 @@
   Fonte do PDF docs/codigo_explicado/codigo_explicado.pdf.
   Para acrescentar uma explicação: adicione uma nova <section class="script"> antes de </main>
   e um item no sumário. Para regenerar o PDF (a partir da raiz do repositório):
-    google-chrome --headless --no-pdf-header-footer \
+    google-chrome --headless --no-pdf-header-footer --allow-file-access-from-files \
       --print-to-pdf=docs/codigo_explicado/codigo_explicado.pdf \
       docs/codigo_explicado/codigo_explicado.html
 -->
@@ -42,6 +42,10 @@
   figcaption { font-size: 9pt; color: var(--muted); margin-top: 4pt; text-align: left; }
   .file { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; color: var(--muted); margin-top: -2pt; }
   section.script + section.script { page-break-before: always; }
+  /* Ω̇, ω̇, ψ̇ (taxas): as fontes desenham mal o ponto combinante; ele é posto por CSS */
+  .od { position: relative; display: inline-block; }
+  .od::after { content: "\02D9"; position: absolute; left: 0; right: 0; top: -0.28em;
+               text-align: center; }
 </style>
 </head>
 <body>
@@ -68,6 +72,11 @@
   <ol>
     <li><code>src/satsim/propagators/base.py</code> — interface base dos propagadores</li>
     <li><code>src/satsim/astrotime.py</code> — tempo astronômico: UTC, Data Juliana e GMST (inclui ECI e ECEF)</li>
+    <li><code>src/satsim/secular.py</code> — taxas seculares de J2 e período nodal (inclui <code>@dataclass</code>)</li>
+    <li><code>src/satsim/forces/j2.py</code> — a aceleração de J2 (inclui <code>Protocol</code>, <code>np.stack</code> e <code>__call__</code>)</li>
+    <li><code>src/satsim/frames.py</code> e <code>geodesy.py</code> — onde o satélite está sobre a Terra (ECI → ECEF → WGS84)</li>
+    <li><code>src/satsim/groundtrack.py</code> — o traço no solo: subponto, antimeridiano e nós ascendentes</li>
+    <li><code>scripts/compare_propagators.py</code> — médio × osculador na prática (relatório da Semana 2)</li>
   </ol>
 </nav>
 
@@ -305,6 +314,863 @@ girar 0,9856° por dia para acompanhar o Sol.</p>
 </table>
 <p>Para visibilidade de satélites, em que importam centenas de metros, essas simplificações são
 aceitáveis. Estão registradas no ADR e na docstring do módulo.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="secular-py">
+<h2>3. secular.py — taxas seculares de J2</h2>
+<div class="file">src/satsim/secular.py · card S2-01</div>
+
+<h3>O que o script calcula</h3>
+<p>A Terra não é uma esfera perfeita: ela é achatada nos polos, com um “cinturão” de massa extra no
+equador. O coeficiente <strong>J2</strong> mede esse achatamento. Na média de muitas voltas, o
+efeito de J2 <strong>não muda a forma da órbita</strong> (o semieixo maior <code>a</code>, a
+excentricidade <code>e</code> e a inclinação <code>i</code> médios ficam constantes), mas faz três
+ângulos derivarem a uma taxa constante. São essas três taxas, mais o movimento médio kepleriano
+<code>n</code>, que o <code>secular.py</code> devolve:</p>
+<pre><code>p = a(1 − e²),   k = 1,5·J2·(R⊕/p)²,   n = √(µ/a³)
+
+<span class="od">Ω</span> = −k·n·cos i                               (Sem4 eq. 23)
+<span class="od">ω</span> = ½·k·n·(5cos²i − 1)                       (Sem4 eq. 24)
+<span class="od">ψ</span> = n·[1 + k·√(1 − e²)·(1 − 1,5·sin²i)]      (Sem4 eq. 25)</code></pre>
+<table>
+  <tr><th>Campo</th><th>Símbolo</th><th>Significado físico</th></tr>
+  <tr><td><code>n</code></td><td>n</td><td>movimento médio de dois corpos (sem J2): 2π / período kepleriano</td></tr>
+  <tr><td><code>raan_dot</code></td><td><span class="od">Ω</span></td><td><strong>regressão do nó</strong>: o plano da órbita gira em
+      torno do eixo da Terra. É a taxa que, igualada a 0,9856°/dia, define a órbita heliossíncrona</td></tr>
+  <tr><td><code>argp_dot</code></td><td><span class="od">ω</span></td><td><strong>rotação da linha dos apsides</strong>: o perigeu
+      gira dentro do plano da órbita. Zera na inclinação crítica arccos(1/√5) = 63,43°</td></tr>
+  <tr><td><code>psi_dot</code></td><td><span class="od">ψ</span></td><td>movimento médio <em>perturbado</em>: a anomalia média avança
+      um pouco mais devagar (ou mais depressa) do que <code>n</code> por causa de J2</td></tr>
+</table>
+<p>As taxas são em rad/s. Um número para ter em mente: na órbita heliossíncrona de projeto, <span class="od">Ω</span> vale
+≈ 2·10⁻⁷ rad/s, o que parece desprezível, mas são 0,9856° por dia, ou uma volta completa do plano da
+órbita por ano.</p>
+
+<h3>O decorator @dataclass</h3>
+<p>Muitas classes só servem para <strong>guardar dados</strong>, sem lógica. Escrever essas classes à
+mão é repetitivo: o <code>__init__</code> recebe cada campo e o copia para <code>self</code>, o
+<code>__repr__</code> monta um texto legível e o <code>__eq__</code> compara campo a campo. O
+<code>@dataclass</code> (módulo <code>dataclasses</code> da biblioteca padrão) gera esses três métodos
+automaticamente a partir das anotações de tipo da classe. O código do script:</p>
+<pre><code>@dataclass(frozen=True)
+class SecularRates:
+    n: FloatOrArray
+    raan_dot: FloatOrArray
+    argp_dot: FloatOrArray
+    psi_dot: FloatOrArray</code></pre>
+<p>é equivalente a escrever à mão:</p>
+<pre><code>class SecularRates:
+    def __init__(self, n, raan_dot, argp_dot, psi_dot):
+        self.n = n
+        self.raan_dot = raan_dot
+        self.argp_dot = argp_dot
+        self.psi_dot = psi_dot
+
+    def __repr__(self):        # usado por print()
+        return f"SecularRates(n={self.n}, raan_dot={self.raan_dot}, ...)"
+
+    def __eq__(self, other):   # usado por ==
+        return (self.n, self.raan_dot, ...) == (other.n, other.raan_dot, ...)</code></pre>
+<p>O argumento <code>frozen=True</code> torna os objetos <strong>imutáveis</strong>: depois de criado, nenhum
+campo pode ser alterado. É a mesma ideia do <code>@property</code> em <code>epoch</code> (seção 1):
+as taxas valem para um <code>(a, e, i)</code> específico, e modificar uma delas isoladamente produziria
+um conjunto inconsistente. A tentativa gera erro:</p>
+<pre><code>&gt;&gt;&gt; rates.n = 1.0
+dataclasses.FrozenInstanceError: cannot assign to field 'n'</code></pre>
+
+<h3>A classe SecularRates e a função secular_rates</h3>
+<p>Os nomes são parecidos, mas as duas peças têm papéis diferentes, e <code>secular_rates</code>
+<strong>não é um método</strong> da classe: é uma função comum, definida no nível do módulo (fora da
+classe, sem indentação).</p>
+<ul>
+  <li><strong><code>SecularRates</code></strong> (com maiúsculas, convenção para classes) é a
+  <em>caixa</em>: quatro compartimentos com nome e nenhum cálculo.</li>
+  <li><strong><code>secular_rates(a, e, i)</code></strong> (com minúsculas, convenção para funções)
+  faz as contas e, na última linha, coloca os quatro resultados numa <code>SecularRates</code> nova e a
+  devolve.</li>
+</ul>
+<p>Um exemplo mínimo com a mesma estrutura, fora da mecânica orbital:</p>
+<pre><code>@dataclass(frozen=True)
+class Retangulo:                      # a caixa
+    area: float
+    perimetro: float
+
+def medir(largura, altura):           # a função que calcula
+    area = largura * altura
+    perimetro = 2 * (largura + altura)
+    return Retangulo(area, perimetro) # cria a caixa e a devolve
+
+r = medir(3, 4)
+print(r)        # Retangulo(area=12, perimetro=14)
+print(r.area)   # 12</code></pre>
+<p>No <code>secular.py</code>, o <code>return Retangulo(area, perimetro)</code> corresponde a
+<code>return SecularRates(n, raan_dot, argp_dot, psi_dot)</code>. O uso real, para a órbita
+heliossíncrona de projeto:</p>
+<pre><code>&gt;&gt;&gt; rates = secular_rates(a=6888.089e3, e=1.074e-3, i=np.radians(97.4396))
+&gt;&gt;&gt; rates
+SecularRates(n=0.0011043856704022533, raan_dot=1.991076039546266e-07,
+             argp_dot=-7.044166649355821e-07, psi_dot=0.0011036554735148136)
+&gt;&gt;&gt; np.degrees(rates.raan_dot) * 86400      # <span class="od">Ω</span> em °/dia
+0.98565...                                    # = taxa do Sol: órbita heliossíncrona</code></pre>
+<p><strong>Por que não devolver uma tupla?</strong> A função poderia terminar em
+<code>return n, raan_dot, argp_dot, psi_dot</code>. Mas aí quem chama teria de lembrar a ordem e
+escrever <code>rates[2]</code> para obter <span class="od">ω</span>, e trocar a ordem por engano não daria erro, só um
+resultado errado. Com a dataclass, o acesso é por nome (<code>rates.argp_dot</code>), o
+<code>print</code> mostra o que é cada número e o editor completa os nomes dos campos.</p>
+
+<h3>Escalar ou vetor: broadcasting e _as_scalar_if_0d</h3>
+<p>A função aceita tanto números quanto arrays NumPy, para calcular as taxas de muitas órbitas de uma
+vez (por exemplo, uma varredura de altitudes para montar a tabela das órbitas heliossíncronas). A
+primeira linha</p>
+<pre><code>a, e, i = np.broadcast_arrays(*(np.asarray(x, dtype=float) for x in (a, e, i)))</code></pre>
+<p>converte as três entradas em arrays de float e as ajusta a um shape comum (<em>broadcasting</em>):
+19 altitudes com uma única <code>e</code> e uma única <code>i</code> viram três arrays de shape
+<code>(19,)</code>. A partir daí, cada fórmula opera elemento a elemento, sem laço
+<code>for</code>.</p>
+<p>O efeito colateral é que até uma entrada escalar vira um array de dimensão zero
+(<code>np.array(0.0011)</code>), que é incômodo de imprimir e comparar. O helper
+<code>_as_scalar_if_0d</code> desfaz isso no final: se o resultado tem <code>ndim == 0</code>, ele vira
+um <code>float</code> comum; senão, fica como array. Por isso o tipo dos campos é
+<code>FloatOrArray</code>. O <code>_</code> no início do nome indica que é um detalhe interno do
+módulo, não parte da interface pública.</p>
+<p>Antes das contas, a função valida as entradas: <code>a ≤ 0</code> ou <code>e</code> fora de
+<code>[0, 1)</code> levantam <code>ValueError</code>, já que as fórmulas só valem para órbitas
+elípticas.</p>
+
+<h3>O operador * de desempacotamento</h3>
+<p>A última linha de <code>secular_rates</code> tem um <code>*</code> que não é multiplicação:</p>
+<pre><code>return SecularRates(*(_as_scalar_if_0d(x) for x in (n, raan_dot, argp_dot, psi_dot)))</code></pre>
+<p>Ele é o operador de <strong>desempacotamento</strong> (<em>unpacking</em>): pega uma sequência de valores
+e passa cada um como um argumento separado da chamada. A linha se lê em duas partes:</p>
+<ul>
+  <li><code>(_as_scalar_if_0d(x) for x in (...))</code> é uma <em>expressão geradora</em>: aplica
+  <code>_as_scalar_if_0d</code> a cada uma das quatro taxas e produz quatro valores, em ordem;</li>
+  <li>o <code>*</code> na frente “abre” esse gerador e entrega os quatro valores como argumentos
+  posicionais.</li>
+</ul>
+<p>O resultado é idêntico a escrever:</p>
+<pre><code>return SecularRates(
+    _as_scalar_if_0d(n),
+    _as_scalar_if_0d(raan_dot),
+    _as_scalar_if_0d(argp_dot),
+    _as_scalar_if_0d(psi_dot),
+)</code></pre>
+<p>O <code>*</code> só evita repetir <code>_as_scalar_if_0d(...)</code> quatro vezes. A ordem importa: os
+valores entram nos campos na ordem em que foram declarados na dataclass (<code>n</code>,
+<code>raan_dot</code>, <code>argp_dot</code>, <code>psi_dot</code>). Um exemplo mínimo:</p>
+<pre><code>def soma3(a, b, c):
+    return a + b + c
+
+valores = [1, 2, 3]
+soma3(valores)    # TypeError: a lista inteira vai para a; faltam b e c
+soma3(*valores)   # 6, equivale a soma3(1, 2, 3)</code></pre>
+<p>Sem o <code>*</code>, o gerador inteiro entraria como um único argumento em <code>n</code> e o Python
+reclamaria da falta de <code>raan_dot</code>, <code>argp_dot</code> e <code>psi_dot</code>. A primeira
+linha da função usa o mesmo recurso:
+<code>np.broadcast_arrays(*(np.asarray(x, dtype=float) for x in (a, e, i)))</code> equivale a passar
+<code>np.asarray(a, ...)</code>, <code>np.asarray(e, ...)</code> e <code>np.asarray(i, ...)</code> como três
+argumentos separados.</p>
+<p>Os demais <code>*</code> da função são multiplicação comum (<code>k * n * cos_i</code>), e
+<code>**</code> é potência (<code>a**3</code>). A posição distingue os dois usos: o <code>*</code> de
+desempacotamento fica no início de um argumento, dentro dos parênteses de uma chamada; o de
+multiplicação fica entre dois valores.</p>
+
+<h3>O período nodal: nodal_period</h3>
+<p>O período nodal é o tempo entre duas passagens consecutivas do satélite pelo nó ascendente, isto é,
+cruzando o equador de sul para norte. É ele, e não o período kepleriano, que define quantas voltas por
+dia o satélite dá sobre a Terra e, portanto, o padrão de repetição do traço no solo. O argumento de
+latitude <code>u = ω + ν</code> avança em média à taxa <span class="od">ψ</span> + <span class="od">ω</span>, então:</p>
+<pre><code>Tnod = 2π / (<span class="od">ψ</span> + <span class="od">ω</span>)          (Sem4 eq. 34)</code></pre>
+<p><code>nodal_period</code> reaproveita <code>secular_rates</code> e usa os campos pelo nome
+(<code>rates.psi_dot + rates.argp_dot</code>), um exemplo direto da vantagem da dataclass. Na órbita de
+projeto, Tnod = 5696,70 s contra Tkep = 2π/n = 5689,30 s: J2 alonga a volta nodal em
+≈ 7,4 s.</p>
+
+<h3>Validação</h3>
+<p>Os testes em <code>tests/test_secular.py</code> comparam as taxas com o Apêndice A.1 do prompt da
+Semana 2 e verificam casos com resposta conhecida:</p>
+<table>
+  <tr><th>Caso</th><th>O que é verificado</th></tr>
+  <tr><td>ISS, SSO de projeto, polar, Molniya</td><td><span class="od">Ω</span> e <span class="od">ω</span> em °/dia contra a tabela de referência</td></tr>
+  <tr><td>SSO de projeto</td><td>Tnod = 5696,70 s, Tkep = 5689,30 s e <span class="od">ψ</span>/n − 1 = −6,6·10⁻⁴</td></tr>
+  <tr><td>Órbita polar (i = 90°)</td><td><span class="od">Ω</span> = 0, porque cos 90° = 0</td></tr>
+  <tr><td>Inclinação crítica (63,43°)</td><td><span class="od">ω</span> = 0 para qualquer <code>a</code> e <code>e</code></td></tr>
+  <tr><td>J2 = 0</td><td><span class="od">Ω</span> = <span class="od">ω</span> = 0 e <span class="od">ψ</span> = n: volta ao caso kepleriano</td></tr>
+  <tr><td>Entrada vetorial</td><td>o resultado com 19 altitudes é idêntico a 19 chamadas escalares</td></tr>
+  <tr><td>Entradas inválidas</td><td><code>ValueError</code> para a ≤ 0 e e ∉ [0, 1)</td></tr>
+</table>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>Só J2, só primeira ordem.</strong> J3 e J4 ficam de fora. J3 importa para a órbita
+  congelada, em que ele cancela <span class="od">ω</span> (Semana 5).</li>
+  <li><strong>Só elementos médios.</strong> As oscilações de curto período dos elementos osculadores,
+  da ordem de quilômetros em <code>a</code>, não aparecem: o resultado é a tendência média.</li>
+  <li><strong>Sem singularidades.</strong> Nenhuma fórmula divide por <code>e</code> nem por
+  <code>sin i</code>, então as órbitas circulares e equatoriais funcionam sem tratamento especial.</li>
+</ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="j2-py">
+<h2>4. forces/j2.py — a aceleração de J2</h2>
+<div class="file">src/satsim/forces/j2.py · card S2-02</div>
+
+<h3>Para que serve o script</h3>
+<p>O <code>secular.py</code> (seção 3) descreve o efeito de J2 <em>na média</em>: três ângulos que
+derivam a taxas constantes. O <code>CowellPropagator</code> faz o caminho oposto: em vez de usar o
+resultado médio, ele integra numericamente a equação de movimento, passo a passo, e para isso precisa
+saber a <strong>força</strong> (por unidade de massa, ou seja, a aceleração) que atua no satélite em
+cada ponto do espaço. O <code>j2.py</code> fornece essa peça: dada a posição <code>r</code> do
+satélite em ECI, ele devolve a aceleração extra causada pelo achatamento da Terra.</p>
+<p>A equação que o Cowell integra é</p>
+<pre><code>r̈ = −µ·r/r³  +  a_J2(r)
+    └ Terra esférica ┘   └ correção do achatamento (este script) ┘</code></pre>
+<p>O primeiro termo é a gravidade de uma Terra esférica; fica no próprio propagador. O segundo é o
+que este script calcula. Separar os dois permite ligar e desligar a perturbação
+(<code>models=()</code> volta ao problema de dois corpos) e, na Semana 3, somar o arrasto atmosférico
+sem mexer no propagador.</p>
+
+<h3>A física: um potencial e o seu gradiente</h3>
+<p>A gravidade de uma Terra achatada é a da esfera mais uma pequena correção, descrita por uma
+<strong>função perturbadora</strong> R (Sem4 §2.2), que depende da distância <code>r</code> e da
+latitude geocêntrica φ (sin φ = z/r):</p>
+<pre><code>R(r) = −µ·J2·R⊕²·(3 sin²φ − 1) / (2 r³)</code></pre>
+<p>A aceleração é o <strong>gradiente</strong> de R, isto é, a direção em que R cresce mais depressa,
+com intensidade igual à taxa desse crescimento. Fazendo as derivadas em x, y e z chega-se à forma
+cartesiana usada no código (Sem4 §9.3):</p>
+<pre><code>c = 1,5·J2·µ·R⊕² / r⁵
+a = c·[ x·(5z²/r² − 1),  y·(5z²/r² − 1),  z·(5z²/r² − 3) ]</code></pre>
+<p>Para ter noção da escala, a 500 km de altitude a gravidade central vale 8,43 m/s² e a correção de
+J2 fica entre 0,012 e 0,024 m/s²: cerca de <strong>0,14%</strong>. A gravidade total continua
+apontando para dentro, sempre. O que J2 faz é deformá-la ligeiramente, de três jeitos:</p>
+<table>
+  <tr><th>Onde</th><th>Correção de J2 (500 km)</th><th>Efeito</th></tr>
+  <tr><td>Sobre o equador</td><td>radial, para dentro: 0,0118 m/s²</td>
+      <td>a gravidade fica um pouco <strong>mais forte</strong> (o bojo equatorial está logo abaixo)</td></tr>
+  <tr><td>Sobre os polos</td><td>radial, para fora: 0,0235 m/s²</td>
+      <td>a gravidade fica um pouco <strong>mais fraca</strong> (a Terra é “mais baixa” ali)</td></tr>
+  <tr><td>Latitudes intermediárias</td><td>tem uma componente lateral, rumo ao plano do equador:
+      até 0,0118 m/s², máxima em φ = 45°</td>
+      <td>a força deixa de ser <strong>central</strong>: é isso que faz a órbita precessar</td></tr>
+</table>
+<p><strong>Por que só a componente lateral causa precessão.</strong> Uma força radial (apontando para o
+centro da Terra ou para longe dele) não exerce torque, porque <code>r × a = 0</code> quando
+<code>a</code> é paralela a <code>r</code>. Sem torque, o momento angular ℓ = r × v não muda de
+direção, e portanto o plano da órbita não gira. Nas latitudes intermediárias, porém, a aceleração de
+J2 tem uma componente perpendicular a <code>r</code>, de módulo
+<code>3·J2·µ·R⊕²·sin φ·cos φ / r⁴</code>, que puxa o satélite em direção ao plano do equador. Essa
+componente exerce torque. Como a Terra é simétrica em torno do eixo z, o torque é sempre horizontal
+(componente z nula): ele não altera ℓz, só faz o vetor ℓ girar em torno do eixo z, como um pião
+inclinado. O nó ascendente acompanha esse giro: é a regressão do nó, <span class="od">Ω</span> (Sem4 eq. 23).</p>
+<p>Uma consequência útil para testar o código: como a força vem de um potencial e não depende do
+tempo, a energia se conserva, e como o torque não tem componente z, ℓz também se conserva. A energia
+conservada é</p>
+<pre><code>ε = v²/2 − µ/r − R(r)</code></pre>
+<p>com sinal <strong>menos</strong> antes de R, porque R é definido de modo que a aceleração é
+<code>+∇R</code> (a energia potencial é −R).</p>
+
+<h3>A interface: AccelerationModel e o Protocol</h3>
+<pre><code>class AccelerationModel(Protocol):
+    def __call__(self, t: float, r: NDArray, v: NDArray) -&gt; NDArray: ...</code></pre>
+<p>O <code>AccelerationModel</code> descreve o que o Cowell espera de qualquer perturbação: algo que
+possa ser <em>chamado</em> com o tempo <code>t</code>, a posição <code>r</code> e a velocidade
+<code>v</code> (cada uma com shape <code>(3,)</code>) e devolva uma aceleração <code>(3,)</code>. J2
+usa só <code>r</code>; o arrasto da Semana 3 vai usar também <code>v</code> (e talvez <code>t</code>),
+por isso a assinatura já recebe os três.</p>
+<p>A diferença para a <code>Propagator(ABC)</code> da seção 1 está em como cada classe declara que
+cumpre o contrato:</p>
+<ul>
+  <li>com uma <strong>ABC</strong>, a classe precisa <em>herdar</em> explicitamente
+  (<code>class KeplerPropagator(Propagator)</code>); o Python verifica na hora de criar o objeto se
+  os métodos abstratos foram implementados;</li>
+  <li>com um <strong>Protocol</strong>, não há herança: qualquer objeto que tenha um
+  <code>__call__</code> com essa assinatura serve. É a ideia de <em>duck typing</em> (“se anda como
+  pato e grasna como pato, é pato”), mas escrita de forma que o editor e os verificadores de tipo
+  consigam conferir.</li>
+</ul>
+<p>Os <code>...</code> no corpo do método são literalmente o objeto <code>Ellipsis</code> do Python,
+usado aqui como “corpo vazio”: o Protocol só descreve a assinatura, não implementa nada.</p>
+
+<h3>A função j2_acceleration, linha a linha</h3>
+<pre><code>def j2_acceleration(r, mu=MU, j2=J2, re=R_EARTH):
+    r = np.asarray(r, dtype=float)
+    x, y, z = r[..., 0], r[..., 1], r[..., 2]
+    r2 = x * x + y * y + z * z
+    c = 1.5 * j2 * mu * re**2 / (r2 * r2 * np.sqrt(r2))
+    s = 5.0 * z * z / r2
+    return np.stack([c * x * (s - 1.0), c * y * (s - 1.0), c * z * (s - 3.0)], axis=-1)</code></pre>
+<ul>
+  <li><strong><code>np.asarray(r, dtype=float)</code></strong> aceita lista, tupla ou array e devolve um
+  array de float, sem copiar se já for um.</li>
+  <li><strong><code>r[..., 0]</code></strong>: os três pontos (de novo o <code>Ellipsis</code>) significam
+  “todos os eixos anteriores, quantos forem”, e o <code>0</code> escolhe a primeira coordenada do
+  <em>último</em> eixo. Para <code>r</code> de shape <code>(3,)</code>, <code>x</code> é um número;
+  para <code>(N, 3)</code>, <code>x</code> é a coluna inteira, com shape <code>(N,)</code>. A mesma
+  linha serve aos dois casos.</li>
+  <li><strong><code>r2</code></strong> é r² (quadrado da distância). O código evita calcular
+  <code>r</code> e depois elevá-lo: <code>r⁵</code> é escrito como
+  <code>r2 · r2 · √r2</code>, que é uma única raiz quadrada.</li>
+  <li><strong><code>c</code></strong> e <strong><code>s</code></strong> são os fatores comuns da fórmula:
+  <code>c = 1,5·J2·µ·R⊕²/r⁵</code> e <code>s = 5z²/r²</code>. Calculá-los uma vez evita repetir a
+  mesma conta nas três componentes.</li>
+  <li>A última linha monta o vetor aceleração com <code>np.stack</code>, explicado a seguir.</li>
+</ul>
+
+<h3>O que o np.stack faz</h3>
+<p><code>np.stack</code> junta vários arrays de <strong>mesmo shape</strong> num array novo, criando um
+<strong>eixo novo</strong>. O parâmetro <code>axis</code> diz onde esse eixo novo entra:</p>
+<pre><code>x = np.array([1, 2, 3])
+y = np.array([4, 5, 6])
+
+np.stack([x, y], axis=0)    # eixo novo na frente → shape (2, 3)
+# [[1, 2, 3],
+#  [4, 5, 6]]
+
+np.stack([x, y], axis=-1)   # eixo novo no fim → shape (3, 2)
+# [[1, 4],
+#  [2, 5],
+#  [3, 6]]</code></pre>
+<p>Em <code>j2_acceleration</code>, as três componentes (aₓ, a_y, a_z) são calculadas
+separadamente, e cada uma tem o shape de <code>x</code>:</p>
+<ul>
+  <li>para <code>r</code> com shape <strong>(N, 3)</strong> (N instantes), cada componente tem shape
+  <code>(N,)</code>; o <code>stack(..., axis=-1)</code> as coloca lado a lado, como colunas, e o
+  resultado é <strong>(N, 3)</strong>: uma linha por instante, com colunas aₓ, a_y, a_z;</li>
+  <li>para <code>r</code> com shape <strong>(3,)</strong> (um único ponto), cada componente é um número
+  e o resultado é um vetor <strong>(3,)</strong>.</li>
+</ul>
+<p>O <code>axis=-1</code> (o último eixo) é o que permite que a mesma linha sirva para um ponto e
+para N pontos, sem nenhum <code>if</code>: a saída sempre tem o shape da entrada.</p>
+<p><strong>Diferença para <code>np.concatenate</code>.</strong> <code>concatenate</code> emenda arrays
+ao longo de um eixo que <em>já existe</em>, sem criar eixo novo. O <code>CowellPropagator</code> usa
+<code>np.concatenate([r0, v0])</code> para formar o estado do integrador: dois vetores
+<code>(3,)</code> viram um único vetor <code>(6,)</code>, e não uma matriz <code>(2, 3)</code>, que
+seria o resultado de <code>np.stack</code>.</p>
+<pre><code>np.concatenate([x, y])      # [1, 2, 3, 4, 5, 6]   → shape (6,)
+np.stack([x, y])            # [[1, 2, 3], [4, 5, 6]] → shape (2, 3)</code></pre>
+
+<h3>A função j2_potential</h3>
+<p>Calcula a própria função perturbadora R. O propagador não precisa dela (só a aceleração entra na
+equação de movimento), mas ela serve para <strong>conferir</strong> o código: nos testes, o gradiente
+numérico de R tem de bater com <code>j2_acceleration</code>, e a energia
+<code>v²/2 − µ/r − R</code> tem de ficar constante ao longo da integração. Aqui a soma dos quadrados
+usa <code>np.sum(r * r, axis=-1)</code>, que soma ao longo do último eixo: <code>(N, 3)</code> vira
+<code>(N,)</code>, e <code>(3,)</code> vira um número.</p>
+
+<h3>A classe J2Acceleration e o método __call__</h3>
+<pre><code>class J2Acceleration:
+    def __init__(self, mu=MU, j2=J2, re=R_EARTH):
+        self.mu = mu
+        self.j2 = j2
+        self.re = re
+
+    def __call__(self, t, r, v):
+        return j2_acceleration(r, mu=self.mu, j2=self.j2, re=self.re)</code></pre>
+<p>Se a função <code>j2_acceleration</code> já faz a conta, para que uma classe? Por dois motivos:</p>
+<ul>
+  <li><strong>Adaptar a assinatura.</strong> O Cowell chama toda perturbação como
+  <code>modelo(t, r, v)</code>; a função recebe só <code>r</code>. A classe faz a ponte, ignorando
+  <code>t</code> e <code>v</code>.</li>
+  <li><strong>Guardar parâmetros.</strong> <code>J2Acceleration(j2=0.0)</code> cria um modelo com outro
+  valor de J2 (útil em testes) sem que o Cowell precise saber disso: ele só chama o objeto.</li>
+</ul>
+<p>O método especial <strong><code>__call__</code></strong> é o que torna um objeto “chamável” como se
+fosse uma função. Com ele, as duas formas abaixo são equivalentes:</p>
+<pre><code>modelo = J2Acceleration()
+modelo(0.0, r, v)             # o Python traduz para...
+modelo.__call__(0.0, r, v)    # ...esta chamada</code></pre>
+<p>É assim que o Cowell usa a perturbação, dentro da função que calcula a derivada do estado:</p>
+<pre><code>acc = -self._mu / r_norm**3 * r       # gravidade central
+for model in self._models:            # (J2Acceleration(),) por padrão
+    acc = acc + model(t, r, v)        # soma cada perturbação</code></pre>
+<p>O método <code>potential(r)</code> da classe chama <code>j2_potential</code> com os mesmos parâmetros
+do modelo, para que energia e aceleração sejam sempre calculadas com o mesmo J2.</p>
+
+<h3>Validação</h3>
+<p>Os testes em <code>tests/test_j2_force.py</code> verificam a aceleração isoladamente, e os de
+<code>tests/test_cowell.py</code> verificam o seu efeito numa órbita integrada:</p>
+<table>
+  <tr><th>Teste</th><th>O que é verificado</th></tr>
+  <tr><td>Gradiente numérico</td><td>em 20 pontos aleatórios entre 400 e 2000 km, a aceleração bate com
+      as diferenças centrais de R (passo de 1 m) a 10⁻⁶ relativo</td></tr>
+  <tr><td>Equador e polo</td><td>−1,5·J2·µ·R⊕²/r⁴ ao longo de r̂ e +3·J2·µ·R⊕²/r⁴ ao longo de +z, a
+      10⁻¹² relativo</td></tr>
+  <tr><td>Vetorização</td><td><code>(N, 3)</code> dá o mesmo resultado que N chamadas com
+      <code>(3,)</code></td></tr>
+  <tr><td>Energia e ℓz (Cowell, 10 dias)</td><td>constantes a 10⁻⁹ relativo</td></tr>
+  <tr><td>Regressão do nó (Cowell, 10 dias)</td><td><span class="od">Ω</span> medido concorda com a teoria do
+      <code>secular.py</code> em menos de 0,5%</td></tr>
+</table>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>Só J2.</strong> J3, J4 e os harmônicos tesserais (que dependem da longitude) ficam de
+  fora. J2 é cerca de 400 vezes maior que J3 e responde pela quase totalidade do efeito em LEO.</li>
+  <li><strong>Terra sem rotação no modelo de força.</strong> Como J2 é simétrico em torno do eixo z,
+  girar a Terra não muda a aceleração; por isso a conta pode ser feita direto em ECI, sem passar por
+  ECEF.</li>
+  <li><strong>ECI simplificado.</strong> O eixo z é o polo da data, sem precessão nem nutação (ADR
+  0001).</li>
+</ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="frames-geodesy-py">
+<h2>5. frames.py e geodesy.py — onde o satélite está sobre a Terra</h2>
+<div class="file">src/satsim/frames.py · src/satsim/geodesy.py · card S2-03</div>
+
+<h3>Para que servem (e para que não servem)</h3>
+<p>Estes dois módulos <strong>não mexem nos propagadores</strong>. Kepler, MeanJ2 e Cowell continuam
+calculando a órbita em ECI exatamente como antes. O que os módulos resolvem é outra pergunta:
+<strong>sobre que ponto da Terra o satélite está</strong>. É disso que precisam o mapa 2D, o traço no
+solo e, na Semana 4, a visibilidade do satélite a partir de São Bento do Sapucaí.</p>
+<p>O caminho de um ponto da órbita até o mapa tem duas etapas independentes:</p>
+<pre><code>Propagador ──(r em ECI)──► frames.py ──(r em ECEF)──► geodesy.py ──► lat, lon, alt
+ (órbita no espaço)       gira pela rotação         converte x, y, z em    (mapa, GUI,
+                          da Terra (GMST)           coordenadas de mapa     estação)</code></pre>
+
+<h3>Etapa 1 — frames.py: a Terra gira (ECI → ECEF)</h3>
+<p>O propagador dá a posição num referencial que <strong>não gira</strong> com a Terra (ECI, seção 2).
+Para saber sobre qual longitude o satélite está, é preciso descontar a rotação da Terra, girando o
+vetor em torno do eixo z pelo ângulo θ = GMST (o tempo sideral de Greenwich, calculado pelo
+<code>astrotime.py</code>):</p>
+<pre><code>r_ecef = Rz(θ)·r_eci,    Rz(θ) = [[ cos θ, sin θ, 0],
+                                  [−sin θ, cos θ, 0],
+                                  [   0,     0,   1]]</code></pre>
+<p>Essa etapa <strong>não tem nada a ver com a forma da Terra</strong>: valeria até para uma Terra
+perfeitamente esférica. Ela já existia na Semana 1, escondida dentro do <code>scene_export.py</code>;
+agora vira uma função da biblioteca, reutilizável e testada. Dois detalhes:</p>
+<ul>
+  <li><strong>Sinal da rotação.</strong> Rz(θ) é uma rotação <em>passiva</em>: são os eixos que giram,
+  não o ponto. Se a Terra girou 90° para leste, um ponto fixo no espaço sobre o equinócio vernal,
+  r_eci = (1, 0, 0), aparece em r_ecef = (0, −1, 0), isto é, na longitude −90° (a oeste). O teste
+  <code>test_rotation_sign</code> verifica exatamente esse caso.</li>
+  <li><strong>Velocidades.</strong> Além de girar o vetor, é preciso descontar o “arrasto” da rotação:
+  <code>v_ecef = Rz(θ)·(v_eci − ω⊕ × r_eci)</code>. Um ponto parado no solo tem velocidade
+  ECI = ω⊕ × r (cerca de 430 m/s no Brasil) e velocidade ECEF zero.</li>
+</ul>
+<p>O helper <code>gmst_at(epoch, t)</code> devolve θ nos instantes t (segundos desde a época do
+propagador), para que quem chama não precise lidar com Datas Julianas.</p>
+
+<h3>ECI e ECEF lado a lado</h3>
+<table>
+  <tr><th></th><th>ECI (<em>Earth-Centered Inertial</em>)</th><th>ECEF (<em>Earth-Centered, Earth-Fixed</em>)</th></tr>
+  <tr><td>Origem</td><td>centro da Terra</td><td>centro da Terra</td></tr>
+  <tr><td>Eixo z</td><td>polo norte</td><td>polo norte (o mesmo)</td></tr>
+  <tr><td>Eixo x</td><td>equinócio vernal, uma direção fixa entre as estrelas</td>
+      <td>meridiano de Greenwich (lat 0°, lon 0°)</td></tr>
+  <tr><td>Gira?</td><td>não</td><td>sim, uma volta por dia sideral (23 h 56 min)</td></tr>
+  <tr><td>O que fica parado nele</td><td>a órbita kepleriana (uma elipse fixa)</td>
+      <td>São Bento do Sapucaí, os continentes, o mapa</td></tr>
+</table>
+<p>O ECI não <em>gira</em>, mas não é parado no espaço: a origem acompanha a Terra na volta ao redor do
+Sol. Por isso o nome técnico é “inercial” (rigorosamente, quase-inercial): os eixos mantêm a direção
+em relação às estrelas, e a aceleração da Terra em torno do Sol é desprezível para uma órbita em LEO.
+O ECI é usado para <strong>propagar</strong>, porque nele não aparecem forças fictícias (centrífuga,
+Coriolis); o ECEF, para tudo o que se refere <strong>ao chão</strong>. Uma órbita fixa no ECI
+descreve no ECEF o traço no solo, que se desloca para oeste a cada volta porque a Terra gira por
+baixo da órbita.</p>
+
+<h3>Velocidades entre um referencial fixo e um que gira</h3>
+<p>Com <code>v=</code>, as funções convertem também a velocidade. <code>v_eci</code> <strong>não</strong>
+é a velocidade relativa entre os dois referenciais: é a velocidade <em>do mesmo objeto</em> (satélite
+ou estação) medida por um observador no ECI, enquanto <code>v_ecef</code> é a velocidade desse objeto
+medida por quem gira junto com a Terra. A conversão tem duas parcelas:</p>
+<pre><code>v_eci = _rotate(v_ecef, -theta) + _omega_cross(r_eci)
+#        └──── parcela 1 ────┘   └──── parcela 2 ────┘</code></pre>
+<table>
+  <tr><th>Parcela</th><th>O que representa</th><th>É movimento?</th></tr>
+  <tr><td><code>v_ecef</code> (a entrada)</td><td>o movimento do objeto em relação ao chão</td><td>sim</td></tr>
+  <tr><td><code>_rotate(…, −θ)</code></td><td>só <strong>reescreve</strong> esse vetor nos eixos do ECI,
+      usando a orientação dos eixos naquele instante (θ = GMST, o ângulo que a Terra girou)</td>
+      <td>não: é uma troca de eixos; o vetor continua o mesmo</td></tr>
+  <tr><td><code>+ ω⊕ × r_eci</code></td><td>o movimento do próprio referencial ECEF naquele ponto, por
+      estar girando</td><td>sim</td></tr>
+</table>
+<p>Ou seja: <em>velocidade vista de fora = movimento do objeto em relação ao chão + movimento do próprio
+chão naquele ponto</em>. O <code>_rotate</code> apenas garante que as duas parcelas estejam escritas nos
+mesmos eixos antes da soma, como alinhar duas bússolas antes de somar velocidades medidas com
+elas. A parcela 2 é uma velocidade linear (m/s), não a taxa de rotação ω⊕ (rad/s): depende da posição,
+vale ≈ 465 m/s sobre o equador, ≈ 430 m/s em São Bento e zero sobre o eixo z.</p>
+
+<p><strong>Um exemplo em 2D.</strong> Sejam os eixos A fixos (o ECI) e os eixos B girando em relação a
+A com velocidade angular ω, de modo que o ângulo entre eles é θ(t) = ω·t (o ECEF).</p>
+<ul>
+  <li><strong>Ângulo fixo</strong> (B rotacionado de θ, sem girar): só o <code>_rotate</code> é
+  necessário, porque ele troca a representação do vetor de B para A. Um objeto parado em B também está
+  parado em A.</li>
+  <li><strong>B girando, objeto parado em B</strong> em (r, 0): quem gira com B vê o objeto parado,
+  <code>v_B = 0</code>; visto de A, ele descreve um círculo a ω·r. Só a parcela 2 contribui:
+  <code>v_A = ω × r_A = ω·(−y_A, x_A)</code>. É o caso da estação de solo.</li>
+  <li><strong>B girando, objeto se movendo em B</strong>: somam-se as duas coisas,
+  <code>v_A = R(−θ)·v_B + ω × r_A</code>. É o caso geral, o de um satélite.</li>
+</ul>
+<p>Em 2D, o produto vetorial com ω = (0, 0, ω) se reduz a girar o vetor posição 90° e multiplicá-lo por
+ω: <code>ω × (x, y) = ω·(−y, x)</code>. É exatamente o que <code>_omega_cross</code> calcula,
+<code>(−ω·y, ω·x, 0)</code>. O caso inverso também vale: um objeto parado em A aparece em B girando no
+sentido contrário. Por isso <code>eci_to_ecef</code> <strong>subtrai</strong> o termo antes de girar,
+<code>v_ecef = Rz(θ)·(v_eci − ω⊕ × r_eci)</code>; é o que faz uma estrela, parada no ECI, parecer
+cruzar o céu para quem está no chão.</p>
+
+<p><strong>De onde sai a fórmula.</strong> A posição converte como <code>r_eci = Rz(θ)ᵀ·r_ecef</code>,
+com θ = θ0 + ω⊕·t variando no tempo. Derivando o produto:</p>
+<pre><code>v_eci = Rz(θ)ᵀ·v_ecef  +  (d Rz(θ)ᵀ/dt)·r_ecef
+      = Rz(θ)ᵀ·v_ecef  +  ω⊕ × r_eci</code></pre>
+<p>O primeiro termo vem de <code>r_ecef</code> variar no tempo; o segundo, de a <em>matriz</em> variar
+no tempo (a Terra girando). A derivada de uma rotação em torno de z se reduz ao produto vetorial com
+ω⊕. Na física, esse resultado é o <strong>teorema do transporte</strong>.</p>
+
+<p><strong>A equação vale para qualquer órbita.</strong> A parcela 1 é a velocidade do satélite em
+relação ao ECEF, e em LEO ela é a maior parte da velocidade. Números reais da órbita de projeto
+(a = 6888 km), com o satélite sobre o equador:</p>
+<table>
+  <tr><th>Órbita</th><th>|v_eci|</th><th>|v_ecef| (relativa ao chão)</th><th>|ω⊕ × r|</th></tr>
+  <tr><td>SSO, i = 97,44°</td><td>7607 m/s</td><td>7688 m/s</td><td>502 m/s</td></tr>
+  <tr><td>prograda equatorial, i = 0°</td><td>7607 m/s</td><td>7105 m/s</td><td>502 m/s</td></tr>
+</table>
+<ul>
+  <li>A velocidade relativa ao chão, de 7,1 a 7,7 km/s, é a que faz o subponto correr pelo mapa
+  (uma volta em ~95 min).</li>
+  <li>Na prograda equatorial o satélite voa para leste, no sentido da rotação: o chão “foge” dele,
+  e as duas velocidades, paralelas, simplesmente se subtraem (7607 − 502 ≈ 7105 m/s).</li>
+  <li>Na SSO (retrógrada, quase polar) o satélite cruza a rotação quase de lado e ligeiramente contra
+  ela: a velocidade relativa fica um pouco <em>maior</em>, e a soma é vetorial.</li>
+  <li>Só num satélite <strong>geoestacionário</strong> <code>v_ecef = 0</code>: a velocidade orbital
+  (≈ 3,07 km/s) é exatamente ω⊕ × r, e a equação se reduz a <code>v_eci = ω⊕ × r</code>.</li>
+</ul>
+<p>Para que serve retornar a velocidade: na Semana 4, a taxa de aproximação do satélite à estação
+(efeito Doppler) exige as duas velocidades no mesmo referencial; e estados vindos de GPS ou de
+catálogos em ECEF precisam ser convertidos para ECI para iniciar o Cowell. Os testes verificam o ponto
+fixo no solo (<code>v_eci = ω⊕ × r</code> e, de volta, <code>v_ecef = 0</code>) e a ida e volta de
+10 000 estados.</p>
+
+<h3>Recursos de NumPy usados em frames.py</h3>
+<p><strong><code>np.zeros_like(x)</code> e <code>np.ones_like(x)</code></strong> criam um array novo, com
+o mesmo shape e dtype de <code>x</code>, preenchido com 0 ou com 1 (o conteúdo de <code>x</code> é
+ignorado). Equivalem a <code>np.zeros(x.shape, dtype=x.dtype)</code>:</p>
+<pre><code>theta = np.array([0.1, 0.2, 0.3])
+np.zeros_like(theta)          # array([0., 0., 0.])  shape (3,)
+np.ones_like(theta)           # array([1., 1., 1.])
+np.zeros_like(np.array(0.5))  # array(0.)  → 0-D, como a entrada escalar</code></pre>
+<p>Em <code>rot_z</code>, a matriz Rz(θ) tem entradas que variam com θ (cos θ, sin θ) e entradas
+constantes (0 e 1). Como o <code>np.stack</code> exige entradas de shapes iguais, os 0 e 1 precisam ter
+o shape de <code>cos θ</code>: com θ (N,), um <code>0</code> literal faria o stack falhar. Com os
+<code>_like</code>, a mesma linha gera (3, 3) para θ escalar e (N, 3, 3) para θ (N,).
+<code>_omega_cross</code> usa <code>np.zeros_like(r[..., 2])</code> para a componente z nula de
+ω⊕ × r, pelo mesmo motivo. (Parente: <code>np.full_like(t, valor)</code>, usado em
+<code>mean_j2.py</code>, preenche com um valor qualquer.)</p>
+<p><strong><code>r[..., k]</code></strong>: os <code>...</code> (Ellipsis) valem “todos os eixos anteriores,
+quantos forem”, e <code>k</code> indexa o <em>último</em> eixo, que no projeto é sempre o das
+coordenadas x, y, z.</p>
+<table>
+  <tr><th>Shape de <code>r</code></th><th><code>r[..., 1]</code> equivale a</th><th>Resultado</th></tr>
+  <tr><td>(3,): uma posição</td><td><code>r[1]</code></td><td>um número (o y)</td></tr>
+  <tr><td>(N, 3): N instantes</td><td><code>r[:, 1]</code></td><td>(N,): o y de cada linha</td></tr>
+  <tr><td>(P, N, 3): P satélites</td><td><code>r[:, :, 1]</code></td><td>(P, N)</td></tr>
+</table>
+<p>Escrever <code>r[:, 1]</code> só funcionaria para (N, 3) e daria <code>IndexError</code> com (3,).
+Com <code>[..., k]</code> as funções aceitam qualquer quantidade de posições. O <code>axis=-1</code> do
+<code>np.stack</code> é a operação inversa: tira as coordenadas do último eixo com <code>[..., k]</code>
+e as recoloca no último eixo, de modo que a saída tem sempre o shape da entrada, sem nenhum
+<code>if</code>.</p>
+
+<h3>Etapa 2 — geodesy.py: a Terra é achatada (ECEF → lat, lon, alt)</h3>
+<p>Aqui entra o WGS84. Na Semana 1, o subponto usava uma Terra esférica:
+<code>lat = arcsin(z/r)</code> e <code>alt = r − 6378 km</code>. Como a Terra é achatada, essa
+aproximação erra, e não pouco:</p>
+<table>
+  <tr><th>Satélite a 500 km de altitude real</th><th>Esfera (Semana 1)</th><th>WGS84 (agora)</th></tr>
+  <tr><td>sobre o equador</td><td>500,0 km</td><td>500 km</td></tr>
+  <tr><td>a 45° de latitude</td><td>489,3 km</td><td>500 km</td></tr>
+  <tr><td>sobre o polo</td><td>478,6 km</td><td>500 km</td></tr>
+</table>
+<p>A latitude também muda. A esfera mede a <strong>latitude geocêntrica</strong>, o ângulo da reta que
+liga o ponto ao centro da Terra. Mapas e GPS usam a <strong>latitude geodésica</strong>, o ângulo da
+<em>normal à superfície</em> (a vertical local, a direção de um fio de prumo). As duas coincidem no
+equador e nos polos e diferem até 0,19° a 45°, o que dá cerca de 21 km no chão.</p>
+
+<h3>O que são as constantes WGS84</h3>
+<p>WGS84 (<em>World Geodetic System 1984</em>) é o elipsoide padrão que aproxima a forma da Terra. É o
+sistema do GPS e dos mapas: quando se diz que São Bento do Sapucaí fica em −22,69°, −45,73°, 900 m,
+esses números são coordenadas WGS84. O elipsoide é definido por dois números, e os outros dois
+derivam deles:</p>
+<table>
+  <tr><th>Constante</th><th>Valor</th><th>Significado</th></tr>
+  <tr><td><code>WGS84_A</code></td><td>6 378 137 m</td><td>raio equatorial (igual ao <code>R_EARTH</code>
+      que já usávamos)</td></tr>
+  <tr><td><code>WGS84_F</code></td><td>1/298,257223563</td><td>achatamento: quanto o polo é “amassado” em
+      relação ao equador</td></tr>
+  <tr><td><code>WGS84_B</code></td><td>6 356 752 m</td><td>raio polar, b = a(1 − f): 21,4 km menor que o
+      equatorial</td></tr>
+  <tr><td><code>WGS84_E2</code></td><td>0,00669</td><td>excentricidade² do elipsoide, e² = f(2 − f): a forma
+      em que o achatamento entra nas fórmulas de conversão</td></tr>
+</table>
+<p>Elas são necessárias porque, sem a forma da Terra, não dá para converter x, y, z em latitude e
+altitude corretas, nem fazer o caminho inverso: colocar a estação de São Bento do Sapucaí, dada em
+lat/lon/alt, no mesmo referencial do satélite.</p>
+
+<h3>As conversões</h3>
+<p><strong>Geodésico → ECEF</strong> (<code>geodetic_to_ecef</code>) tem fórmula fechada. N é o raio de
+curvatura do elipsoide na latitude φ (a distância do ponto da superfície até o eixo z, medida ao longo
+da normal):</p>
+<pre><code>N = a / √(1 − e²·sin²φ)
+x = (N + h)·cos φ·cos λ
+y = (N + h)·cos φ·sin λ
+z = (N·(1 − e²) + h)·sin φ</code></pre>
+<p><strong>ECEF → geodésico</strong> (<code>ecef_to_geodetic</code>) não tem fórmula fechada simples,
+porque φ aparece dentro de N. O código usa o método de <strong>Bowring</strong>: parte de um chute
+(a latitude de um ponto na superfície) e refina φ até a mudança entre iterações ficar abaixo de
+10⁻¹² rad, o que leva 2 ou 3 iterações. A longitude é direta, λ = atan2(y, x). A altitude é calculada
+por</p>
+<pre><code>h = p·cos φ + z·sin φ − a·√(1 − e²·sin²φ),     p = √(x² + y²)</code></pre>
+<p>e não pela forma mais comum <code>h = p/cos φ − N</code>, que divide por cos φ e explode nos polos.
+A forma usada não divide por nada que possa zerar, então funciona nos polos, no equador e também
+para h negativo (pontos abaixo do elipsoide).</p>
+<p><strong><code>ecef_to_spherical</code></strong> mantém a aproximação esférica da Semana 1 (latitude
+geocêntrica e r − R⊕), apenas para comparação: o S2-07 vai usá-la para medir quanto a GUI muda ao
+trocar a esfera pelo elipsoide.</p>
+<p>As funções seguem a convenção de shapes do projeto: uma posição <code>(3,)</code> gera três
+números, e <code>(N, 3)</code> gera três arrays <code>(N,)</code>.</p>
+
+<h3>A ligação com J2</h3>
+<p>O fato físico é o mesmo (a Terra é achatada), mas ele aparece em dois papéis diferentes:</p>
+<ul>
+  <li><strong>J2 (seções 3 e 4): dinâmica.</strong> O bojo equatorial altera a <em>gravidade</em> e,
+  com isso, a órbita (precessão do nó). Fica dentro dos propagadores.</li>
+  <li><strong>WGS84 (esta seção): geometria.</strong> A <em>forma da superfície</em> muda como
+  descrevemos a posição em coordenadas de mapa. Fica depois dos propagadores e não altera a
+  órbita.</li>
+</ul>
+<p>Os dois números estão relacionados (um planeta em rotação, em equilíbrio, fica achatado e por
+isso tem J2 ≠ 0), mas o código os usa de forma independente.</p>
+
+<h3>Onde isso será usado</h3>
+<ul>
+  <li><strong>S2-04:</strong> o subponto e o traço no solo, para qualquer propagador.</li>
+  <li><strong>S2-07:</strong> o <code>scene_export</code> troca a aproximação esférica pelo geodésico.
+  A GUI passa a mostrar a latitude e a altitude corretas; a latitude máxima da SSO aparece como
+  82,6° (geodésica) em vez de 82,56° (geocêntrica).</li>
+  <li><strong>Semana 4:</strong> a visibilidade. A elevação do satélite vista de São Bento depende de
+  onde a estação realmente está, o que exige converter a posição WGS84 da estação para ECEF.</li>
+</ul>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que é verificado</th></tr>
+  <tr><td>Sinal da rotação</td><td>(1, 0, 0) com θ = 90° → longitude −90°</td></tr>
+  <tr><td>ECI ↔ ECEF, ida e volta</td><td>10 000 pontos de LEO a GEO; erro no limite da precisão
+      de máquina: &lt; 10⁻¹⁵ relativo (medido: ≈ 2 nm em LEO)</td></tr>
+  <tr><td>Ponto fixo no solo</td><td>velocidade ECI = ω⊕ × r, e de volta v_ecef = 0</td></tr>
+  <tr><td>Valores conhecidos</td><td>(a, 0, 0) → (0°, 0°, 0 m); (0, 0, b) → (90°, h = 0);
+      a − b = 21,385 km; geocêntrica − geodésica a 45° = −0,1924°</td></tr>
+  <tr><td>Geodésico, ida e volta</td><td>10 000 pontos com h de −10 km a 40 000 km, mais polos e
+      equador: erro &lt; 1 mm (medido: ≈ 2·10⁻⁸ m)</td></tr>
+  <tr><td>Skyfield (oráculo)</td><td>20 pontos, incluindo São Bento do Sapucaí: diferença &lt; 10 m
+      (medida: ≈ 3·10⁻⁹ m na ida e 5·10⁻⁸ m na volta)</td></tr>
+</table>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>ECI do equinócio da data, sem precessão nem nutação.</strong> Por isso o ECI do satsim
+  não é comparável ao GCRS do Skyfield (diferem em ≈ 0,37° em 2026), e o Skyfield valida só a parte
+  ECEF ↔ geodésico.</li>
+  <li><strong>UT1 ≈ UTC</strong> no GMST: até 0,9 s, ≈ 0,4 km no equador.</li>
+  <li><strong>Sem movimento polar:</strong> ECI e ECEF compartilham o eixo z (erro de ~10 m).</li>
+</ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="groundtrack-py">
+<h2>6. groundtrack.py — o traço no solo</h2>
+<div class="file">src/satsim/groundtrack.py · scripts/plot_ground_track.py · card S2-04</div>
+
+<h3>Para que serve</h3>
+<p>O <strong>traço no solo</strong> (<em>ground track</em>) é a linha que o subponto do satélite, o ponto
+da superfície logo abaixo dele, desenha no mapa ao longo do tempo. O <code>groundtrack.py</code> tem três
+funções:</p>
+<ul>
+  <li><code>subpoint(propagator, t)</code> responde “onde o satélite está sobre a Terra”, para qualquer
+  propagador: posição ECI → rotação pelo GMST → ECEF → latitude, longitude e altitude WGS84 (seção 5);</li>
+  <li><code>split_at_antimeridian(lon, lat)</code> prepara o traço para ser desenhado num mapa 2D sem
+  riscos atravessando a figura;</li>
+  <li><code>ascending_node_crossings(t, lat, lon)</code> encontra quando e onde o satélite cruza o
+  equador subindo.</li>
+</ul>
+<p>O card tem dois lados. O <code>groundtrack.py</code> é <strong>código de produção</strong>: o S2-07
+usa a mesma conta do subponto para alimentar a GUI, a Semana 4 parte dela para a visibilidade sobre
+São Bento, e a Semana 5 usa os nós ascendentes para a grade e o faseamento da constelação 91/6. Já o
+script <code>scripts/plot_ground_track.py</code> e as imagens em <code>reports/s2_comparacao/</code>
+são <strong>verificação</strong>: um gráfico estático (matplotlib), reprodutível e versionado, que
+mostra num comando só que toda a cadeia da semana funciona junta. A GUI interativa (o viewer) não muda
+neste card; ela é atualizada no S2-07.</p>
+<figure>
+  <img src="../../reports/s2_comparacao/ground_track_sso.png" style="width:100%"
+       alt="Traço no solo da SSO de projeto em 24 horas">
+  <figcaption>Traço no solo da SSO de projeto em 24 h (MeanJ2Propagator, passo de 10 s), gerado por
+  <code>python scripts/plot_ground_track.py --preset sso</code>. Os pontos vermelhos são os nós
+  ascendentes; cada um fica 23,7° a oeste do anterior.</figcaption>
+</figure>
+
+<h3>split_at_antimeridian: evitar o risco que atravessa o mapa</h3>
+<p><strong>O problema.</strong> No mapa 2D a longitude vai de −180° (borda esquerda) a +180° (borda
+direita), mas na Terra as duas bordas são a mesma linha: o antimeridiano, no meio do Pacífico. Quando o
+satélite passa por ela, a longitude salta de, por exemplo, +179° para −179°. Na Terra ele andou só 2°;
+no mapa, os dois pontos estão em lados opostos. Se o gráfico ligar os pontos em ordem, desenha uma linha
+horizontal atravessando o mapa inteiro:</p>
+<pre><code>lon [°]:  170   175   179  -179  -175  -170
+                         ↑
+                 salto de 358°: o satélite saiu pela borda direita
+                 e entrou pela esquerda</code></pre>
+<p><strong>O que a função faz.</strong> Percorre as longitudes em ordem e, onde a diferença entre duas
+amostras seguidas passa de 180°, corta o traço em dois pedaços:</p>
+<pre><code>segmento 1:  lon  170,  175,  179     → termina na borda direita
+segmento 2:  lon -179, -175, -170     → começa na borda esquerda</code></pre>
+<p>Cada pedaço é desenhado separadamente, sem linha atravessando o mapa. Nenhum ponto é criado nem
+descartado: o traço só é dividido. O critério “&gt; 180°” funciona porque, entre duas amostras próximas
+(10 s), o satélite anda bem menos que 180° em longitude; um salto aparente maior só pode significar que
+ele deu a volta pela borda. No código, os pontos de corte saem de
+<code>np.flatnonzero(np.abs(np.diff(lon)) &gt; π) + 1</code> e o traço é dividido com
+<code>np.split</code>.</p>
+<p><strong>Quantas vezes o traço cruza o antimeridiano.</strong> A SSO de projeto é
+<em>retrógrada</em> (i &gt; 90°): a cada revolução nodal a longitude do subponto recua uma volta inteira
+mais os 23,736° do deslocamento do nó. São (360 + 23,736)/360 × 86400/5696,70 ≈ 16,17 cruzamentos por
+dia, ou seja, 16 ou 17 em 24 h conforme a posição inicial, e exatamente 97 no ciclo de 6 dias
+((360 + 23,736)/360 × 91 = 97,0). A imagem acima tem 17 pedaços: 16 cruzamentos. O card S2-04 previa 15
+ou 16, com base nas 15,17 revoluções por dia; a correção foi registrada no golden file na revisão do
+card.</p>
+
+<h3>ascending_node_crossings: quando e onde o satélite cruza o equador subindo</h3>
+<p><strong>O que é o nó ascendente.</strong> É o ponto onde o satélite cruza o equador indo do hemisfério
+sul para o norte, com a latitude passando de negativa para positiva. Acontece uma vez por volta, e a
+sequência desses pontos mostra como o traço se desloca dia a dia.</p>
+<p><strong>O problema.</strong> O satélite só é amostrado a cada 10 s, então quase nunca há uma amostra
+com latitude exatamente 0. O cruzamento acontece <em>entre</em> duas amostras:</p>
+<pre><code>t [s]:     1000      1010
+lat [°]:   -0,30     +0,34     ← o sinal trocou: cruzou o equador aqui
+lon [°]:   -45,10    -45,05</code></pre>
+<p><strong>O que a função faz</strong>, em três passos:</p>
+<ol>
+  <li><strong>Acha os pares</strong> de amostras em que a latitude passa de negativa para não negativa
+  (sul → norte). Os pares em que ela desce (norte → sul) são nós descendentes e ficam de fora.</li>
+  <li><strong>Interpola linearmente</strong> o instante em que a latitude vale 0. No exemplo, a latitude
+  percorre 0,64° em 10 s e precisa subir 0,30° para chegar a zero: 0,30/0,64 = 47% do intervalo, logo
+  t ≈ 1004,7 s.</li>
+  <li><strong>Interpola a longitude</strong> na mesma fração: −45,10 + 0,47 × 0,05 ≈ −45,08°. Se o par
+  estiver dos dois lados do antimeridiano, a diferença de longitude é reduzida a [−180°, 180°) antes da
+  interpolação (2°, e não 358°), pelo mesmo motivo da função anterior.</li>
+</ol>
+<p>O resultado são duas listas: os instantes e as longitudes de cada nó ascendente. Com elas os testes
+verificam a física da semana:</p>
+<table>
+  <tr><th>Grandeza</th><th>Valor medido</th><th>O que confirma</th></tr>
+  <tr><td>Intervalo entre nós consecutivos</td><td>5696,70 s</td><td>o período nodal das taxas
+      seculares de J2 (seção 3)</td></tr>
+  <tr><td>Deslocamento entre nós consecutivos</td><td>−23,736°</td><td>a cada volta o traço anda 23,7°
+      para oeste, porque a Terra girou por baixo da órbita: −(ω⊕ − <span class="od">Ω</span>)·Tnod</td></tr>
+  <tr><td>Nó da volta 91 contra o da volta 0, após 6 dias</td><td>4,5·10⁻⁴°</td><td>o fechamento do
+      ciclo de repetição 91/6, que a constelação da Semana 5 explora</td></tr>
+</table>
+
+<h3>Por que estes testes verificam toda a semana</h3>
+<p>Os números acima vêm da Sem4 e são independentes do código. Para eles baterem, todos os elos
+precisam estar certos ao mesmo tempo: as taxas de J2 (S2-01), o sinal da rotação ECI → ECEF e o GMST
+(S2-03), a conversão geodésica (S2-03) e a interpolação dos nós. Um erro em qualquer elo apareceria
+como um Δλ ou um Tnod errado, ou como um ciclo que não fecha. Na prática, o S2-04 é um teste de
+integração da semana. A latitude máxima completa o quadro: 82,56° geocêntrica (= 180° − i) e 82,61°
+geodésica, a diferença que o WGS84 introduz.</p>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>Interpolação linear</strong> dos nós: perto do equador a latitude varia quase linearmente
+  com o tempo, e o erro com passo de 10 s é muito menor que as tolerâncias.</li>
+  <li><strong>Sem pontos nas bordas</strong>: <code>split_at_antimeridian</code> não insere pontos em
+  ±180°, então cada pedaço termina a até um passo (10 s) da borda do mapa. Na escala do mapa isso não é
+  visível.</li>
+  <li><strong>O viewer JS</strong> faz a sua própria quebra no antimeridiano desde a Semana 1; esta
+  função serve aos gráficos em Python.</li>
+</ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="compare-propagators-py">
+<h2>7. compare_propagators.py — médio × osculador na prática</h2>
+<div class="file">scripts/compare_propagators.py · reports/s2_comparacao/relatorio.md · card S2-06</div>
+
+<h3>O que o script faz</h3>
+<p>Num único comando (<code>python scripts/compare_propagators.py</code>, ≈ 5 s), o script propaga
+três órbitas por 10 dias com os três propagadores e gera cinco figuras e um relatório com a tabela de
+números e um parágrafo de conclusões. Ele não acrescenta nada à biblioteca: valida e documenta o que
+os cards S2-01 e S2-02 entregaram. Os papéis dos três propagadores:</p>
+<table>
+  <tr><th></th><th>CowellPropagator</th><th>MeanJ2Propagator</th><th>KeplerPropagator</th></tr>
+  <tr><td>O que faz</td><td>integra numericamente r̈ = −µr/r³ + perturbações</td>
+      <td>avança Ω, ω e ψ a taxas constantes (Sem4 eqs. 23–25)</td><td>só ψ avança; o plano fica fixo</td></tr>
+  <tr><td>Resultado</td><td>trajetória <strong>osculadora</strong> (a “verdadeira” dentro do modelo)</td>
+      <td>trajetória <strong>média</strong> (sem oscilações de curto período)</td><td>elipse fixa, sem J2</td></tr>
+  <tr><td>Elementos de entrada</td><td>osculadores (o estado real na época)</td><td>médios</td><td>—</td></tr>
+</table>
+<p>O MeanJ2 não é calculado a partir do Cowell: é uma fórmula analítica que <em>aproxima a média</em>
+do movimento que o Cowell produz. As duas coisas só coincidem se os elementos de entrada forem
+compatíveis, e é aí que mora a lição central do relatório.</p>
+<figure>
+  <img src="../../reports/s2_comparacao/fig3_semieixo.png" style="width:100%"
+       alt="Semieixo osculador do Cowell, semieixo médio e nominal">
+  <figcaption>Figura 3 do relatório: o semieixo osculador oscila cerca de 19 km (SSO) e 12 km
+  (ISS-like) a cada meia revolução. O semieixo médio da SSO fica 9,5 km acima do nominal; o da
+  ISS-like, 6,0 km abaixo.</figcaption>
+</figure>
+
+<h3>A SSO simulada não é exatamente heliossíncrona</h3>
+<p>Uma versão inicial das conclusões dizia que o <span class="od">Ω</span> medido na SSO, 0,979 °/dia, era “a taxa do Sol:
+a órbita é heliossíncrona”. Não é. Os números:</p>
+<table>
+  <tr><th></th><th><span class="od">Ω</span> [°/dia]</th></tr>
+  <tr><td>Taxa do Sol (a que define a heliossincronia)</td><td>0,9856</td></tr>
+  <tr><td>Teoria do MeanJ2 com os elementos nominais da SSO</td><td>0,9857, igual à do Sol, porque
+      os elementos nominais foram projetados para isso (S2-05)</td></tr>
+  <tr><td>Medido no Cowell, partindo dos elementos nominais</td><td><strong>0,9794</strong>, 0,63%
+      menor</td></tr>
+</table>
+<p><strong>Por que o Cowell dá menos.</strong> É a armadilha “osculador ≠ médio”:</p>
+<ol>
+  <li>Os elementos nominais (a = 6888,089 km, i = 97,4396°) foram calculados no S2-05 para que,
+  <em>como elementos médios</em>, deem <span class="od">Ω</span> igual à taxa do Sol.</li>
+  <li>O Cowell recebe esses números como <em>condição inicial osculadora</em>. A órbita média que
+  resulta tem um semieixo 9,5 km maior (Figura 3), porque o satélite começa num ponto da órbita
+  (latitude máxima) em que o semieixo osculador está abaixo da média.</li>
+  <li><span class="od">Ω</span> depende fortemente do semieixo (<span class="od">Ω</span> ∝ a<sup>−7/2</sup>, Sem4 eq. 23), então uma órbita média
+  mais alta precessa mais devagar:</li>
+</ol>
+<table>
+  <tr><th>Contribuição</th><th>Efeito em <span class="od">Ω</span></th></tr>
+  <tr><td>Semieixo médio 9,5 km acima: (1 + Δa/a)<sup>−7/2</sup> − 1</td><td>−0,48%</td></tr>
+  <tr><td>Somando os pequenos desvios de e e i médios (teoria em a, e, i médios)</td><td>−0,55%</td></tr>
+  <tr><td>Medido no Cowell (o −0,09% restante é o resíduo da teoria de primeira ordem)</td><td>−0,63%</td></tr>
+</table>
+<p>O satélite simulado pelo Cowell, portanto, <strong>não é exatamente heliossíncrono</strong>: o plano
+dele fica para trás do Sol 0,0062° por dia, ou 2,3° por ano, o que corresponde a uma deriva de
+<strong>≈ 9 minutos por ano</strong> no horário local de passagem pelo nó (LTAN). A frase corrigida
+das conclusões diz: “<span class="od">Ω</span> = 0,979 °/dia na SSO (a teoria nominal dá a taxa do Sol, 0,9856 °/dia; a
+diferença de −0,6% vem do semieixo médio)”, coerente com o resto do parágrafo, que explica exatamente
+esse efeito.</p>
+<p><strong>A lição prática.</strong> Para um satélite voar de fato numa SSO, não basta usar os
+elementos de projeto como estado inicial: é preciso convertê-los de médios para osculadores (a
+conversão de Brouwer/Kozai, fora do escopo desta semana). Do contrário, a órbita real fica alguns km
+acima ou abaixo do pretendido e o LTAN deriva. Esse ajuste volta na Semana 5, ao montar a constelação.
+A mesma lição aparece na Figura 4 do relatório: tratar os elementos nominais como osculadores separa o
+MeanJ2 do Cowell em ≈ 1 300 km em 24 h, enquanto o MeanJ2 com os elementos médios medidos fica a
+menos de 7 km.</p>
+
+<h3>Onde o semieixo médio depende do ponto de partida</h3>
+<p>O sinal do desvio depende de onde a órbita começa. Em primeira ordem, o semieixo osculador oscila
+como <code>a_osc − a_médio ≈ 1,5·J2·R⊕²/a·sin²i·cos 2u</code>, com u = ω + ν o argumento de
+latitude. Começando no equador (u = 0°), o semieixo osculador está ≈ 6 km <em>acima</em> da média, e a
+órbita média fica abaixo do nominal; começando na latitude máxima (u = 90°), o contrário. Por isso a
+ISS-like do relatório usa ω0 = 0° (média 6,0 km abaixo do nominal) e a SSO, com ω0 = 90°, fica 9,5 km
+acima. Os mesmos números nominais, em pontos diferentes da órbita, descrevem órbitas médias
+diferentes.</p>
 </section>
 
 </main>

@@ -203,6 +203,24 @@ def test_vectorization_matches_scalar() -> None:
         np.testing.assert_array_equal(v[k], vk[0])
 
 
+def test_vectorized_raan_argp_psi_match_scalar() -> None:
+    # S2-01: Ω, ω e ψ como arrays (N,) de mesmo shape, com a, e, i escalares
+    raan = np.linspace(0.0, 2 * math.pi, 13)
+    argp = np.linspace(-math.pi, math.pi, 13)
+    psi = np.linspace(0.0, 4 * math.pi, 13)
+    el = KeplerianElements(DESIGN.a, DESIGN.e, DESIGN.i, raan, argp, psi)
+    r, v = elements_to_state(el)
+    assert r.shape == (13, 3) and v.shape == (13, 3)
+    for k in range(13):
+        rk, vk = elements_to_state(
+            KeplerianElements(
+                DESIGN.a, DESIGN.e, DESIGN.i, float(raan[k]), float(argp[k]), float(psi[k])
+            )
+        )
+        np.testing.assert_array_equal(r[k], rk[0])
+        np.testing.assert_array_equal(v[k], vk[0])
+
+
 def test_state_to_elements_vectorized() -> None:
     r, v = _design_orbit_samples(50)
     el = state_to_elements(r, v)
