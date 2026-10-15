@@ -5,6 +5,35 @@ devolve o estado em qualquer instante, com J2–J4, arrasto (via B*) e, para per
 Sol e Lua. É a referência ("oráculo") da posição da ISS real, contra a qual o Cowell é medido
 (S3-03).
 
+Entrada × saída: elementos do TLE → estado (r, v)
+--------------------------------------------------
+**Entrada (o TLE): elementos orbitais MÉDIOS, válidos num único instante, a época.** Não são
+coordenadas: descrevem a forma e a orientação da órbita, não onde o satélite está no espaço.
+
+    época      instante em que os elementos valem (ex.: 2019-12-09 16:38:29 UTC)
+    n          movimento médio [rev/dia] → tamanho da órbita (semieixo) e período
+    e          excentricidade → quão alongada é a elipse (ISS: 0,0007, quase circular)
+    i          inclinação → ângulo do plano da órbita com o equador (ISS: 51,64°)
+    Ω (raan)   ascensão reta do nó ascendente → para onde o plano está "virado"
+    ω (argp)   argumento do perigeu → onde, no plano, fica o ponto mais baixo
+    ψ (M)      anomalia média → em que ponto da órbita o satélite está na época
+    B*         termo de arrasto → quão rápido a órbita decai
+
+"Médios" quer dizer: sem as oscilações de curto período que J2 causa a cada volta. São números
+definidos pela teoria do SGP4 (o NORAD os ajusta a medições de radar *através* do SGP4); só ele
+sabe transformá-los no estado verdadeiro. Por isso NÃO servem como ``KeplerianElements`` dos
+nossos propagadores, que esperam elementos osculadores (os da órbita instantânea).
+
+**Saída (o que queremos): o estado cartesiano (r, v) no ECI**, em qualquer instante t:
+
+    r = (x, y, z)        posição [m] em relação ao centro da Terra
+    v = (vx, vy, vz)     velocidade [m/s]
+
+É o formato que todo o resto do projeto consome (subponto, cena, observador). Em t = 0, (r₀, v₀)
+é a condição inicial que o Cowell usa no S3-03 (``CowellPropagator.from_state``):
+
+    TLE (elementos médios) ──SGP4──► r(t), v(t) ──► em t = 0: (r₀, v₀) ──► Cowell
+
 Três pontos a lembrar:
 
 - **Constantes WGS72.** O SGP4 usa internamente as constantes WGS72 (R⊕ = 6378,135 km,
@@ -50,8 +79,15 @@ class SGP4Propagator(Propagator):
     """
 
     def __init__(self, tle: Tle) -> None:
+        # O TLE original (texto validado): fonte da época e do nº de catálogo.
         self._tle = tle
+        # Inicialização do SGP4, feita UMA vez: a biblioteca lê os elementos médios das duas linhas
+        # (n, e, i, Ω, ω, ψ, B*, época), converte unidades (graus → rad, rev/dia → rad/min) e
+        # pré-calcula os coeficientes do modelo (taxas seculares de J2–J4, termos de arrasto).
+        # O ``Satrec`` ("satellite record") guarda tudo isso; cada ``propagate`` só avalia as
+        # fórmulas com esses coeficientes prontos. WGS72: as constantes com que o TLE foi ajustado.
         self._satrec = Satrec.twoline2rv(tle.line1, tle.line2, WGS72)
+        # Códigos de erro da última chamada de ``propagate`` (0 = ok), um por instante.
         self.last_error_codes: NDArray[np.int_] = np.zeros(0, dtype=int)
 
     @classmethod
@@ -95,14 +131,30 @@ class SGP4Propagator(Propagator):
         Returns:
             (r, v) em ECI [m, m/s], cada um com shape (N, 3); linhas ``NaN`` onde o SGP4 falhou.
         """
-        t = as_time_array(t)
-        sat = self._satrec
+        t = as_time_array(t)  # escalar ou lista → array (N,) [s desde a época do TLE]
+        sat = self._satrec  # apelido curto: o SGP4 já inicializado com o TLE (ver __init__)
+
+        # Tempo de entrada da biblioteca: Data Juliana partida em duas, jd + fr [dias].
+        # jdsatepoch + jdsatepochF é a época do TLE; somar t/86400 à fração dá a época + t.
         jd = np.full(t.shape, sat.jdsatepoch)
         fr = sat.jdsatepochF + t / SECONDS_PER_DAY
+
+        # O SGP4 propriamente dito: dos elementos médios guardados no Satrec ao estado VERDADEIRO
+        # (osculador) em cada instante. Para cada t: avança os elementos médios pelas taxas
+        # seculares (J2–J4, arrasto via B*), soma as oscilações periódicas e converte elementos →
+        # coordenadas cartesianas. Saída no quadro TEME (= ECI do projeto), em km e km/s:
+        #   errors: (N,) códigos de erro, 0 = ok
+        #   r_km:   (N, 3) posição (x, y, z) [km]
+        #   v_km_s: (N, 3) velocidade (vx, vy, vz) [km/s]
         errors, r_km, v_km_s = sat.sgp4_array(jd, fr)
+
+        # Fronteira de unidades: km → m e km/s → m/s (o projeto é todo em SI).
         errors = np.asarray(errors, dtype=int)
         r = np.asarray(r_km, dtype=float).reshape(t.size, 3) * 1e3
         v = np.asarray(v_km_s, dtype=float).reshape(t.size, 3) * 1e3
+
+        # Instantes em que o modelo falhou (ex.: código 6, satélite decaído) viram NaN, com um só
+        # aviso por chamada, em vez de uma exceção que interromperia a série inteira.
         self.last_error_codes = errors
         failed = errors != 0
         if np.any(failed):
