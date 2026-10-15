@@ -69,6 +69,11 @@ satsim/                          (raiz do repositório)
   `t` = segundos (float) desde a `epoch` do propagador. Datas Julianas via `astrotime`.
 - **Quadros**: ECI = equatorial inercial (x → equinócio vernal, z → eixo polar);
   ECEF = Rz(θG)·ECI, com θG = GMST. ENU local no observador.
+- **TEME ≡ ECI do projeto (S3-02)**: o "ECI" do projeto é o equador verdadeiro e o equinócio
+  médio *da data*, sem precessão/nutação, que é exatamente o quadro TEME em que o SGP4 devolve o
+  estado. Não há conversão TEME → ECI: o `SGP4Propagator` entrega o estado já no quadro do
+  projeto, e a passagem ao ECEF é Rz(GMST), como para os outros propagadores (diferença para o
+  ITRS do Skyfield ≤ 86 m em 3 dias, por UT1 ≈ UTC e ausência de movimento polar).
 - **Shapes**: tempos `(N,)`; posições e velocidades `(N, 3)`; constelação `(P, N, 3)`.
   Entradas escalares são promovidas a `(1,)`.
 
@@ -98,6 +103,11 @@ class Propagator(ABC):
     def propagate(self, t: ArrayLike) -> tuple[NDArray, NDArray]:
         """t: segundos desde `epoch`, shape () ou (N,).
         Retorna (r, v) em ECI, SI, sempre com shape (N, 3)."""
+
+    def propagate_utc(self, epoch: datetime, t: ArrayLike) -> tuple[NDArray, NDArray]:
+        """S3-02 (não abstrato): estado em `epoch + t`, para qualquer `epoch`. Converte para
+        segundos desde `self.epoch` e chama `propagate`. O Cowell exige t ≥ 0 (ValueError antes
+        da sua época); Kepler, MeanJ2 e SGP4 aceitam t negativo."""
 
 
 @dataclass(frozen=True)
@@ -252,7 +262,9 @@ usamos scripts clássicos (UMD) e embutimos textura (data URI) e cena (`<script>
 - **ECI simplificado**: sem precessão nem nutação; o "ECI" é o equatorial da data, aproximado.
 - **UT1 ≈ UTC**: erro de até 0,9 s, ≈ 0,4 km no equador.
 - **Segundos intercalares** são ignorados pelo `datetime`.
-- **TEME ≠ ECI**: o SGP4 devolve estados em TEME; a conversão será tratada na Semana 3 (S3-02).
+- **TEME ≡ ECI** (S3-02): o SGP4 devolve estados em TEME, que é o próprio ECI do projeto
+  (equinócio médio da data, sem precessão/nutação); ver Convenções. O SGP4 usa internamente as
+  constantes WGS72 (o TLE é ajustado com elas); o resto do projeto usa WGS84 / Sem4.
 - **Elementos médios de primeira ordem em J2**: bom para projeto de órbita, mas não serve para a
   ISS por mais de poucos dias sem TLE fresco.
 - **Taxa de GMST vs. `OMEGA_EARTH`**: diferem levemente (≈ 5 m/dia no equador); a conversão

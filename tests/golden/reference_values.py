@@ -499,3 +499,47 @@ class TleAgingA6:
 
 
 TLE_AGING = TleAgingA6()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.1 do prompt da Semana 3: vetores de regressão do SGP4 para o TLE de teste
+#     (sgp4 2.27, WGS72, saída TEME em km e km/s; tolerâncias do card S3-02: 1 m e 1e-3 m/s).
+#     Sanidade em t = 0: |r| ≈ 6787,2 km, |v| ≈ 7,665 km/s; período 2π/n ≈ 5573,9 s (coincide com
+#     o Tnod da ISS na Semana 2). Skyfield 1.55 (ITRS, timescale builtin) × Rz(GMST)·TEME: diferença
+#     máxima 86 m, média 70 m em 3 dias (UT1 ≈ UTC e sem movimento polar); critério < 150 m.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class Sgp4RegressionRow:
+    t_h: float
+    r_km: tuple[float, float, float]
+    v_km_s: tuple[float, float, float]
+
+
+SGP4_REGRESSION_A1: tuple[Sgp4RegressionRow, ...] = (
+    Sgp4RegressionRow(0, (3469.947984, -2690.388430, 5175.831925),
+                      (5.810229142, 4.802261185, -1.388280333)),
+    Sgp4RegressionRow(24, (-3591.826765, 2723.666458, -5090.448286),
+                      (-5.927709568, -4.496384380, 1.785277102)),
+    Sgp4RegressionRow(72, (-3873.542270, 2837.516435, -4813.891216),
+                      (-6.055171616, -3.901758569, 2.582041156)),
+    Sgp4RegressionRow(168, (-4346.138715, 3409.792942, -3962.984695),
+                      (-5.869671636, -2.825677530, 4.019415520)),
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Sgp4SanityA1:
+    r0_km: float = 6787.2
+    v0_km_s: float = 7.665
+    osc_inclination_deg: float = 51.64  # inclinação osculadora em t = 0 (card: abs 0,05°)
+    period_s: float = 5573.9  # 2π/n do movimento médio (card: abs 1 s)
+    skyfield_ecef_max_diff_m: float = 86.0  # referência; critério do card: < 150 m em 3 dias
+    skyfield_ecef_mean_diff_m: float = 70.0
+    # O card S3-02 dizia "|lat| ≤ 51,7° (geodésica)". Corrigido: 51,7° limita a latitude
+    # GEOCÊNTRICA (≤ i osculadora, 51,62–51,66° em 1 dia). A geodésica fica Δφ ≈ f·sin 2φ·R⊕/(R⊕+h)
+    # ≈ 0,176° acima (mesma correção de SCENE_S2): 51,62 + 0,18 = 51,80° medido.
+    lat_max_geocentric_deg: float = 51.7
+
+
+SGP4_SANITY_A1 = Sgp4SanityA1()
