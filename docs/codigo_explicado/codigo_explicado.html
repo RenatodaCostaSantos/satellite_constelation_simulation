@@ -78,6 +78,7 @@
     <li><code>src/satsim/groundtrack.py</code> — o traço no solo: subponto, antimeridiano e nós ascendentes</li>
     <li><code>scripts/compare_propagators.py</code> — médio × osculador na prática (relatório da Semana 2)</li>
     <li><code>src/satsim/tle.py</code> — o TLE da ISS: o que é, onde fica guardado e como vira condição inicial (inclui WGS72 × WGS84)</li>
+    <li><code>src/satsim/propagators/sgp4_ref.py</code> — o SGP4 como propagador e oráculo (inclui determinação de órbita e fontes de posição online)</li>
   </ol>
 </nav>
 
@@ -1344,6 +1345,160 @@ que o erro típico de um TLE da ISS (≈ 1 km na época).</p>
 <p>Nenhum teste acessa a rede: <code>urllib.request.urlopen</code> é substituído (via
 <code>monkeypatch</code> do pytest) por uma função que falha, e cada teste que precisa da CelesTrak
 instala uma versão simulada.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="sgp4-ref-py">
+<h2>9. sgp4_ref.py — o SGP4 como propagador e oráculo</h2>
+<div class="file">src/satsim/propagators/sgp4_ref.py · src/satsim/propagators/base.py · card S3-02</div>
+
+<h3>Para que serve o script</h3>
+<p>O <code>sgp4_ref.py</code> coloca a biblioteca <code>sgp4</code> (a implementação de referência de
+Vallado) sob a mesma interface dos outros propagadores: <code>SGP4Propagator(tle).propagate(t) → (r, v)</code>,
+vetorizado, em SI e no ECI do projeto. Não implementamos a física do SGP4; o script só converte
+unidades (km → m), escolhe as constantes certas (WGS72) e trata os erros. Com isso, subponto, cena e
+observador funcionam com a ISS real sem nenhuma mudança.</p>
+
+<h3>O SGP4 é um propagador, não só um conversor</h3>
+<p>SGP4 significa <strong>Simplified General Perturbations 4</strong>. É um modelo analítico de
+propagação: recebe o TLE e <strong>qualquer instante t</strong> e devolve posição e velocidade naquele
+instante.</p>
+<ul>
+  <li>Com <strong>t = 0</strong> (a época do TLE), ele faz o papel de “conversor”: TLE → (r₀, v₀). É
+  assim que o usamos para dar a condição inicial ao Cowell (seção 8).</li>
+  <li>Com <strong>t ≠ 0</strong>, ele propaga: onde a ISS está 1 hora, 3 dias ou 1 semana depois (ou
+  antes: aceita t negativo).</li>
+</ul>
+<p>Mesmo a “conversão” em t = 0 já usa o modelo de propagação: os elementos do TLE são médios, e
+para obter o estado verdadeiro o SGP4 precisa somar as oscilações periódicas de J2. Não existe um modo
+“só converter”. Lado a lado com os nossos propagadores:</p>
+<table>
+  <tr><th>Propagador</th><th>Tipo</th><th>O que modela</th></tr>
+  <tr><td><code>KeplerPropagator</code></td><td>analítico</td><td>só gravidade central (elipse fixa)</td></tr>
+  <tr><td><code>MeanJ2Propagator</code></td><td>analítico</td><td>J2, só os efeitos seculares (o plano e o
+      perigeu giram)</td></tr>
+  <tr><td><strong><code>SGP4Propagator</code></strong></td><td><strong>analítico</strong></td><td><strong>J2, J3,
+      J4 (seculares e periódicos) + arrasto via B*</strong>; Sol e Lua para órbitas altas</td></tr>
+  <tr><td><code>CowellPropagator</code></td><td>numérico</td><td>integra as forças escolhidas (J2; arrasto
+      no S3-03)</td></tr>
+</table>
+<p>Fisicamente, o SGP4 é um “MeanJ2 bem mais completo”; no código, é a quarta implementação da
+mesma interface. Chamamos de <strong>oráculo</strong> porque, para a ISS real, ele é a referência: o
+TLE é ajustado justamente para que o SGP4 reproduza as observações, e nenhum outro modelo pode ser
+mais fiel ao TLE que o próprio SGP4. No S3-03 o Cowell parte do estado do SGP4 em t = 0 e depois é
+comparado com ele em 24 h, 72 h e 7 dias.</p>
+
+<h3>De onde o SGP4 tira as suas condições iniciais</h3>
+<p>Se o Cowell precisa do SGP4 para obter r₀, v₀, de onde vem o TLE do SGP4? Não de outra simulação:
+a referência é a <strong>medição real</strong>.</p>
+<pre><code>radares e telescópios ──► medições ──► ajuste por mínimos quadrados ──► TLE ──► SGP4
+(rede de vigilância      (distância,   (determinação de órbita)
+ espacial dos EUA)        azimute, elevação…)</code></pre>
+<ol>
+  <li><strong>Observação.</strong> A rede de vigilância espacial dos EUA (<em>Space Surveillance
+  Network</em>) acompanha cada objeto com radares e sensores ópticos. Cada passagem gera medidas reais
+  (distância, azimute, elevação e, no radar, velocidade radial) em vários instantes, ao longo de alguns
+  dias.</li>
+  <li><strong>Determinação de órbita.</strong> É um problema <em>inverso</em>: procurar os cerca de oito
+  números do TLE que, <strong>propagados pelo próprio SGP4</strong>, reproduzem essas medições com o
+  menor erro. Chuta-se um TLE, propaga-se com o SGP4, compara-se com as medições, corrige-se o TLE e
+  repete-se até convergir (correção diferencial, um ajuste por mínimos quadrados).</li>
+  <li><strong>Publicação.</strong> O TLE resultante é o “melhor ajuste do SGP4 às observações”. Com
+  observações novas, sai um TLE novo.</li>
+</ol>
+<p>Isso explica três fatos das seções anteriores: o TLE só funciona bem com o SGP4 (e com as
+constantes WGS72), porque foi ajustado através dele, e os seus números não têm sentido físico
+isolado; os elementos são “médios” porque é assim que o SGP4 os define; e saem TLEs novos com
+frequência porque a cada rodada de medições o ajuste é refeito, absorvendo reboosts e variações do
+arrasto que o modelo não prevê. As equações vêm da teoria analítica de perturbações (Brouwer e Kozai,
+1959), publicadas como SGP4 por Hoots e Roehrich em 1980 (<em>Spacetrack Report #3</em>); a condição
+inicial vem das medições.</p>
+<p><strong>O Cowell não é uma cópia do SGP4.</strong> É outra abordagem (integração numérica das
+forças, em vez de fórmulas analíticas). Usamos o SGP4 porque ele é o único acesso que temos às
+medições da ISS: o TLE é a forma comprimida em que o NORAD as publica, e o SGP4 é a ferramenta para
+descomprimi-la. Com as medições brutas, poderíamos ajustar r₀, v₀ e o arrasto do Cowell diretamente a
+elas. O S3-03 faz uma versão pequena dessa ideia: <code>fit_ballistic_coefficient</code> ajusta o
+coeficiente de arrasto C<sub>D</sub>·A/m por mínimos quadrados, usando o SGP4 como
+“pseudo-observações” no lugar dos radares.</p>
+
+<h3>Dá para obter a posição da ISS online sem o SGP4?</h3>
+<p>Dá, mas é preciso separar quem <strong>mede</strong> de quem <strong>calcula</strong>: quase toda
+“posição online” é, no fundo, um cálculo.</p>
+<ul>
+  <li><strong>Sites e APIs de “onde está a ISS agora”</strong> (ex.: wheretheiss.at, Open Notify): em
+  geral calculam a posição a partir do TLE, com SGP4 ou equivalente, no servidor deles. Não é uma
+  medição direta.</li>
+  <li><strong>Efemérides da NASA</strong> (“ISS Trajectory Data”): a fonte pública mais direta. O
+  controle da missão estima a órbita com o <strong>GPS de bordo</strong> e publica vetores de posição e
+  velocidade a cada poucos minutos, cobrindo alguns dias, incluindo <strong>manobras planejadas</strong>
+  que o TLE não prevê. É mais precisa que TLE + SGP4, mas também é uma previsão, feita com o
+  propagador de alta fidelidade da NASA a partir do último estado medido. Vem no quadro
+  <strong>J2000</strong>, não no TEME: usá-la exigiria precessão e nutação, que o projeto deliberadamente
+  não tem (ADR, “ECI simplificado”).</li>
+  <li><strong>Telemetria bruta do GPS de bordo</strong>: é a medição de verdade, mas não é publicada
+  nesse formato; o que chega ao público é o produto processado do item anterior.</li>
+</ul>
+<p>A ideia central: mesmo a “posição atual” é sempre uma estimativa. A medição tem atraso, e entre
+duas medições alguém precisa propagar com algum modelo. O que muda é <em>qual modelo</em> e <em>quão
+perto da medição</em> se parte:</p>
+<table>
+  <tr><th>Fonte</th><th>Modelo usado</th><th>Precisão</th></tr>
+  <tr><td>TLE + SGP4 (este projeto)</td><td>analítico, ajustado a radares</td><td>≈ 1 km na época; piora
+      alguns km por dia</td></tr>
+  <tr><td>Efemérides da NASA</td><td>numérico de alta fidelidade, a partir do GPS de bordo</td><td>melhor
+      que TLE + SGP4 nos primeiros dias; inclui manobras planejadas</td></tr>
+</table>
+<p>O plano usa TLE/SGP4 porque é o padrão universal: vale para qualquer satélite, não só a ISS, e não
+exige conversão de quadros. As efemérides da NASA podem virar uma segunda referência para a ISS mais
+adiante (por exemplo, para medir o erro real do SGP4 após alguns dias), o que pediria a conversão
+J2000 → TEME.</p>
+
+<h3>O código, por partes</h3>
+<p><strong>Constantes WGS72.</strong> <code>Satrec.twoline2rv(line1, line2, WGS72)</code> cria o objeto
+da biblioteca com as constantes com que o TLE foi ajustado (seção 8: WGS72 dentro do SGP4, WGS84 no
+resto). <strong>TEME = ECI do projeto</strong>: o SGP4 devolve o estado no quadro TEME (equador
+verdadeiro, equinócio médio da data), que é exatamente o “ECI simplificado” do projeto, sem
+precessão nem nutação. Por isso não há conversão: a passagem ao ECEF é Rz(GMST), como para os outros
+propagadores.</p>
+<p><strong>Vetorização com <code>sgp4_array</code>.</strong> A biblioteca recebe o tempo como Data
+Juliana partida em duas: <code>jd</code> (parte grande) e <code>fr</code> (fração). O script mantém
+<code>jd = jdsatepoch</code> constante e põe todo o t na fração:</p>
+<pre><code>jd = np.full(t.shape, sat.jdsatepoch)
+fr = sat.jdsatepochF + t / 86400
+errors, r_km, v_km_s = sat.sgp4_array(jd, fr)</code></pre>
+<p>Um JD inteiro (≈ 2,46·10⁶ dias) em float tem resolução de ≈ 40 µs (seção 2); somando t só à
+fração, que é um número pequeno, a resolução fica muito melhor. Uma única chamada processa todos os
+instantes em C, sem laço Python.</p>
+<p><strong>Erros sem exceção.</strong> Para cada instante, a biblioteca devolve um código de erro (0 = ok;
+6 = o satélite decaiu, por exemplo). O script põe <code>NaN</code> nas linhas que falharam, emite
+<em>um</em> <code>logging.warning</code> por chamada (não um por instante) e guarda os códigos em
+<code>last_error_codes</code>. Assim uma série de 10 000 instantes não é interrompida no meio por um
+instante ruim, e quem chama decide o que fazer com os <code>NaN</code>.</p>
+<p><strong><code>propagate_utc</code> na classe base.</strong> Cada propagador tem a sua época (o TLE
+da ISS tem a dele; a SSO de projeto, outra). O método novo da ABC <code>Propagator</code> recebe uma
+época qualquer e tempos relativos a ela, converte para segundos desde <code>self.epoch</code> e chama
+<code>propagate</code>:</p>
+<pre><code>offset_s = (epoch - self.epoch).total_seconds()
+return self.propagate(as_time_array(t) + offset_s)</code></pre>
+<p>Por estar na classe base e não ser abstrato, todos os propagadores o herdam sem escrever nada. O
+Cowell continua exigindo t ≥ 0 e levanta <code>ValueError</code> para instantes antes da sua época;
+Kepler, MeanJ2 e SGP4 aceitam t negativo.</p>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que verifica</th></tr>
+  <tr><td>Regressão (Apêndice A.1)</td><td>r e v em t = 0, 24, 72 e 168 h iguais aos do experimento de
+      referência (1 m e 1·10⁻³ m/s)</td></tr>
+  <tr><td>Sanidade em t = 0</td><td>|r| ≈ 6787 km, |v| ≈ 7,665 km/s, inclinação osculadora 51,62°,
+      período 2π/n = 5573,82 s</td></tr>
+  <tr><td>Skyfield</td><td>posição ECEF a cada 600 s em 3 dias: diferença máxima 85,6 m, média 70 m
+      (critério &lt; 150 m; a diferença vem de UT1 ≈ UTC e da falta de movimento polar)</td></tr>
+  <tr><td>Erro simulado</td><td>código 6 → linhas <code>NaN</code>, um só aviso, sem exceção</td></tr>
+  <tr><td>Intercambialidade</td><td><code>subpoint</code> e <code>build_scene</code> rodam sem mudança com
+      Kepler, MeanJ2, Cowell e SGP4</td></tr>
+  <tr><td>Latitude do subponto</td><td>geocêntrica ≤ 51,7°; geodésica = geocêntrica + f·sin 2φ·R⊕/(R⊕ + h)
+      ≈ 51,80° (o prompt dizia “≤ 51,7° geodésica”; mesma correção da S2-07)</td></tr>
+</table>
 </section>
 
 </main>
