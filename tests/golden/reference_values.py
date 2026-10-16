@@ -543,3 +543,117 @@ class Sgp4SanityA1:
 
 
 SGP4_SANITY_A1 = Sgp4SanityA1()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.3 do prompt da Semana 3: atmosfera exponencial por partes (Vallado).
+#     Cada faixa h0 ≤ h < próxima h0: ρ = ρ0·exp(−(h − h0)/H). Continuidade verificada no prompt:
+#     salto relativo < 1e-4 em todas as fronteiras (critério do card: < 1e-3).
+# ===============================================================================================
+
+ATMOSPHERE_A3: tuple[tuple[float, float, float], ...] = (
+    # (h0 [km], ρ0 [kg/m³], H [km])
+    (100.0, 5.297e-7, 5.877), (110.0, 9.661e-8, 7.263), (120.0, 2.438e-8, 9.473),
+    (130.0, 8.484e-9, 12.636), (140.0, 3.845e-9, 16.149), (150.0, 2.07e-9, 22.523),
+    (180.0, 5.464e-10, 29.740), (200.0, 2.789e-10, 37.105), (250.0, 7.248e-11, 45.546),
+    (300.0, 2.418e-11, 53.628), (350.0, 9.518e-12, 53.298), (400.0, 3.725e-12, 58.515),
+    (450.0, 1.585e-12, 60.828), (500.0, 6.967e-13, 63.822), (600.0, 1.454e-13, 71.835),
+    (700.0, 3.614e-14, 88.667), (800.0, 1.17e-14, 124.640), (900.0, 5.245e-15, 181.050),
+    (1000.0, 3.019e-15, 268.000),
+)  # fmt: skip
+
+
+# ===============================================================================================
+# Semana 3 — Sem3 Tabela 3 (C_D = 2,2, A/m = 0,005 → C_D·A/m = 0,011; atividade solar moderada),
+#     valores arredondados no PDF, e Apêndice A.4 do prompt da Semana 3 (calculados com a tabela
+#     A.3, altitude esférica, sem co-rotação). Tolerâncias do card S3-03: ρ e |dh/dt| ±5%.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class DecayRowSem3:
+    h_km: float
+    rho_table3_kg_m3: float  # Sem3 Tabela 3 (arredondado)
+    dhdt_table3_m_day: float  # |dh/dt| Sem3 Tabela 3 (arredondado)
+    dhdt_a4_m_day: float  # |dh/dt| calculado no Apêndice A.4...
+    dhdt_a4_decimals: int  # ...impresso com estas casas decimais
+
+
+DECAY_TABLE3: tuple[DecayRowSem3, ...] = (
+    DecayRowSem3(200.0, 2.8e-10, 1.4e4, 13573.0, 0),
+    DecayRowSem3(300.0, 2.4e-11, 1.2e3, 1186.0, 0),
+    DecayRowSem3(400.0, 3.7e-12, 184.0, 184.0, 1),
+    DecayRowSem3(500.0, 7.0e-13, 35.0, 34.7, 1),
+    DecayRowSem3(600.0, 1.5e-13, 7.0, 7.29, 2),
+    DecayRowSem3(800.0, 1.2e-14, 0.6, 0.59, 2),
+    DecayRowSem3(1000.0, 3.0e-15, 0.16, 0.16, 2),
+)
+
+
+@dataclass(frozen=True)
+class DragDecayA4:
+    cd: float = 2.2
+    area_over_mass_m2_kg: float = 0.005
+    cd_a_m_m2_kg: float = 0.011
+    v_400_m_s: float = 7669.0  # Sem3 §2.4
+    drag_accel_400_m_s2: float = 1.2e-6  # Sem3 §2.4 (card: rel 3%)
+    g_400_m_s2: float = 8.68  # Sem3 §2.4
+    drag_over_gravity_400: float = 1.4e-7  # Sem3 §2.4
+    da_per_rev_400_m: float = -11.8  # Sem3 eq. 15 (A.4: −11,83; card: rel 3%)
+    da_per_day_400_m: float = 184.0  # |Δa| em 1 dia (A.4: ≈ 184 m/dia; card: rel 5%)
+    h_reentry_km: float = 120.0  # altitude que encerra a integração do tempo de vida (A.4)
+
+
+DRAG_DECAY_A4 = DragDecayA4()
+
+
+@dataclass(frozen=True)
+class LifetimeCaseA4:
+    h0_km: float
+    cd_a_m_m2_kg: float
+    lifetime_years: float  # integração da Sem3 eq. 22 com a tabela A.3, reentrada em 120 km
+    pdf_years: float  # valor citado no PDF (Sem3 §5.1, Tabela 3), para comparação
+
+
+LIFETIMES_A4: tuple[LifetimeCaseA4, ...] = (
+    LifetimeCaseA4(500.0, 0.011, 4.64, 4.6),  # o PDF diz 4,6
+    LifetimeCaseA4(500.0, 0.044, 1.16, 1.16),  # Sem3 Figura 2
+    LifetimeCaseA4(500.0, 0.0022, 23.2, 23.2),  # Sem3 Figura 2
+    LifetimeCaseA4(400.0, 0.011, 0.77, 1.0),  # tabela do PDF: "~1 ano"
+    LifetimeCaseA4(600.0, 0.011, 23.7, 25.0),  # tabela do PDF: "~25 anos"
+)
+
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.5 do prompt da Semana 3: erro de posição 3D Cowell (J2 + arrasto) × SGP4
+#     para o TLE de teste (DOP853, rtol = 1e-10, atol = 1e-3, partindo do estado do SGP4 em t = 0).
+#     Critérios do card: ajustado ≤ 2 / 8 / 40 km; C_D·A/m ajustado em [5e-4, 5e-3]. Os números do
+#     arrasto padrão NÃO são critério: são o resultado a explicar (mínimo solar em dez/2019).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class CowellVsSgp4Row:
+    label: str
+    cd_a_m_m2_kg: float
+    altitude_model: str
+    err_24h_km: float
+    err_72h_km: float
+    err_7d_km: float
+
+
+COWELL_VS_SGP4_A5: tuple[CowellVsSgp4Row, ...] = (
+    CowellVsSgp4Row("Cowell J2 apenas", 0.0, "geodetic", 1.0, 8.7, 47.0),
+    CowellVsSgp4Row("J2 + arrasto padrão (esférica)", 0.0088, "spherical", 6.6, 59.6, 325.0),
+    CowellVsSgp4Row("J2 + arrasto padrão (geodésica)", 0.0088, "geodetic", 5.8, 52.4, 286.0),
+    CowellVsSgp4Row("J2 + arrasto ajustado (72 h)", 0.00163, "geodetic", 0.3, 2.7, 14.5),
+)
+
+
+@dataclass(frozen=True)
+class BallisticFitA5:
+    fitted_cd_a_m_m2_kg: float = 0.00163  # A/m ≈ 7,4e-4 com C_D = 2,2
+    fitted_range_m2_kg: tuple[float, float] = (5e-4, 5e-3)  # critério do card
+    max_err_km: tuple[float, float, float] = (2.0, 8.0, 40.0)  # 24 h / 72 h / 7 dias (critério)
+
+
+BALLISTIC_FIT_A5 = BallisticFitA5()

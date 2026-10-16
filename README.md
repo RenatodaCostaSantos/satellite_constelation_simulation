@@ -44,6 +44,7 @@ scripts/build_demo.py        gera a demo visual demo/index.html
 scripts/                     também: relatório da Semana 2, traço no solo, Tabela 1 (SSO),
                              TLE da ISS (fetch_tle.py)
 reports/s2_comparacao/       figuras e relatório da Semana 2 (versionados)
+reports/s3_arrasto/          gráfico e relatório Cowell × SGP4 da Semana 3 (versionados)
 tests/                       testes (pytest)
 ```
 
@@ -161,6 +162,23 @@ idade:      0.67 dias
 
 Os testes não acessam a rede: usam o TLE congelado de `tests/data/iss_sample.tle` (época
 2019-12-09) e simulam a CelesTrak.
+
+## Relatório do arrasto (Semana 3)
+
+Cowell com J2 e arrasto atmosférico contra o SGP4 da ISS (TLE de teste, época 2019-12-09). Um
+comando gera o gráfico e o relatório em [`reports/s3_arrasto/`](reports/s3_arrasto/):
+
+```bash
+python scripts/compare_sgp4_cowell.py      # ~20 s; erro_sgp4_cowell.png + relatorio.md
+```
+
+Erro de posição 3D contra o SGP4 em 24 h / 72 h / 7 dias: só J2, 1,0 / 8,7 / 47 km; J2 + arrasto
+com os parâmetros padrão (C_D = 2,2, A/m = 0,004), 5,8 / 52 / 286 km; J2 + arrasto com C_D·A/m
+ajustado ao SGP4 (0,00163 m²/kg), 0,3 / 2,7 / 14,5 km. O arrasto padrão piora o resultado porque
+dezembro de 2019 foi mínimo solar e a atmosfera de Vallado (atividade moderada) é mais densa que a
+real; o [`relatorio.md`](reports/s3_arrasto/relatorio.md) explica. A atmosfera
+(`satsim.forces.atmosphere`), o arrasto (`satsim.forces.drag`) e o decaimento analítico
+(`satsim.decay`: taxa, perda por revolução e tempo de vida) reproduzem os números do Sem3.
 
 ## Golden tests
 
