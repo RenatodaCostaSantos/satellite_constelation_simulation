@@ -657,3 +657,36 @@ class BallisticFitA5:
 
 
 BALLISTIC_FIT_A5 = BallisticFitA5()
+
+# ===============================================================================================
+# Semana 3 — Apêndices A.2 e A.6 do prompt da Semana 3: estação de São Bento do Sapucaí
+#     (coordenadas APROXIMADAS, a confirmar), convenções topocêntricas, footprint (Sem4 §9.4) e a
+#     concordância do pipeline SGP4 → Rz(GMST) → geodésico/ENU com o Skyfield (3 dias, el > 0).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class StationA6:
+    lat_deg: float = -22.69
+    lon_deg: float = -45.73
+    alt_m: float = 900.0
+    ecef_m: tuple[float, float, float] = (4110248.7, -4216342.7, -2445429.5)  # A.2
+    # Skyfield 1.55 × satsim, TLE A.1, 3 dias a cada 30 s, só el > 0 (A.2):
+    skyfield_max_daz_deg: float = 0.026  # critério do card: < 0,05°
+    skyfield_max_del_deg: float = 0.009  # critério: < 0,05°
+    skyfield_max_drange_m: float = 74.0  # critério: < 150 m
+
+
+STATION_A6 = StationA6()
+
+
+@dataclass(frozen=True)
+class FootprintA6:
+    # λ = arccos(R⊕/(R⊕ + h)·cos ε) − ε (Sem4 §9.4)
+    # O prompt diz "h = 400 km, ε = 0° → 19,7°". Corrigido: arccos(6378,137/6778,137) = 19,782°
+    # (o prompt truncou; arredondado seria 19,8°).
+    h400_el0_deg: float = 19.782  # h = 400 km, ε = 0° (horizonte)
+    h420_el10_deg: float = 12.5  # h = 420 km, ε = 10° (critério de sanidade, não de precisão)
+
+
+FOOTPRINT_A6 = FootprintA6()
