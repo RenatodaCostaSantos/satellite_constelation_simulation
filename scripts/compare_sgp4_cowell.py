@@ -6,7 +6,9 @@ Uso (na raiz do repositório, com o pacote instalado com o extra dev):
     python scripts/compare_sgp4_cowell.py --tle-file meu.tle
 
 Gera em reports/s3_arrasto/ o gráfico erro_sgp4_cowell.png (erro de posição 3D vs tempo, 7 dias,
-escala log) e relatorio.md com a tabela de erros em 24 h, 72 h e 7 dias e o C_D·A/m ajustado.
+escala log), o gráfico erro_vs_coeficiente.png (erro em 24 h, 72 h e 7 dias em função do C_D·A/m
+usado: um "V" com mínimo no valor ajustado) e relatorio.md com as tabelas, o C_D·A/m ajustado e
+a explicação de por que o arrasto padrão piora o resultado.
 
 Todas as configurações partem do estado do SGP4 em t = 0 (CowellPropagator.from_state):
 
@@ -55,6 +57,10 @@ FIT_WINDOW_S = 72 * HOUR
 CD = 2.2
 DEFAULT_AREA_OVER_MASS = 0.004  # ISS, Sem3 §2.4
 MAX_FITTED_ERR_KM = (2.0, 8.0, 40.0)  # critério do card S3-03 (24 h / 72 h / 7 dias)
+# Varredura de C_D·A/m [m²/kg]: curva do gráfico e linhas da tabela do "V" (mais o ajustado e o
+# padrão, acrescentados em run)
+SWEEP_CURVE = tuple(np.linspace(0.0, 0.009, 10))
+SWEEP_TABLE = (0.0, 0.0008, 0.0010, 0.0012, 0.0014, 0.0018, 0.0020, 0.0025, 0.0035, 0.005)
 A5_KM = {  # Apêndice A.5 do prompt da Semana 3 (referência)
     "j2": (1.0, 8.7, 47.0),
     "default_spherical": (6.6, 59.6, 325.0),
@@ -82,7 +88,32 @@ class Result:
         return float(self.err_m[np.argmin(np.abs(t - hours * HOUR))])
 
 
-def run(tle: Tle) -> tuple[np.ndarray, list[Result], float, float]:
+@dataclass(frozen=True)
+class Sweep:
+    cd_a_m: np.ndarray  # (M,) valores varridos, crescentes
+    rms72_km: np.ndarray  # (M,) RMS do erro em [0, 72 h]: o que o ajuste minimiza
+    rms7d_km: np.ndarray  # (M,) RMS do erro em [0, 7 dias]
+    point_km: np.ndarray  # (M, 3) erro pontual em 24 h, 72 h e 7 dias
+
+    def index(self, cd_a_m: float) -> int:
+        return int(np.argmin(np.abs(self.cd_a_m - cd_a_m)))
+
+
+def sweep(sgp4: SGP4Propagator, t: np.ndarray, values: list[float]) -> Sweep:
+    """Erro do Cowell (J2 + arrasto geodésico) × SGP4 para cada C_D·A/m da lista."""
+    vals = np.array(sorted(set(values)))
+    in_fit = t <= FIT_WINDOW_S + 1e-9
+    checks = [int(np.argmin(np.abs(t - h * HOUR))) for h in CHECK_H]
+    rms72, rms7d, point = [], [], []
+    for c in vals:
+        err = position_error(cowell_j2_drag(sgp4, c, cd=CD), sgp4, t) / 1e3
+        rms72.append(np.sqrt(np.mean(err[in_fit] ** 2)))
+        rms7d.append(np.sqrt(np.mean(err**2)))
+        point.append(err[checks])
+    return Sweep(vals, np.array(rms72), np.array(rms7d), np.array(point))
+
+
+def run(tle: Tle) -> tuple[np.ndarray, list[Result], float, float, Sweep]:
     sgp4 = SGP4Propagator(tle)
     t = np.arange(0.0, DURATION_S + 0.5 * STEP_S, STEP_S)
 
@@ -105,7 +136,8 @@ def run(tle: Tle) -> tuple[np.ndarray, list[Result], float, float]:
     for case in cases:
         cowell = cowell_j2_drag(sgp4, case.cd_a_m, cd=CD, altitude_model=case.altitude_model)
         results.append(Result(case, position_error(cowell, sgp4, t)))
-    return t, results, fitted, fit_s
+    sweep_result = sweep(sgp4, t, [*SWEEP_CURVE, *SWEEP_TABLE, fitted, default])
+    return t, results, fitted, fit_s, sweep_result
 
 
 def plot(t: np.ndarray, results: list[Result], tle: Tle, out: Path) -> None:
@@ -129,6 +161,33 @@ def plot(t: np.ndarray, results: list[Result], tle: Tle, out: Path) -> None:
     plt.close(fig)
 
 
+def plot_sweep(sw: Sweep, fitted: float, out: Path) -> None:
+    fig, ax = plt.subplots(figsize=(9, 5.2), dpi=120)
+    x = sw.cd_a_m * 1e3
+    ax.plot(x, sw.rms72_km, "o-", color="#118ab2", ms=3.5, lw=1.8,
+            label="RMS em 0–72 h (o que o ajuste minimiza)")  # fmt: skip
+    ax.plot(x, sw.rms7d_km, "o-", color="#073b4c", ms=3.5, lw=1.8, label="RMS em 0–7 dias")
+    ax.plot(x, sw.point_km[:, 2], "--", color="#adb5bd", lw=1.2,
+            label="erro pontual em t = 7 dias (oscila com a órbita)")  # fmt: skip
+    default = CD * DEFAULT_AREA_OVER_MASS
+    ax.axvline(fitted * 1e3, color="#06d6a0", lw=1.2, ls="--")
+    ax.axvline(default * 1e3, color="#adb5bd", lw=1.2, ls="--")
+    ax.text(fitted * 1e3, 0.6, f"  ajustado (72 h)\n  {_dec(fitted * 1e3, '.2f')}",
+            color="#06a77d", fontsize=9, va="bottom")  # fmt: skip
+    ax.text(default * 1e3, 2.5, "padrão  \n8,80  ", color="#6c757d", fontsize=9, va="bottom",
+            ha="right")  # fmt: skip
+    ax.set_yscale("log")
+    ax.set_ylim(0.5, None)
+    ax.set_xlabel("C_D·A/m usado no Cowell [10⁻³ m²/kg]   (0 = só J2)")
+    ax.set_ylabel("erro de posição 3D contra o SGP4 [km]")
+    ax.set_title("O erro depende de quão errado está o arrasto (forma de V)")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(loc="lower right", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.close(fig)
+
+
 def _dec(x: float, fmt: str) -> str:
     """Número com vírgula decimal (relatório em português)."""
     return format(x, fmt).replace(".", ",")
@@ -139,7 +198,7 @@ def _km(x_m: float) -> str:
 
 
 def write_report(
-    t: np.ndarray, results: list[Result], tle: Tle, fitted: float, fit_s: float,
+    t: np.ndarray, results: list[Result], tle: Tle, fitted: float, fit_s: float, sw: Sweep,
     elapsed_s: float, out: Path,
 ) -> None:  # fmt: skip
     by_key = {r.case.key: r for r in results}
@@ -177,6 +236,74 @@ def write_report(
         f"{' / '.join(_dec(e, '.1f') for e in fitted_err)} km → {'OK' if ok else 'FALHA'}.",
         "",
         "![Erro de posição Cowell × SGP4](erro_sgp4_cowell.png)",
+        "",
+        "## O erro em função do C_D·A/m: um “V”",
+        "",
+        "Seria natural esperar que acrescentar arrasto sempre aproximasse o Cowell do SGP4. A "
+        "varredura abaixo mostra que não: o Cowell (J2 + arrasto, altitude geodésica) foi rodado "
+        "com vários valores de C_D·A/m, do zero (só J2) ao padrão. As duas primeiras colunas são "
+        "o RMS do erro numa janela (variam suavemente); as três últimas, o erro num instante "
+        "exato (oscilam com a órbita, como no gráfico acima).",
+        "",
+        "| C_D·A/m usado [m²/kg] | RMS 0–72 h [km] | RMS 0–7 d [km] | 24 h [km] | 72 h [km] | 7 dias [km] |",  # noqa: E501
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    default = CD * DEFAULT_AREA_OVER_MASS
+    for c in sorted({*SWEEP_TABLE, fitted, default}):
+        k = sw.index(c)
+        tag = " (só J2)" if c == 0.0 else " (**ajustado**)" if c == fitted else (
+            " (padrão)" if c == default else "")  # fmt: skip
+        rms72 = _dec(sw.rms72_km[k], ".2f")
+        if c == fitted:
+            rms72 = f"**{rms72}**"
+        cells = [rms72, _dec(sw.rms7d_km[k], ".2f"), *(_dec(x, ".1f") for x in sw.point_km[k])]
+        lines.append(f"| {_dec(c, '.5f')}{tag} | {' | '.join(cells)} |")
+    k0, kf, kd = sw.index(0.0), sw.index(fitted), sw.index(default)
+    k7 = int(np.argmin(sw.rms7d_km))
+    lines += [
+        "",
+        "![Erro em função do C_D·A/m](erro_vs_coeficiente.png)",
+        "",
+        "Em todas as colunas o erro tem forma de **V**: acrescentar arrasto ajuda enquanto a "
+        "quantidade se aproxima da certa; passando dela, o erro volta a crescer, e rápido. O que "
+        "importa é **quão errado está o arrasto**, não se ele está presente:",
+        "",
+        f"- **Só J2** erra para *menos*: falta arrasto (0 em vez de ≈ {_dec(fitted, '.4f')}); "
+        f"RMS de {_dec(sw.rms7d_km[k0], '.1f')} km em 7 dias.",
+        f"- **O arrasto padrão** erra para *mais*: {_dec(default, '.4f')}, cerca de "
+        f"{_dec(default / fitted, '.1f')} vezes o arrasto que o SGP4 “enxerga”; RMS de "
+        f"{_dec(sw.rms7d_km[kd], '.1f')} km em 7 dias.",
+        "",
+        "Errar para mais por esse fator é pior do que não ter arrasto algum: um valor só ≈ 50% "
+        "acima do ajustado (0,0025) já empata com o caso sem arrasto no erro em 7 dias.",
+        "",
+        "**Onde fica o mínimo depende da janela.** O RMS em 0–72 h, que é o que "
+        f"`fit_ballistic_coefficient` minimiza, tem o mínimo no valor ajustado "
+        f"({_dec(fitted, '.5f')}, {_dec(sw.rms72_km[kf], '.2f')} km). Em 0–7 dias o melhor valor é "
+        f"outro (≈ {_dec(sw.cd_a_m[k7], '.4f')}, RMS de {_dec(sw.rms7d_km[k7], '.2f')} km contra "
+        f"{_dec(sw.rms7d_km[kf], '.2f')} km do ajustado). E os erros pontuais (24 h, 72 h, 7 dias) "
+        "oscilam com a fase da órbita, então o seu mínimo pode cair ao lado do ajustado. Se o "
+        "arrasto fosse o único erro do modelo, todas as janelas apontariam para o mesmo valor; "
+        "como não apontam, o C_D·A/m ajustado é um parâmetro *efetivo*, que também compensa o que "
+        "o Cowell não tem (ver a seção seguinte).",
+        "",
+        "**Por que o erro de arrasto cresce tão depressa.** O arrasto tira energia, a órbita baixa "
+        "e uma órbita mais baixa tem período menor: o satélite *adianta* ao longo da trajetória. "
+        "O semieixo cai de forma aproximadamente linear no tempo, mas o adiantamento acumula essa "
+        "diferença de velocidade angular, de modo que o erro ao longo da órbita cresce com o "
+        "**quadrado do tempo**. Um erro pequeno em C_D·A/m vira centenas de km em uma semana.",
+        "",
+        "**Por que o SGP4 “vê” tão pouco arrasto.** O arrasto do SGP4 vem do **B\\*** do TLE, que "
+        "o NORAD ajustou às medições de radar daquela semana. Em dezembro de 2019 a atividade "
+        "solar estava no mínimo, a termosfera estava contraída e o arrasto real era fraco; o B\\* "
+        "registra isso. A tabela de Vallado representa atividade *moderada*: não sabe que era "
+        "mínimo solar e põe muito mais ar a 400 km do que havia (ver a seção seguinte).",
+        "",
+        "**Com o valor certo, o arrasto ajuda.** Com o C_D·A/m ajustado o RMS em 7 dias cai de "
+        f"{_dec(sw.rms7d_km[k0], '.1f')} km (só J2) para {_dec(sw.rms7d_km[kf], '.1f')} km, "
+        f"{_dec(sw.rms7d_km[k0] / sw.rms7d_km[kf], '.1f')} vezes menos. Mais física deixa o "
+        "modelo mais fiel *se os parâmetros forem certos*; com parâmetros genéricos, um modelo "
+        "mais completo pode ser pior do que um mais simples.",
         "",
         "## Por que o arrasto padrão piora o resultado",
         "",
@@ -229,10 +356,11 @@ def main() -> None:
 
     start = time.perf_counter()
     tle = Tle.from_text(args.tle_file.read_text(encoding="utf-8"))
-    t, results, fitted, fit_s = run(tle)
+    t, results, fitted, fit_s, sw = run(tle)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     plot(t, results, tle, args.out_dir / "erro_sgp4_cowell.png")
-    write_report(t, results, tle, fitted, fit_s, time.perf_counter() - start,
+    plot_sweep(sw, fitted, args.out_dir / "erro_vs_coeficiente.png")
+    write_report(t, results, tle, fitted, fit_s, sw, time.perf_counter() - start,
                  args.out_dir / "relatorio.md")  # fmt: skip
     for res in results:
         errs = ", ".join(f"{res.at_hours(t, h) / 1e3:.2f}" for h in CHECK_H)

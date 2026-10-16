@@ -79,6 +79,7 @@
     <li><code>scripts/compare_propagators.py</code> — médio × osculador na prática (relatório da Semana 2)</li>
     <li><code>src/satsim/tle.py</code> — o TLE da ISS: o que é, onde fica guardado e como vira condição inicial (inclui WGS72 × WGS84)</li>
     <li><code>src/satsim/propagators/sgp4_ref.py</code> — o SGP4 como propagador e oráculo (inclui determinação de órbita e fontes de posição online)</li>
+    <li><code>forces/atmosphere.py</code>, <code>forces/drag.py</code>, <code>decay.py</code> — arrasto no Cowell e por que o arrasto padrão piora o resultado (o “V” do coeficiente balístico)</li>
   </ol>
 </nav>
 
@@ -1499,6 +1500,114 @@ Kepler, MeanJ2 e SGP4 aceitam t negativo.</p>
   <tr><td>Latitude do subponto</td><td>geocêntrica ≤ 51,7°; geodésica = geocêntrica + f·sin 2φ·R⊕/(R⊕ + h)
       ≈ 51,80° (o prompt dizia “≤ 51,7° geodésica”; mesma correção da S2-07)</td></tr>
 </table>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="arrasto">
+<h2>10. Arrasto no Cowell — por que o arrasto padrão piora o resultado</h2>
+<div class="file">src/satsim/forces/atmosphere.py · forces/drag.py · decay.py · analysis.py ·
+scripts/compare_sgp4_cowell.py · card S3-03</div>
+
+<h3>O que o card acrescenta</h3>
+<table>
+  <tr><th>Peça</th><th>O que faz</th></tr>
+  <tr><td><code>ExponentialAtmosphere</code></td><td>densidade ρ(h) por uma tabela exponencial por partes
+      (Vallado): em cada faixa ρ = ρ0·e<sup>−(h−h0)/H</sup> (Sem3 eq. 19)</td></tr>
+  <tr><td><code>DragAcceleration</code></td><td>a = −½·C<sub>D</sub>·(A/m)·ρ·|v<sub>rel</sub>|·v<sub>rel</sub>, com a
+      atmosfera girando com a Terra, v<sub>rel</sub> = v − ω⊕ × r (Sem3 eqs. 5–6)</td></tr>
+  <tr><td><code>decay.py</code></td><td>forma fechada para órbita circular: taxa de queda (eq. 14), perda por
+      revolução (eq. 15) e tempo de vida (integração da eq. 22)</td></tr>
+  <tr><td><code>CowellPropagator</code></td><td><code>from_state(r, v, …)</code> para partir do estado do SGP4 e
+      evento de reentrada a 100 km (depois dele, <code>NaN</code>)</td></tr>
+  <tr><td><code>fit_ballistic_coefficient</code></td><td>acha o C<sub>D</sub>·A/m que minimiza o RMS do erro do
+      Cowell contra o SGP4 em 72 h</td></tr>
+</table>
+<p>O arrasto foi validado contra o Sem3: 1,2·10⁻⁶ m/s² a 400 km, −11,8 m por revolução, a Tabela 3
+inteira e os tempos de vida (4,64 anos a partir de 500 km com C<sub>D</sub>·A/m = 0,011). Mesmo assim,
+contra o SGP4 o resultado surpreende:</p>
+<table>
+  <tr><th>Cowell partindo do SGP4 em t = 0</th><th>24 h</th><th>72 h</th><th>7 dias [km]</th></tr>
+  <tr><td>só J2</td><td>1,0</td><td>8,7</td><td>47,2</td></tr>
+  <tr><td>J2 + arrasto padrão (C<sub>D</sub> = 2,2, A/m = 0,004)</td><td>5,8</td><td>52,4</td><td>286,1</td></tr>
+  <tr><td>J2 + arrasto ajustado (C<sub>D</sub>·A/m = 0,00163)</td><td>0,3</td><td>2,7</td><td>14,5</td></tr>
+</table>
+<figure>
+  <img src="../../reports/s3_arrasto/erro_sgp4_cowell.png" style="width:100%"
+       alt="Erro de posição Cowell × SGP4 ao longo de 7 dias">
+  <figcaption>Erro de posição 3D contra o SGP4 em 7 dias (escala log). A oscilação rápida é a da órbita
+  (≈ 93 min); a tendência é o que interessa.</figcaption>
+</figure>
+<p>Seria natural esperar que, com arrasto, o modelo ficasse <em>mais perto</em> do SGP4. Com o arrasto
+padrão ele fica <strong>mais longe</strong> que só com J2.</p>
+
+<h3>O erro tem forma de “V”</h3>
+<p>Para entender, o Cowell foi rodado com vários valores de C<sub>D</sub>·A/m, do zero (só J2) ao padrão.
+As duas primeiras colunas são o RMS do erro numa janela, que varia suavemente; as outras, o erro num
+instante exato, que oscila com a fase da órbita.</p>
+<table>
+  <tr><th>C<sub>D</sub>·A/m [m²/kg]</th><th>RMS 0–72 h</th><th>RMS 0–7 d</th><th>24 h</th><th>72 h</th><th>7 dias [km]</th></tr>
+  <tr><td>0 (só J2)</td><td>5,19</td><td>23,88</td><td>1,0</td><td>8,7</td><td>47,2</td></tr>
+  <tr><td>0,0008</td><td>2,81</td><td>10,54</td><td>0,4</td><td>3,1</td><td>17,0</td></tr>
+  <tr><td>0,0012</td><td>1,74</td><td>4,30</td><td>0,1</td><td>0,5</td><td>2,3</td></tr>
+  <tr><td>0,0014</td><td>1,32</td><td><strong>2,56</strong></td><td>0,2</td><td>1,1</td><td>5,9</td></tr>
+  <tr><td><strong>0,00163 (ajustado)</strong></td><td><strong>1,11</strong></td><td>4,63</td><td>0,3</td><td>2,7</td><td>14,5</td></tr>
+  <tr><td>0,0020</td><td>1,59</td><td>10,40</td><td>0,6</td><td>5,2</td><td>28,4</td></tr>
+  <tr><td>0,0025</td><td>2,91</td><td>18,72</td><td>1,0</td><td>8,7</td><td>47,3</td></tr>
+  <tr><td>0,0050</td><td>10,53</td><td>60,96</td><td>2,9</td><td>26,0</td><td>141,9</td></tr>
+  <tr><td>0,0088 (padrão)</td><td>22,32</td><td>125,46</td><td>5,8</td><td>52,4</td><td>286,1</td></tr>
+</table>
+<figure>
+  <img src="../../reports/s3_arrasto/erro_vs_coeficiente.png" style="width:100%"
+       alt="Erro em função do coeficiente balístico: curva em V">
+  <figcaption>Erro em função do C<sub>D</sub>·A/m usado. Acrescentar arrasto ajuda até o valor certo; depois,
+  o erro volta a crescer rápido.</figcaption>
+</figure>
+<p>Acrescentar arrasto ajuda enquanto a quantidade se aproxima da certa; passando dela, o erro volta a
+crescer, e rápido. O que importa é <strong>quão errado está o arrasto</strong>, não se ele está
+presente:</p>
+<ul>
+  <li><strong>Só J2</strong> erra para <em>menos</em>: falta arrasto (0 em vez de ≈ 0,0016).</li>
+  <li><strong>O arrasto padrão</strong> erra para <em>mais</em>: 0,0088, cerca de <strong>5 vezes</strong> o arrasto
+  que o SGP4 “enxerga”.</li>
+</ul>
+<p>Errar para mais por um fator 5 é pior que não ter arrasto algum: um valor só ≈ 50% acima do
+ajustado (0,0025) já empata com o caso sem arrasto no erro em 7 dias.</p>
+
+<h3>Por que o erro de arrasto cresce tão depressa</h3>
+<p>O arrasto tira energia, a órbita baixa, e uma órbita mais baixa tem período menor: o satélite
+<em>adianta</em> ao longo da trajetória (o “paradoxo do arrasto”, Sem3 §3.5: freado, mas mais rápido).
+O semieixo cai de forma aproximadamente linear no tempo, mas o adiantamento acumula essa diferença de
+velocidade angular, de modo que o erro ao longo da órbita cresce com o <strong>quadrado do
+tempo</strong>. Um erro pequeno em C<sub>D</sub>·A/m vira centenas de km em uma semana.</p>
+
+<h3>Por que o SGP4 “vê” tão pouco arrasto</h3>
+<p>O arrasto do SGP4 vem do <strong>B*</strong> do TLE, que o NORAD ajustou às medições de radar daquela
+semana (seção 9, determinação de órbita). Em dezembro de 2019 a atividade solar estava no
+<strong>mínimo</strong> do ciclo: com pouca radiação EUV a termosfera esfria e se contrai, e o arrasto
+real era fraco. O B* registra isso. A tabela de Vallado representa atividade <em>moderada</em> (o Sem3
+avisa: ρ varia por fatores de 5 a 10 ao longo do ciclo solar); ela não sabe que era mínimo solar e põe
+muito mais ar a 400 km do que havia. Some-se o A/m de 0,004, um valor nominal: a área frontal da ISS
+depende da atitude e dos painéis solares, que giram para seguir o Sol.</p>
+
+<h3>Onde fica o mínimo depende da janela</h3>
+<p>O RMS em 0–72 h, que é o que <code>fit_ballistic_coefficient</code> minimiza, tem o mínimo exatamente no
+valor ajustado (0,00163). Em 0–7 dias o melhor valor é outro (≈ 0,0014), e os erros pontuais oscilam
+com a fase da órbita, então o seu mínimo pode cair ao lado. Se o arrasto fosse o único erro do modelo,
+todas as janelas apontariam para o mesmo valor. Como não apontam, o C<sub>D</sub>·A/m ajustado é um
+parâmetro <strong>efetivo</strong>: além da atmosfera do dia e da atitude, ele compensa parte do que o
+Cowell não tem e o SGP4 tem (J3, J4 e, em menor grau, Sol e Lua). Por isso o erro ajustado não vai a
+zero e cresce com o tempo.</p>
+
+<h3>A lição</h3>
+<p>Mais física deixa o modelo mais fiel <em>se os parâmetros forem certos</em>. Com o valor certo, o
+arrasto de fato aproxima o Cowell do SGP4: o RMS em 7 dias cai de 23,9 km (só J2) para 4,6 km. Com
+parâmetros genéricos, um modelo mais completo pode ser pior que um mais simples. Por isso, na prática,
+operadores <strong>ajustam</strong> um coeficiente balístico efetivo contra dados de rastreio em vez de
+calculá-lo do zero (Sem3 §7, item 4). É o que <code>fit_ballistic_coefficient</code> faz aqui, com o SGP4 no
+papel dos radares: uma versão mínima da determinação de órbita da seção 9.</p>
+<p>Tudo isso é gerado por um único comando, que também escreve o relatório completo em
+<code>reports/s3_arrasto/relatorio.md</code>:</p>
+<pre><code>python scripts/compare_sgp4_cowell.py      # ~1 min</code></pre>
 </section>
 
 </main>

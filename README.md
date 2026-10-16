@@ -169,7 +169,7 @@ Cowell com J2 e arrasto atmosférico contra o SGP4 da ISS (TLE de teste, época 
 comando gera o gráfico e o relatório em [`reports/s3_arrasto/`](reports/s3_arrasto/):
 
 ```bash
-python scripts/compare_sgp4_cowell.py      # ~20 s; erro_sgp4_cowell.png + relatorio.md
+python scripts/compare_sgp4_cowell.py      # ~1 min; 2 gráficos PNG + relatorio.md
 ```
 
 Erro de posição 3D contra o SGP4 em 24 h / 72 h / 7 dias: só J2, 1,0 / 8,7 / 47 km; J2 + arrasto
