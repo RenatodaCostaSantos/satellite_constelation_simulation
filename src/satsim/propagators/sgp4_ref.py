@@ -2,8 +2,7 @@
 
 O SGP4 é o modelo analítico para o qual o TLE foi gerado: ele lê os elementos *médios* do TLE e
 devolve o estado em qualquer instante, com J2–J4, arrasto (via B*) e, para períodos longos,
-Sol e Lua. É a referência ("oráculo") da posição da ISS real, contra a qual o Cowell é medido
-(S3-03).
+Sol e Lua. É a referência ("oráculo") da posição da ISS real, contra a qual o Cowell é medido.
 
 Entrada × saída: elementos do TLE → estado (r, v)
 --------------------------------------------------
@@ -30,7 +29,7 @@ nossos propagadores, que esperam elementos osculadores (os da órbita instantân
     v = (vx, vy, vz)     velocidade [m/s]
 
 É o formato que todo o resto do projeto consome (subponto, cena, observador). Em t = 0, (r₀, v₀)
-é a condição inicial que o Cowell usa no S3-03 (``CowellPropagator.from_state``):
+é a condição inicial que o Cowell usa (``CowellPropagator.from_state``):
 
     TLE (elementos médios) ──SGP4──► r(t), v(t) ──► em t = 0: (r₀, v₀) ──► Cowell
 

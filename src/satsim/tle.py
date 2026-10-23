@@ -21,6 +21,13 @@ A CelesTrak pede no máximo 1 consulta a cada 2 h por conjunto de dados, daí o 
 
 Simplificação: o número de catálogo é lido como inteiro de 5 dígitos; o formato Alpha-5
 (letra no 1º dígito, catálogos ≥ 100 000) é rejeitado com ``TleError``.
+
+Papel no simulador: este módulo fornece o TLE de onde saem as condições iniciais da simulação.
+Ele não calcula posições: o SGP4 (``satsim.propagators.sgp4_ref``) transforma os elementos médios
+do TLE em coordenadas (r, v), e o estado em t = 0 é a condição inicial do Cowell.
+
+A ISS é o satélite de teste porque o TLE dela é público e atualizado várias vezes por dia (a
+CelesTrak o redistribui do NORAD), o que permite comparar a simulação com a órbita real.
 """
 
 import json
