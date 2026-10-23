@@ -3,11 +3,18 @@
 **satsim** — simulador de posicionamento de satélites em Python, modular e fácil de estender
 para mais satélites.
 
-- **Fase 1 (semanas 1–4):** um satélite (a ISS), com posição e horários de visibilidade sobre
-  São Bento do Sapucaí (SP).
-- **Fase 2 (semana 5):** generalização para 6 satélites (constelação heliossíncrona 91/6, um
-  plano).
-- **Fase 3 (semanas 6–7, se houver tempo):** aplicação web com deploy e 18 satélites.
+**Objetivo final:** uma simulação **próxima da real para um satélite em órbita heliossíncrona
+(SSO)**, com um propagador **completo e generalizável para qualquer órbita**. A **ISS** é o
+**comparador real**: o TLE dela é público e atualizado várias vezes por dia, e comparar o nosso
+propagador com o SGP4 da ISS (e, depois, de satélites reais em SSO) mede quão perto o simulador
+está de um simulador real. Ver a revisão do planejamento em
+[`docs/semana3_fechamento.md`](docs/semana3_fechamento.md) (seção 6).
+
+- **Fase 1 (semanas 1–3, concluída):** núcleo de propagação (Kepler, J2 médio, Cowell com J2 e
+  arrasto), ISS real via TLE/SGP4, estação de São Bento do Sapucaí (SP) e passagens, com GUI.
+- **Fase 2 (proposta):** propagador fiel e geral: J3/J4 no Cowell, conversão médio ↔ osculador,
+  validação contra o SGP4 numa SSO real, modelo médio estendido para projeto e órbita congelada.
+- **Fase 3:** constelação heliossíncrona (6 → 18 satélites), cobertura e aplicação web.
 
 Todo propagador implementa `propagate(t) -> (r, v)` vetorizado; adicionar satélites é apenas
 instanciar mais objetos. Unidades SI, ângulos em radianos internamente, tempo em UTC
@@ -37,7 +44,9 @@ ruff format .        # formatação (use --check para só verificar)
 pyproject.toml               empacotamento, pytest e ruff
 .github/workflows/ci.yml     CI: lint + testes em Python 3.11 e 3.12
 docs/adr/                    decisões de arquitetura (ADR)
-docs/creditos.md             créditos e licenças dos assets do viewer
+docs/creditos.md             créditos e licenças dos assets do viewer e dos TLEs
+docs/semana3_fechamento.md   fechamento da Semana 3 e revisão do planejamento
+docs/codigo_explicado/       explicação detalhada do código (HTML; o PDF é gerado dele)
 src/satsim/                  código da biblioteca
 src/satsim/app/              GUI: exportação da cena (Python) e viewer (static/)
 scripts/build_demo.py        gera a demo visual demo/index.html
@@ -267,12 +276,28 @@ Para adicionar um valor:
 
 ## Roadmap
 
+**Concluído:**
+
 | Semana | Entrega |
 |---|---|
 | 1 | Fundação e núcleo kepleriano: CI, ADR, constantes, elementos ↔ estado, propagador kepleriano, tempo (JD/GMST), golden tests |
-| 2 | Perturbação J2 (elementos médios), quadros ECI/ECEF, geodésia e projeto de órbita |
-| 3 | Propagação numérica (Cowell, arrasto) e validação contra SGP4/TLE da ISS |
-| 4 | Sol, observador e visibilidade da ISS sobre São Bento do Sapucaí |
-| 5 | Constelação heliossíncrona de 6 satélites (91/6, um plano) e cobertura |
-| 6 | Aplicação web e deploy |
-| 7 | Extensão para 18 satélites e acabamento (se houver tempo) |
+| 2 | Perturbação J2 (elementos médios), quadros ECI/ECEF, geodésia e projeto de órbita (SSO 91/6) |
+| 3 | ISS real (TLE/SGP4), arrasto no Cowell e validação contra o SGP4, estação de solo, passagens e GUI |
+
+**Planejamento revisado (proposta da revisão da Semana 3, out/2026; a confirmar nos prompts das
+próximas semanas):** o objetivo passou a ser um propagador fiel e geral para uma SSO, com a ISS
+como comparador real. Detalhes e justificativa em
+[`docs/semana3_fechamento.md`](docs/semana3_fechamento.md), seção 6.
+
+| Ordem | Entrega | Por quê |
+|---|---|---|
+| 1 | J3 e J4 no Cowell | completa a gravidade zonal; reduz o erro × SGP4 que hoje o coeficiente de arrasto ajustado absorve |
+| 2 | Conversão médio ↔ osculador (Brouwer/Kozai) | liga o projeto (elementos médios) à simulação (Cowell) sem perder a heliossincronia |
+| 3 | Cowell × SGP4 numa SSO real (ex.: Sentinel-2A, NORAD 40697; Landsat 8, NORAD 39084) | valida o simulador no regime do satélite final |
+| 4 | Modelo médio estendido (J2–J4 + arrasto médio) e órbita congelada | projeto e manutenção da SSO |
+| 5 | Sol/Lua, pressão de radiação e atmosfera com atividade solar (F10.7) no Cowell | fidelidade de longo prazo |
+| 6 | Constelação SSO (6 → 18 satélites), cobertura e aplicação web | com o propagador fiel já validado |
+
+O roadmap original previa, depois da Semana 3: visibilidade óptica da ISS (Sol e iluminação,
+Semana 4), constelação de 6 satélites e cobertura (Semana 5), aplicação web (Semana 6) e 18
+satélites (Semana 7). A visibilidade óptica continua útil e independente das entregas acima.
