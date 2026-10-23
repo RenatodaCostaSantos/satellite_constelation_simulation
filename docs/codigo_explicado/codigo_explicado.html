@@ -81,6 +81,7 @@
     <li><code>src/satsim/propagators/sgp4_ref.py</code> — o SGP4 como propagador e oráculo (inclui determinação de órbita e fontes de posição online)</li>
     <li><code>forces/atmosphere.py</code>, <code>forces/drag.py</code>, <code>decay.py</code> — arrasto no Cowell e por que o arrasto padrão piora o resultado (o “V” do coeficiente balístico)</li>
     <li><code>src/satsim/observer.py</code> — sistemas de coordenadas (ECI, ECEF, geodésico, geocêntrico, ENU), transformações e sutilezas (normal ao elipsoide × reta radial)</li>
+    <li>CelesTrak e Skyfield — de onde vêm os dados (TLE) e quem confere os cálculos (os testes)</li>
   </ol>
 </nav>
 
@@ -1844,6 +1845,65 @@ o erro seria quase o triplo do critério e quinze vezes a diferença medida cont
   <tr><td>Skyfield</td><td>ISS em 3 dias, a cada 30 s, com el &gt; 0: |Δaz| ≤ 0,026°, |Δel| ≤ 0,009°,
       |Δdistância| ≤ 74 m</td></tr>
 </table>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="celestrak-skyfield">
+<h2>12. CelesTrak e Skyfield — de onde vêm os dados e quem confere os cálculos</h2>
+<div class="file">src/satsim/tle.py · tests/ (test_sgp4_propagator, test_observer, test_passes) · cards S3-01 a S3-05</div>
+
+<h3>Os dois nomes que aparecem em todo o projeto</h3>
+<p>Dois nomes externos aparecem o tempo todo no código e nos relatórios, com papéis bem diferentes:
+a <strong>CelesTrak</strong> é <em>de onde vêm os dados</em> da órbita real; o <strong>Skyfield</strong> é <em>o
+gabarito</em> que confere se os nossos cálculos estão certos.</p>
+<table>
+  <tr><th></th><th>CelesTrak</th><th>Skyfield</th></tr>
+  <tr><td>O que é</td><td>site que distribui os TLEs</td><td>biblioteca Python de astronomia</td></tr>
+  <tr><td>Papel no projeto</td><td><strong>fonte de entrada</strong> (o TLE da ISS)</td><td><strong>juiz independente</strong> nos
+      testes</td></tr>
+  <tr><td>Onde aparece</td><td><code>tle.py</code> (download, cache, fallback)</td><td>só em <code>tests/</code>, com
+      <code>pytest.importorskip</code></td></tr>
+  <tr><td>Roda na simulação?</td><td>só ao gerar a demo, e é opcional (cache e TLE embarcado)</td><td>não</td></tr>
+</table>
+
+<h3>CelesTrak: de onde vêm os TLEs</h3>
+<p>A CelesTrak (<code>celestrak.org</code>) é um site mantido por T. S. Kelso desde os anos 1980. Ela redistribui,
+gratuitamente, os TLEs que o NORAD / U.S. Space Force produz a partir das medições de radares e telescópios (a
+determinação de órbita da seção 9). Há um TLE para praticamente cada objeto rastreado em órbita, atualizado com
+frequência; para a ISS, várias vezes por dia.</p>
+<p>No código, <code>tle.fetch_celestrak</code> baixa o TLE de um satélite pelo número de catálogo NORAD (25544 para a
+ISS):</p>
+<pre><code>https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&amp;FORMAT=TLE</code></pre>
+<p>e <code>tle.get_tle</code> organiza a busca em camadas (seção 8): cache com menos de 2 h → CelesTrak → cache de
+qualquer idade → TLE embarcado. O limite de 2 horas vem de um pedido da própria CelesTrak: no máximo uma consulta a
+cada 2 h por conjunto de dados, para não sobrecarregar o serviço. Com isso o simulador funciona sem internet e
+respeita o provedor.</p>
+
+<h3>Skyfield: o gabarito dos testes</h3>
+<p>O Skyfield é uma biblioteca Python de astronomia, criada por Brandon Rhodes, que calcula posições de planetas,
+estrelas e satélites com alta precisão. Ela trata detalhes que o projeto simplifica de propósito: a diferença entre
+os tempos UT1 e UTC, o movimento do polo terrestre, as efemérides precisas do JPL para o Sol e a Lua. Para
+satélites, usa o mesmo SGP4 que nós.</p>
+<p>No projeto ele <strong>não</strong> é usado para simular: aparece só nos testes, como juiz. A ideia é simples:
+pegar o mesmo TLE, calcular a mesma grandeza com o nosso código e com o Skyfield, e comparar.</p>
+<table>
+  <tr><th>O que comparamos</th><th>Teste</th><th>Diferença</th></tr>
+  <tr><td>Posição da ISS em relação à Terra (ECEF), 3 dias</td><td><code>test_sgp4_propagator.py</code></td><td>≤ 86 m</td></tr>
+  <tr><td>Azimute e elevação vistos de São Bento</td><td><code>test_observer.py</code></td><td>≤ 0,026° e ≤ 0,009°</td></tr>
+  <tr><td>Distância até a ISS</td><td><code>test_observer.py</code></td><td>≤ 74 m</td></tr>
+  <tr><td>Horários das passagens (AOS, TCA, LOS)</td><td><code>test_passes.py</code></td><td>≤ 0,19 s</td></tr>
+</table>
+<p>As diferenças que sobram não são erros: vêm exatamente das simplificações documentadas (UT1 ≈ UTC, sem movimento
+polar). O Skyfield mostra que elas custam dezenas de metros, o que é desprezível para saber quando e onde olhar.</p>
+<p>Os testes com Skyfield usam <code>pytest.importorskip("skyfield.api")</code> (se a biblioteca não estiver
+instalada, o teste é pulado, não quebra) e <code>load.timescale(builtin=True)</code> (as tabelas de tempo embutidas,
+sem baixar nada): nenhum teste acessa a internet.</p>
+
+<h3>Por que o Skyfield não entra na simulação</h3>
+<p>É uma decisão de arquitetura (ADR 0001, “Alternativas rejeitadas”): usar Skyfield ou astropy no código principal
+esconderia justamente o que o projeto quer implementar e entender — propagação, referenciais, geodésia,
+visibilidade. Por isso ele fica na lista de dependências de <em>desenvolvimento</em> (<code>pip install -e ".[dev]"</code>),
+não nas de execução: o simulador roda sem ele, e ele só confirma que o que construímos está certo.</p>
 </section>
 
 </main>
