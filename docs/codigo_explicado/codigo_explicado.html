@@ -80,6 +80,7 @@
     <li><code>src/satsim/tle.py</code> — o TLE da ISS: o que é, onde fica guardado e como vira condição inicial (inclui WGS72 × WGS84)</li>
     <li><code>src/satsim/propagators/sgp4_ref.py</code> — o SGP4 como propagador e oráculo (inclui determinação de órbita e fontes de posição online)</li>
     <li><code>forces/atmosphere.py</code>, <code>forces/drag.py</code>, <code>decay.py</code> — arrasto no Cowell e por que o arrasto padrão piora o resultado (o “V” do coeficiente balístico)</li>
+    <li><code>src/satsim/observer.py</code> — sistemas de coordenadas (ECI, ECEF, geodésico, geocêntrico, ENU), transformações e sutilezas (normal ao elipsoide × reta radial)</li>
   </ol>
 </nav>
 
@@ -1608,6 +1609,241 @@ papel dos radares: uma versão mínima da determinação de órbita da seção 9
 <p>Tudo isso é gerado por um único comando, que também escreve o relatório completo em
 <code>reports/s3_arrasto/relatorio.md</code>:</p>
 <pre><code>python scripts/compare_sgp4_cowell.py      # ~1 min</code></pre>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="coordenadas">
+<h2>11. observer.py — sistemas de coordenadas, transformações e sutilezas</h2>
+<div class="file">src/satsim/frames.py · src/satsim/geodesy.py · src/satsim/observer.py · cards S2-03 e S3-04</div>
+
+<h3>Por que tantos sistemas</h3>
+<p>Para responder “onde a ISS aparece no céu de São Bento do Sapucaí” o simulador passa por vários
+sistemas de coordenadas, cada um natural para uma parte do problema. A física da órbita é simples num
+referencial que não gira; a estação é fixa num referencial que gira com a Terra; e o observador quer
+direções no seu próprio céu. Nenhum sistema serve para tudo, e cada função de transformação existe para
+navegar entre eles. A seção 5 introduziu ECI, ECEF e WGS84; esta seção junta tudo, acrescenta o ENU e
+detalha as sutilezas.</p>
+<table>
+  <tr><th>Sistema</th><th>Origem</th><th>Eixos ou coordenadas</th><th>Para quê</th></tr>
+  <tr><td><strong>ECI</strong></td><td>centro da Terra</td><td>x, y, z fixos: x → equinócio vernal, z → polo</td>
+      <td>propagar a órbita</td></tr>
+  <tr><td><strong>ECEF</strong></td><td>centro da Terra</td><td>x, y, z que giram com a Terra: x → Greenwich, z → polo</td>
+      <td>pontos fixos no solo</td></tr>
+  <tr><td><strong>Geodésico (WGS84)</strong></td><td>—</td><td>latitude φ, longitude λ, altitude h, medidas pela
+      <em>normal ao elipsoide</em></td><td>mapas, GPS, subponto, estação</td></tr>
+  <tr><td><strong>Geocêntrico (esférico)</strong></td><td>centro da Terra</td><td>latitude ψ, longitude λ, raio r,
+      medidos pela <em>reta até o centro</em></td><td>aproximação da Semana 1; comparação</td></tr>
+  <tr><td><strong>ENU</strong></td><td>a estação</td><td>E (leste), N (norte), U (zênite do lugar)</td>
+      <td>o céu do observador</td></tr>
+  <tr><td><strong>Az, el, distância</strong></td><td>a estação</td><td>azimute, elevação, distância (o ENU em
+      forma esférica)</td><td>para onde apontar</td></tr>
+</table>
+<p>Uma distinção ajuda a não confundir: <strong>referencial</strong> é um conjunto de eixos (ECI, ECEF,
+ENU); <strong>sistema de coordenadas</strong> é uma forma de descrever um ponto nesses eixos. Geodésico e
+geocêntrico não são referenciais novos: são duas formas de escrever um ponto do <em>ECEF</em> por
+ângulos e altura, como coordenadas polares e cartesianas descrevem o mesmo ponto do plano. Da mesma
+forma, (azimute, elevação, distância) é o ENU escrito em coordenadas esféricas.</p>
+<pre><code>satélite: propagador ─► r_ECI(t) ─Rz(GMST)─► r_ECEF(t) ─┬─► geodésico (φ,λ,h): subponto
+                                                        │
+estação:  (φ, λ, h) ─geodetic_to_ecef─► r_est ──────────┤
+          (φ, λ) ─► matriz M_ENU                         ▼
+                              d = r_ECEF − r_est ─► M_ENU·d = (E, N, U) ─► az, el, dist.</code></pre>
+
+<h3>ECI → ECEF: só uma rotação</h3>
+<p>Os dois têm a mesma origem e o mesmo eixo z; o ECEF está girado em torno de z pelo ângulo que a
+Terra girou, o tempo sideral de Greenwich θG = GMST(t) (seção 2):</p>
+<pre><code>r_ECEF = Rz(θG) · r_ECI          frames.eci_to_ecef(r, gmst_at(epoch, t))</code></pre>
+<p>Sutilezas: (1) a velocidade não se transforma só pela rotação, porque o ECEF gira; soma-se
+−ω⊕ × r (seção 5). (2) Uma rotação não muda comprimentos: a <em>distância</em> satélite–estação é a
+mesma em ECI, ECEF ou ENU, desde que os dois pontos estejam no mesmo referencial e no mesmo instante. A
+estação, fixa no ECEF, está em movimento no ECI (≈ 430 m/s em São Bento), por isso a comparação é feita
+no ECEF. (3) O ECI do projeto é o equador e equinócio da data, sem precessão nem nutação, que é
+exatamente o TEME do SGP4 (seção 9).</p>
+
+<h3>Geodésico × geocêntrico: a sutileza da normal</h3>
+<p>Se a Terra fosse uma esfera, “para cima” seria a direção que se afasta do centro, e latitude e
+altitude seriam óbvias. Mas a Terra é achatada: o elipsoide WGS84 tem raio equatorial a = 6378,137 km
+e raio polar b = 6356,752 km, 21,4 km menor. Num elipsoide há duas retas diferentes saindo de um ponto P
+da superfície:</p>
+<ul>
+  <li>a <strong>reta radial</strong>, que liga o centro O a P;</li>
+  <li>a <strong>normal</strong>, a reta perpendicular ao <em>plano tangente</em> em P. Todo ponto de uma
+  superfície lisa tem um plano tangente, o plano que “encosta” na superfície ali; a normal é a reta
+  perpendicular a ele.</li>
+</ul>
+<p>Numa esfera as duas coincidem: a normal sempre passa pelo centro. Num elipsoide achatado elas só
+coincidem no equador e nos polos; nas latitudes intermediárias a normal é mais inclinada e cruza o eixo
+polar <em>ao lado</em> do centro.</p>
+<figure>
+<svg viewBox="0 0 600 380" width="100%" style="max-width:600px" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, sans-serif" font-size="12">
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#118ab2"/></marker></defs>
+  <ellipse cx="230.0" cy="190.0" rx="200.0" ry="130.0" fill="#eef5f8" stroke="#0b6e8a" stroke-width="2"/>
+  <line x1="10.0" y1="190.0" x2="460.0" y2="190.0" stroke="#5b6475" stroke-dasharray="4 3"/>
+  <text x="438.0" y="206.0" fill="#5b6475">equador</text>
+  <line x1="230.0" y1="345.0" x2="230.0" y2="30.0" stroke="#5b6475" stroke-dasharray="4 3"/>
+  <text x="222.0" y="42.0" fill="#5b6475" text-anchor="end">eixo polar (z)</text>
+  <circle cx="230.0" cy="190.0" r="3" fill="#1d2330"/><text x="214.0" y="206.0">O</text>
+  <line x1="230.0" y1="190.0" x2="438.1" y2="68.2" stroke="#ef476f" stroke-width="2"/>
+  <text x="444.1" y="72.2" fill="#ef476f">reta radial</text>
+  <line x1="230.0" y1="308.9" x2="425.5" y2="38.1" stroke="#118ab2" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="433.5" y="42.1" fill="#118ab2">normal = vertical (U)</text>
+  <circle cx="230.0" cy="308.9" r="3" fill="#118ab2"/>
+  <text x="238.0" y="324.9" fill="#118ab2" font-size="11">a normal cruza o eixo abaixo de O</text>
+  <line x1="289.4" y1="38.6" x2="467.8" y2="167.4" stroke="#06a77d" stroke-width="2"/>
+  <text x="473.8" y="171.4" fill="#06a77d">plano tangente</text>
+  <text x="473.8" y="185.4" fill="#06a77d">= horizonte</text>
+  <circle cx="378.6" cy="103.0" r="4.5" fill="#1d2330"/><text x="360.6" y="95.0" font-weight="bold">P</text>
+  <path d="M278.0,190.0 A48,48 0 0,0 271.4,165.8" fill="none" stroke="#ef476f" stroke-width="1.5"/>
+  <text x="284.0" y="180.0" fill="#ef476f">ψ</text>
+  <path d="M300.0,308.9 A70,70 0 0,0 271.0,252.1" fill="none" stroke="#118ab2" stroke-width="1.5"/>
+  <line x1="230.0" y1="308.9" x2="310.0" y2="308.9" stroke="#118ab2" stroke-dasharray="2 2"/>
+  <text x="306.0" y="292.9" fill="#118ab2">φ</text>
+  <text x="10" y="372" fill="#5b6475" font-size="11">Achatamento exagerado (b/a = 0,65; no WGS84, b/a = 0,9966). Aqui ψ = 30° e φ = 54°.</text>
+</svg>
+  <figcaption>Corte meridiano de um elipsoide com o achatamento exagerado. A reta radial (vermelho)
+  define a latitude geocêntrica ψ; a normal (azul), perpendicular ao plano tangente (verde), define a
+  latitude geodésica φ. Numa esfera as duas retas coincidiriam.</figcaption>
+</figure>
+<p>Cada reta define uma latitude:</p>
+<ul>
+  <li><strong>latitude geocêntrica ψ</strong>: o ângulo da reta radial com o plano do equador. É a latitude
+  das coordenadas esféricas;</li>
+  <li><strong>latitude geodésica φ</strong>: o ângulo da normal com o plano do equador. É a latitude dos
+  mapas, do GPS e de São Bento do Sapucaí (−22,69°).</li>
+</ul>
+<p>Para um ponto na superfície, escrevendo a elipse do corte meridiano como x²/a² + z²/b² = 1, a normal
+tem a direção do gradiente, ∝ (x/a², z/b²). Daí:</p>
+<pre><code>tan ψ = z / x                       (reta radial)
+tan φ = (a²/b²) · (z / x)  =  (a²/b²) · tan ψ        (normal)</code></pre>
+<p>Como a²/b² ≈ 1,0067 &gt; 1, |φ| &gt; |ψ| fora do equador e dos polos. A diferença é máxima a 45°:</p>
+<table>
+  <tr><th>Latitude geodésica φ</th><th>geocêntrica ψ</th><th>φ − ψ</th></tr>
+  <tr><td>−22,69° (São Bento)</td><td>−22,553°</td><td>−0,137°</td></tr>
+  <tr><td>45°</td><td>44,808°</td><td>0,192° (máximo)</td></tr>
+  <tr><td>51,8° (latitude máxima da ISS)</td><td>51,613°</td><td>0,187°</td></tr>
+  <tr><td>89°</td><td>88,993°</td><td>0,007°</td></tr>
+</table>
+<p>Para um ponto <em>acima</em> da superfície, como o satélite, a latitude geodésica é a da normal que
+desce do ponto até o elipsoide, e a altitude h é o comprimento desse segmento. A diferença de latitude
+encolhe com a altura, ≈ f·sin 2φ·R⊕/(R⊕ + h): para a ISS a 420 km, 0,18° no máximo (S2-07). A
+<strong>longitude é a mesma</strong> nos dois sistemas: o achatamento é simétrico em torno do eixo polar.</p>
+<p><strong>A altitude também muda.</strong> A altitude geocêntrica é r − R⊕, sempre contra o raio
+<em>equatorial</em>; a geodésica é a distância ao elipsoide ao longo da normal. Como o elipsoide fica
+dentro da esfera de raio R⊕, a altitude geodésica é sempre maior ou igual à esférica: a diferença vai de
+0 no equador a 21,4 km nos polos (≈ 21,4 km·sin²φ). Em São Bento o raio do elipsoide é 6374,98 km,
+3,16 km abaixo de R⊕. Isso pesa no arrasto: a densidade cai ≈ e vezes a cada 58 km a 400 km, então 13 km
+a mais de altitude (ISS a 51,6°) já dão ≈ 25% menos densidade (seção 10).</p>
+<p><strong>As conversões.</strong> Geodésico → ECEF tem fórmula fechada, com N(φ) = a/√(1 − e²·sin²φ), o
+raio de curvatura no primeiro vertical (a distância de P, ao longo da normal, até o eixo polar):</p>
+<pre><code>x = (N + h)·cos φ·cos λ
+y = (N + h)·cos φ·sin λ
+z = (N·(1 − e²) + h)·sin φ                         geodesy.geodetic_to_ecef</code></pre>
+<p>O caminho inverso, ECEF → geodésico, não tem forma fechada simples, porque φ aparece dos dois lados;
+o projeto usa o método iterativo de Bowring, que converge em 2 a 3 iterações
+(<code>geodesy.ecef_to_geodetic</code>). As coordenadas esféricas saem direto:
+ψ = arctan2(z, √(x² + y²)), r = |r| (<code>geodesy.ecef_to_spherical</code>).</p>
+<p><strong>Por que a normal é a direção física certa.</strong> Um fio de prumo aponta na direção da gravidade
+aparente (atração da Terra mais o efeito centrífugo da rotação). A superfície em que essa gravidade é
+sempre perpendicular é o geoide, quase igual ao elipsoide; o próprio achatamento da Terra é o equilíbrio
+entre gravidade e rotação (Sem4 §2.2, Clairaut). Então a normal ao elipsoide é, com ótima aproximação, a
+vertical do lugar e o plano tangente é o horizonte que um nível de bolha indica. A diferença para a
+vertical real, o “desvio da vertical” causado por montanhas e variações de massa, é tipicamente de
+segundos de arco e fica fora do modelo.</p>
+
+<h3>ENU: o referencial do observador</h3>
+<p>Para quem está em São Bento, os eixos do ECEF não dizem nada: “o satélite está 487 km na direção de
+Greenwich” não indica para onde olhar. O ENU é um referencial cartesiano com <strong>origem na estação</strong>
+e eixos alinhados com o chão daquele lugar:</p>
+<ul>
+  <li><strong>E (leste)</strong>: horizontal, à direita de quem olha para o norte;</li>
+  <li><strong>N (norte)</strong>: horizontal, em direção ao polo norte;</li>
+  <li><strong>U (zênite)</strong>: a <em>normal ao elipsoide</em> na estação, a vertical do lugar.</li>
+</ul>
+<p>E e N formam o plano tangente, isto é, o horizonte. Escritos em ECEF, os três versores são as linhas
+da matriz M (φ e λ geodésicas da estação):</p>
+<pre><code>     ⎡ E ⎤   ⎡ −sin λ          cos λ          0     ⎤
+M =  ⎢ N ⎥ = ⎢ −sin φ·cos λ   −sin φ·sin λ    cos φ ⎥
+     ⎣ U ⎦   ⎣  cos φ·cos λ    cos φ·sin λ    sin φ ⎦
+
+enu = M · (r_sat − r_estação)          GroundStation.enu_matrix, GroundStation.enu</code></pre>
+<p>Cada linha tem uma interpretação geométrica: E é a direção em que o ponto se move quando a longitude
+aumenta; N, a direção em que ele se move quando a latitude aumenta; U é perpendicular aos dois. Os três são
+unitários e perpendiculares entre si (M·Mᵀ = I) e formam um sistema destro: E × N = U, det M = +1. M é
+uma rotação; multiplicar por ela troca os eixos sem mudar o vetor.</p>
+<p><strong>Exemplo: a ISS no ponto mais alto da 1ª passagem</strong> (t = 29 457 s após a época do TLE de
+teste, linha 1 do Apêndice A.2):</p>
+<pre><code>estação, ECEF            (4110,2;  −4216,3;  −2445,4) km
+ISS, ECEF                (4597,4;  −4381,0;  −2438,4) km
+d = r_sat − r_est, ECEF  ( 487,1;   −164,7;      7,1) km     |d| = 514,2 km
+d em ENU = M·d           ( 233,9;    183,2;    419,8) km     |d| = 514,2 km
+                           leste     norte    para cima</code></pre>
+<p>O comprimento é o mesmo; só a descrição mudou, e agora faz sentido: a ISS está 234 km para leste,
+183 km para norte e 420 km acima do horizonte de São Bento.</p>
+
+<h3>Azimute, elevação e distância: o ENU em coordenadas esféricas</h3>
+<pre><code>distância = |d|                  = 514,2 km
+azimute   = atan2(E, N) mod 360° = 51,9°    (nordeste)
+elevação  = arcsin(U / |d|)      = 54,7°    (acima da metade do caminho ao zênite)
+
+                                            GroundStation.look_angles</code></pre>
+<p>É a conversão cartesiana → esférica usual, só que centrada no observador: o azimute faz o papel da
+longitude, a elevação o da latitude e a distância o do raio. Três sutilezas:</p>
+<ul>
+  <li><strong>Ordem dos argumentos do atan2.</strong> Na matemática o ângulo é medido a partir do eixo x, no
+  sentido anti-horário: atan2(y, x). Na navegação o azimute é medido a partir do <em>norte</em>, no sentido
+  <em>horário</em> (0° norte, 90° leste, 180° sul, 270° oeste). Trocar os argumentos para atan2(E, N) faz
+  exatamente isso. O <code>mod 2π</code> leva o resultado de (−180°, 180°] para [0°, 360°).</li>
+  <li><strong>Elevação em relação ao horizonte geodésico.</strong> U é a normal ao elipsoide, então elevação 0°
+  é o horizonte de quem está lá, e não “perpendicular à reta para o centro da Terra”.</li>
+  <li><strong>Sem refração.</strong> A atmosfera curva a luz e faz o satélite parecer mais alto, até ≈ 0,5°
+  perto do horizonte e quase nada acima de 10°. Para visibilidade por rádio com elevação mínima de 10° é
+  desprezível, e não é modelada.</li>
+</ul>
+
+<h3>O que aconteceria com o “para cima” radial</h3>
+<p>Seria tentador usar como eixo U a reta radial (r_estação/|r_estação|), mais simples de calcular. Em São
+Bento ela difere da normal em 0,137°, exatamente φ − ψ da tabela acima. O horizonte ficaria inclinado
+por esse ângulo e todas as elevações sairiam erradas. Com a ISS, em 3 dias, o erro na elevação vai de
+−0,137° a +0,137°, conforme o satélite esteja do lado norte ou sul do céu:</p>
+<table>
+  <tr><th></th><th>Diferença de elevação</th></tr>
+  <tr><td>U = normal ao elipsoide (o projeto) × Skyfield</td><td>≤ 0,009°</td></tr>
+  <tr><td>critério do card S3-04</td><td>&lt; 0,05°</td></tr>
+  <tr><td>U = reta radial × U = normal</td><td>até ±0,137°</td></tr>
+</table>
+<p>A escolha da normal não é para facilitar a conta, e sim para que ela esteja certa: com a reta radial
+o erro seria quase o triplo do critério e quinze vezes a diferença medida contra o Skyfield.</p>
+
+<h3>As funções de transformação</h3>
+<table>
+  <tr><th>De → para</th><th>Função</th><th>O que muda</th></tr>
+  <tr><td>ECI → ECEF</td><td><code>frames.eci_to_ecef(r, θG[, v])</code></td><td>gira os eixos por θG(t)</td></tr>
+  <tr><td>ECEF → ECI</td><td><code>frames.ecef_to_eci(r, θG[, v])</code></td><td>o inverso</td></tr>
+  <tr><td>instante → θG</td><td><code>frames.gmst_at(epoch, t)</code></td><td>ângulo da Terra (UT1 ≈ UTC)</td></tr>
+  <tr><td>geodésico → ECEF</td><td><code>geodesy.geodetic_to_ecef(φ, λ, h)</code></td><td>fórmula fechada; usada para a
+      estação</td></tr>
+  <tr><td>ECEF → geodésico</td><td><code>geodesy.ecef_to_geodetic(r)</code></td><td>iterativo (Bowring); subponto e
+      altitude do arrasto</td></tr>
+  <tr><td>ECEF → geocêntrico</td><td><code>geodesy.ecef_to_spherical(r)</code></td><td>ψ e r − R⊕ (Semana 1,
+      comparação)</td></tr>
+  <tr><td>ECEF → ENU</td><td><code>GroundStation.enu(r)</code></td><td>origem na estação, eixos E, N, U</td></tr>
+  <tr><td>ECEF → az, el, distância</td><td><code>GroundStation.look_angles(r)</code></td><td>ENU em forma esférica</td></tr>
+  <tr><td>tudo de uma vez</td><td><code>observer.observe(propagador, estação, t)</code></td><td>ECI → ECEF → ENU → az,
+      el, distância</td></tr>
+</table>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que verifica</th></tr>
+  <tr><td>Geometria exata (estação em 0°, 0°, 0 m)</td><td>satélite no zênite → el = 90°; deslocado ao norte,
+      leste, sul e oeste → az = 0°, 90°, 180° e 270° (1·10⁻⁶°)</td></tr>
+  <tr><td>Horizonte e footprint</td><td>satélite no equador defasado λ = arccos(R⊕/(R⊕ + h)) → el = 0°; com
+      λ = footprint(h, 10°) → el = 10°; do outro lado da Terra → el &lt; 0</td></tr>
+  <tr><td>Matriz ENU</td><td>M·Mᵀ = I, det M = +1 e E × N = U, inclusive perto do polo</td></tr>
+  <tr><td>Estação de São Bento</td><td>ECEF = (4 110 248,7; −4 216 342,7; −2 445 429,5) m (Apêndice A.2)</td></tr>
+  <tr><td>Skyfield</td><td>ISS em 3 dias, a cada 30 s, com el &gt; 0: |Δaz| ≤ 0,026°, |Δel| ≤ 0,009°,
+      |Δdistância| ≤ 74 m</td></tr>
+</table>
 </section>
 
 </main>
