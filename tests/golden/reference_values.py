@@ -467,3 +467,290 @@ class SceneS2:
 
 
 SCENE_S2 = SceneS2()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.1 do prompt da Semana 3: TLE de teste da ISS (congelado em
+#     tests/data/iss_sample.tle). Época 2019-12-09 16:38:29 UTC (mínimo solar); checksums válidos.
+#     B* = 0,38792e-4; movimento médio 15,50103472 rev/dia. Apêndice A.6: limiares de idade do TLE
+#     (aviso > 3 dias, aviso forte > 14 dias) e a CelesTrak pede ≤ 1 consulta a cada 2 h.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class IssTleA1:
+    name: str = "ISS (ZARYA)"
+    line1: str = "1 25544U 98067A   19343.69339541  .00001764  00000-0  38792-4 0  9991"
+    line2: str = "2 25544  51.6439 211.2001 0007417  17.6667  85.6398 15.50103472202482"
+    norad_id: int = 25544
+    epoch_utc_iso: str = "2019-12-09T16:38:29+00:00"  # tolerância do card: abs = 1 s
+    inclination_deg: float = 51.6439
+    mean_motion_rev_day: float = 15.50103472
+    bstar: float = 3.8792e-5
+
+
+ISS_TLE_A1 = IssTleA1()
+
+
+@dataclass(frozen=True)
+class TleAgingA6:
+    warning_days: float = 3.0  # aviso "precisão degradada"
+    strong_warning_days: float = 14.0  # aviso forte
+    celestrak_min_interval_h: float = 2.0  # padrão de max_cache_age
+
+
+TLE_AGING = TleAgingA6()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.1 do prompt da Semana 3: vetores de regressão do SGP4 para o TLE de teste
+#     (sgp4 2.27, WGS72, saída TEME em km e km/s; tolerâncias do card S3-02: 1 m e 1e-3 m/s).
+#     Sanidade em t = 0: |r| ≈ 6787,2 km, |v| ≈ 7,665 km/s; período 2π/n ≈ 5573,9 s (coincide com
+#     o Tnod da ISS na Semana 2). Skyfield 1.55 (ITRS, timescale builtin) × Rz(GMST)·TEME: diferença
+#     máxima 86 m, média 70 m em 3 dias (UT1 ≈ UTC e sem movimento polar); critério < 150 m.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class Sgp4RegressionRow:
+    t_h: float
+    r_km: tuple[float, float, float]
+    v_km_s: tuple[float, float, float]
+
+
+SGP4_REGRESSION_A1: tuple[Sgp4RegressionRow, ...] = (
+    Sgp4RegressionRow(0, (3469.947984, -2690.388430, 5175.831925),
+                      (5.810229142, 4.802261185, -1.388280333)),
+    Sgp4RegressionRow(24, (-3591.826765, 2723.666458, -5090.448286),
+                      (-5.927709568, -4.496384380, 1.785277102)),
+    Sgp4RegressionRow(72, (-3873.542270, 2837.516435, -4813.891216),
+                      (-6.055171616, -3.901758569, 2.582041156)),
+    Sgp4RegressionRow(168, (-4346.138715, 3409.792942, -3962.984695),
+                      (-5.869671636, -2.825677530, 4.019415520)),
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Sgp4SanityA1:
+    r0_km: float = 6787.2
+    v0_km_s: float = 7.665
+    osc_inclination_deg: float = 51.64  # inclinação osculadora em t = 0 (card: abs 0,05°)
+    period_s: float = 5573.9  # 2π/n do movimento médio (card: abs 1 s)
+    skyfield_ecef_max_diff_m: float = 86.0  # referência; critério do card: < 150 m em 3 dias
+    skyfield_ecef_mean_diff_m: float = 70.0
+    # O card S3-02 dizia "|lat| ≤ 51,7° (geodésica)". Corrigido: 51,7° limita a latitude
+    # GEOCÊNTRICA (≤ i osculadora, 51,62–51,66° em 1 dia). A geodésica fica Δφ ≈ f·sin 2φ·R⊕/(R⊕+h)
+    # ≈ 0,176° acima (mesma correção de SCENE_S2): 51,62 + 0,18 = 51,80° medido.
+    lat_max_geocentric_deg: float = 51.7
+
+
+SGP4_SANITY_A1 = Sgp4SanityA1()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.3 do prompt da Semana 3: atmosfera exponencial por partes (Vallado).
+#     Cada faixa h0 ≤ h < próxima h0: ρ = ρ0·exp(−(h − h0)/H). Continuidade verificada no prompt:
+#     salto relativo < 1e-4 em todas as fronteiras (critério do card: < 1e-3).
+# ===============================================================================================
+
+ATMOSPHERE_A3: tuple[tuple[float, float, float], ...] = (
+    # (h0 [km], ρ0 [kg/m³], H [km])
+    (100.0, 5.297e-7, 5.877), (110.0, 9.661e-8, 7.263), (120.0, 2.438e-8, 9.473),
+    (130.0, 8.484e-9, 12.636), (140.0, 3.845e-9, 16.149), (150.0, 2.07e-9, 22.523),
+    (180.0, 5.464e-10, 29.740), (200.0, 2.789e-10, 37.105), (250.0, 7.248e-11, 45.546),
+    (300.0, 2.418e-11, 53.628), (350.0, 9.518e-12, 53.298), (400.0, 3.725e-12, 58.515),
+    (450.0, 1.585e-12, 60.828), (500.0, 6.967e-13, 63.822), (600.0, 1.454e-13, 71.835),
+    (700.0, 3.614e-14, 88.667), (800.0, 1.17e-14, 124.640), (900.0, 5.245e-15, 181.050),
+    (1000.0, 3.019e-15, 268.000),
+)  # fmt: skip
+
+
+# ===============================================================================================
+# Semana 3 — Sem3 Tabela 3 (C_D = 2,2, A/m = 0,005 → C_D·A/m = 0,011; atividade solar moderada),
+#     valores arredondados no PDF, e Apêndice A.4 do prompt da Semana 3 (calculados com a tabela
+#     A.3, altitude esférica, sem co-rotação). Tolerâncias do card S3-03: ρ e |dh/dt| ±5%.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class DecayRowSem3:
+    h_km: float
+    rho_table3_kg_m3: float  # Sem3 Tabela 3 (arredondado)
+    dhdt_table3_m_day: float  # |dh/dt| Sem3 Tabela 3 (arredondado)
+    dhdt_a4_m_day: float  # |dh/dt| calculado no Apêndice A.4...
+    dhdt_a4_decimals: int  # ...impresso com estas casas decimais
+
+
+DECAY_TABLE3: tuple[DecayRowSem3, ...] = (
+    DecayRowSem3(200.0, 2.8e-10, 1.4e4, 13573.0, 0),
+    DecayRowSem3(300.0, 2.4e-11, 1.2e3, 1186.0, 0),
+    DecayRowSem3(400.0, 3.7e-12, 184.0, 184.0, 1),
+    DecayRowSem3(500.0, 7.0e-13, 35.0, 34.7, 1),
+    DecayRowSem3(600.0, 1.5e-13, 7.0, 7.29, 2),
+    DecayRowSem3(800.0, 1.2e-14, 0.6, 0.59, 2),
+    DecayRowSem3(1000.0, 3.0e-15, 0.16, 0.16, 2),
+)
+
+
+@dataclass(frozen=True)
+class DragDecayA4:
+    cd: float = 2.2
+    area_over_mass_m2_kg: float = 0.005
+    cd_a_m_m2_kg: float = 0.011
+    v_400_m_s: float = 7669.0  # Sem3 §2.4
+    drag_accel_400_m_s2: float = 1.2e-6  # Sem3 §2.4 (card: rel 3%)
+    g_400_m_s2: float = 8.68  # Sem3 §2.4
+    drag_over_gravity_400: float = 1.4e-7  # Sem3 §2.4
+    da_per_rev_400_m: float = -11.8  # Sem3 eq. 15 (A.4: −11,83; card: rel 3%)
+    da_per_day_400_m: float = 184.0  # |Δa| em 1 dia (A.4: ≈ 184 m/dia; card: rel 5%)
+    h_reentry_km: float = 120.0  # altitude que encerra a integração do tempo de vida (A.4)
+
+
+DRAG_DECAY_A4 = DragDecayA4()
+
+
+@dataclass(frozen=True)
+class LifetimeCaseA4:
+    h0_km: float
+    cd_a_m_m2_kg: float
+    lifetime_years: float  # integração da Sem3 eq. 22 com a tabela A.3, reentrada em 120 km
+    pdf_years: float  # valor citado no PDF (Sem3 §5.1, Tabela 3), para comparação
+
+
+LIFETIMES_A4: tuple[LifetimeCaseA4, ...] = (
+    LifetimeCaseA4(500.0, 0.011, 4.64, 4.6),  # o PDF diz 4,6
+    LifetimeCaseA4(500.0, 0.044, 1.16, 1.16),  # Sem3 Figura 2
+    LifetimeCaseA4(500.0, 0.0022, 23.2, 23.2),  # Sem3 Figura 2
+    LifetimeCaseA4(400.0, 0.011, 0.77, 1.0),  # tabela do PDF: "~1 ano"
+    LifetimeCaseA4(600.0, 0.011, 23.7, 25.0),  # tabela do PDF: "~25 anos"
+)
+
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.5 do prompt da Semana 3: erro de posição 3D Cowell (J2 + arrasto) × SGP4
+#     para o TLE de teste (DOP853, rtol = 1e-10, atol = 1e-3, partindo do estado do SGP4 em t = 0).
+#     Critérios do card: ajustado ≤ 2 / 8 / 40 km; C_D·A/m ajustado em [5e-4, 5e-3]. Os números do
+#     arrasto padrão NÃO são critério: são o resultado a explicar (mínimo solar em dez/2019).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class CowellVsSgp4Row:
+    label: str
+    cd_a_m_m2_kg: float
+    altitude_model: str
+    err_24h_km: float
+    err_72h_km: float
+    err_7d_km: float
+
+
+COWELL_VS_SGP4_A5: tuple[CowellVsSgp4Row, ...] = (
+    CowellVsSgp4Row("Cowell J2 apenas", 0.0, "geodetic", 1.0, 8.7, 47.0),
+    CowellVsSgp4Row("J2 + arrasto padrão (esférica)", 0.0088, "spherical", 6.6, 59.6, 325.0),
+    CowellVsSgp4Row("J2 + arrasto padrão (geodésica)", 0.0088, "geodetic", 5.8, 52.4, 286.0),
+    CowellVsSgp4Row("J2 + arrasto ajustado (72 h)", 0.00163, "geodetic", 0.3, 2.7, 14.5),
+)
+
+
+@dataclass(frozen=True)
+class BallisticFitA5:
+    fitted_cd_a_m_m2_kg: float = 0.00163  # A/m ≈ 7,4e-4 com C_D = 2,2
+    fitted_range_m2_kg: tuple[float, float] = (5e-4, 5e-3)  # critério do card
+    max_err_km: tuple[float, float, float] = (2.0, 8.0, 40.0)  # 24 h / 72 h / 7 dias (critério)
+
+
+BALLISTIC_FIT_A5 = BallisticFitA5()
+
+# ===============================================================================================
+# Semana 3 — Apêndices A.2 e A.6 do prompt da Semana 3: estação de São Bento do Sapucaí
+#     (coordenadas APROXIMADAS, a confirmar), convenções topocêntricas, footprint (Sem4 §9.4) e a
+#     concordância do pipeline SGP4 → Rz(GMST) → geodésico/ENU com o Skyfield (3 dias, el > 0).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class StationA6:
+    lat_deg: float = -22.69
+    lon_deg: float = -45.73
+    alt_m: float = 900.0
+    ecef_m: tuple[float, float, float] = (4110248.7, -4216342.7, -2445429.5)  # A.2
+    # Skyfield 1.55 × satsim, TLE A.1, 3 dias a cada 30 s, só el > 0 (A.2):
+    skyfield_max_daz_deg: float = 0.026  # critério do card: < 0,05°
+    skyfield_max_del_deg: float = 0.009  # critério: < 0,05°
+    skyfield_max_drange_m: float = 74.0  # critério: < 150 m
+
+
+STATION_A6 = StationA6()
+
+
+@dataclass(frozen=True)
+class FootprintA6:
+    # λ = arccos(R⊕/(R⊕ + h)·cos ε) − ε (Sem4 §9.4)
+    # O prompt diz "h = 400 km, ε = 0° → 19,7°". Corrigido: arccos(6378,137/6778,137) = 19,782°
+    # (o prompt truncou; arredondado seria 19,8°).
+    h400_el0_deg: float = 19.782  # h = 400 km, ε = 0° (horizonte)
+    h420_el10_deg: float = 12.5  # h = 420 km, ε = 10° (critério de sanidade, não de precisão)
+
+
+FOOTPRINT_A6 = FootprintA6()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.2 do prompt da Semana 3: passagens da ISS (TLE de teste A.1) sobre São
+#     Bento do Sapucaí, el_min = 10°, 3 dias após a época. Instantes em SEGUNDOS DESDE A ÉPOCA DO
+#     TLE; UTC = época + t. Tolerâncias do card S3-05: AOS/TCA/LOS ±1 s; el. máx. ±0,05°;
+#     azimutes ±0,1°. Skyfield find_events: TCA ≤ 0,1 s, AOS/LOS ≤ 0,19 s, el. máx. ≤ 0,01°.
+#     Com el_min = 5°: 11 passagens (22 cruzamentos); as de 10° estão contidas nas de 5°.
+#
+#     Correção (passagem 9): o prompt traz AOS = 237528,4 s, incoerente com a própria linha —
+#     a coluna UTC (10:37:28) e a duração (132 s) dão AOS = 237538,4 s; confirmado pelo satsim
+#     (237538,7 s) e pelo Skyfield (237538,66 s). Erro de digitação (2 ↔ 3); ver
+#     test_passes_a2_internal_consistency em tests/test_golden_consistency.py.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class PassA2:
+    aos_s: float
+    tca_s: float
+    los_s: float
+    duration_s: float
+    max_el_deg: float
+    az_aos_deg: float
+    az_tca_deg: float
+    az_los_deg: float
+    aos_utc: str  # coluna UTC (AOS → LOS) do A.2, "dd/mm HH:MM:SS"
+    los_utc: str
+
+
+PASSES_A2: tuple[PassA2, ...] = (
+    PassA2(29258.7, 29457.1, 29657.6, 399, 54.72, 333.4, 51.9, 130.3,
+           "10/12 00:46:08", "10/12 00:52:46"),
+    PassA2(64638.7, 64833.5, 65025.6, 387, 46.88, 232.8, 307.7, 22.7,
+           "10/12 10:35:48", "10/12 10:42:14"),
+    PassA2(112786.2, 112954.4, 113124.0, 338, 24.27, 357.9, 54.3, 110.6,
+           "10/12 23:58:15", "11/12 00:03:53"),
+    PassA2(118618.4, 118755.1, 118892.7, 274, 16.69, 265.9, 223.6, 181.2,
+           "11/12 01:35:27", "11/12 01:40:02"),
+    PassA2(148126.5, 148328.2, 148526.8, 400, 71.54, 215.4, 130.3, 45.3,
+           "11/12 09:47:15", "11/12 09:53:56"),
+    PassA2(196377.3, 196454.1, 196531.0, 154, 11.70, 34.0, 56.4, 78.8,
+           "11/12 23:11:26", "11/12 23:14:00"),
+    PassA2(202056.8, 202241.1, 202427.1, 370, 31.53, 291.9, 226.7, 161.6,
+           "12/12 00:46:06", "12/12 00:52:16"),
+    PassA2(231634.9, 231818.7, 232000.0, 365, 31.40, 198.4, 133.3, 68.2,
+           "12/12 08:59:04", "12/12 09:05:09"),
+    PassA2(237538.4, 237604.9, 237670.9, 132, 11.26, 284.1, 303.5, 323.0,
+           "12/12 10:37:28", "12/12 10:39:40"),  # AOS corrigido (prompt: 237528,4)
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class PassesA2Meta:
+    el_min_deg: float = 10.0
+    window_days: float = 3.0
+    n_passes_10deg: int = 9
+    n_passes_5deg: int = 11
+    skyfield_max_dt_s: float = 0.19  # AOS/LOS (TCA ≤ 0,1 s); critério do card: < 1 s
+    tol_time_s: float = 1.0
+    tol_el_deg: float = 0.05
+    tol_az_deg: float = 0.1
+
+
+PASSES_A2_META = PassesA2Meta()

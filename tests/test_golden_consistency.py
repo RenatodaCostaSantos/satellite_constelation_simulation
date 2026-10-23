@@ -5,7 +5,7 @@ indica erro de transcrição em tests/golden/reference_values.py (ou no próprio
 """
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from golden.reference_values import (
@@ -14,7 +14,9 @@ from golden.reference_values import (
     CONSTELLATION_TABLE4,
     DESIGN_ORBIT,
     GRID_CHECK,
+    ISS_TLE_A1,
     J2_SECULAR_RATES,
+    PASSES_A2,
     SSO_CIRCULAR_TABLE1,
     SSO_REPEAT_TABLE3,
 )
@@ -175,3 +177,19 @@ def test_constellation_phasing() -> None:
     for k, sat in enumerate(CONSTELLATION_TABLE4):
         assert sat.psi0_deg == pytest.approx((-60.0 * k) % 360.0)
         assert sat.node_delay_s == pytest.approx(k * D.tnod_s / n_sats, abs=0.06)
+
+
+def test_passes_a2_internal_consistency() -> None:
+    """A.2 (prompt da Semana 3): segundos desde a época × coluna UTC × duração, linha a linha.
+
+    O TLE de teste tem época 2019-12-09 16:38:29,36 UTC. Este teste pegou o AOS da passagem 9
+    (237528,4 s no prompt; a coluna UTC e a duração dão 237538,4 s), corrigido no golden.
+    """
+    epoch = datetime(2019, 12, 9, tzinfo=UTC) + timedelta(days=0.69339541)  # dia 343,69339541
+    assert abs((epoch - datetime.fromisoformat(ISS_TLE_A1.epoch_utc_iso)).total_seconds()) < 1
+    for row in PASSES_A2:
+        for t_s, utc in ((row.aos_s, row.aos_utc), (row.los_s, row.los_utc)):
+            printed = datetime.strptime(f"{utc}/2019", "%d/%m %H:%M:%S/%Y").replace(tzinfo=UTC)
+            assert abs((epoch + timedelta(seconds=t_s) - printed).total_seconds()) < 1.0
+        assert row.los_s - row.aos_s == pytest.approx(row.duration_s, abs=1.0)
+        assert row.aos_s < row.tca_s < row.los_s

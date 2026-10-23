@@ -5,6 +5,11 @@
  * no tempo entre amostras e projeta para desenhar. Nenhuma equação orbital aqui.
  * Uma única variável, simTime (segundos desde meta.epoch_utc), comanda o globo 3D e o mapa 2D.
  * Qualquer número de satélites é lido do JSON (R7).
+ *
+ * S3-06 (campos opcionais da cena): estação com az/el/distância por satélite (``looks``),
+ * passagens, círculo de visibilidade (``footprint_deg``) e o TLE da ISS real (``meta.tle``).
+ * O círculo do footprint é desenhado com geometria de esfera (destino a uma distância angular
+ * dada), não com equações orbitais: o raio vem pronto do Python.
  */
 (function () {
   "use strict";
@@ -20,6 +25,12 @@
   var STRIDE_3D_AHEAD = 3; // órbita prevista no globo: 1 amostra a cada 3 passos
   var STRIDE_2D = 2; // traços no mapa: 1 amostra a cada 2 passos
   var TEXTURE = window.SATSIM_TEXTURE || "textures/earth_2048.jpg";
+  var D2R = Math.PI / 180;
+  var BRT_OFFSET_MS = -3 * 3600 * 1000; // horário de Brasília: UTC−03:00 fixo (sem horário de verão)
+  var TLE_STALE_DAYS = 3; // idade a partir da qual a faixa do TLE fica em destaque
+  var FOOTPRINT_POINTS = 96; // vértices do círculo de visibilidade no mapa
+  var LOS_POINTS = 24; // vértices da linha estação → satélite no globo
+  var VIS_COLORS = { up: "#3ddc84", low: "#ffd166", down: "#8a97ad" };
 
   var scene = window.SATSIM_SCENE;
   if (!scene || typeof Globe === "undefined") {
@@ -37,11 +48,45 @@
   var DURATION = scene.meta.duration_s;
   var EPOCH_MS = Date.parse(scene.meta.epoch_utc);
   var sats = scene.satellites.map(function (s) {
-    return { id: s.id, name: s.name, color: s.color, lla: s.lla, visible: true, now: null };
+    return {
+      id: s.id,
+      name: s.name,
+      color: s.color,
+      lla: s.lla,
+      footprint: s.footprint_deg || null, // S3-06 (opcional)
+      visible: true,
+      now: null,
+    };
   });
   var stations = scene.stations;
   // Cenas da S2-07 em diante trazem meta.geodesy = "WGS84"; as anteriores, subponto esférico.
   var GEODETIC = scene.meta.geodesy === "WGS84";
+
+  // --- S3-06: estação, passagens e TLE (todos opcionais; cenas antigas não os têm) ------------
+  var EL_MIN = typeof scene.meta.el_min_deg === "number" ? scene.meta.el_min_deg : null;
+  var STATION = stations.length ? stations[0] : null;
+  var TLE = scene.meta.tle || null;
+  var PASSES = (scene.passes || []).map(function (p) {
+    return {
+      sat_id: p.sat_id,
+      station_id: p.station_id,
+      aos: (Date.parse(p.aos_utc) - EPOCH_MS) / 1000, // segundos desde o início da cena
+      tca: (Date.parse(p.tca_utc) - EPOCH_MS) / 1000,
+      los: (Date.parse(p.los_utc) - EPOCH_MS) / 1000,
+      aosMs: Date.parse(p.aos_utc),
+      maxEl: p.max_el_deg,
+      duration: p.duration_s,
+    };
+  });
+  sats.forEach(function (s) {
+    s.looks = STATION && STATION.looks && STATION.looks[s.id] ? STATION.looks[s.id] : null;
+    s.passes = PASSES.filter(function (p) {
+      return p.sat_id === s.id && STATION && p.station_id === STATION.id;
+    });
+  });
+  var HAS_STATION_VIEW = EL_MIN !== null && sats.some(function (s) {
+    return s.looks;
+  });
 
   var state = {
     simTime: 0,
@@ -71,6 +116,42 @@
     if (dlon > 180) dlon -= 360;
     else if (dlon < -180) dlon += 360;
     return [a[0] + u * (b[0] - a[0]), wrapLon(a[1] + u * dlon), a[2] + u * (b[2] - a[2])];
+  }
+
+  // Interpolação linear de um array amostrado a cada STEP (footprint, el, distância).
+  function sampleArr(arr, t) {
+    var n = arr.length;
+    var f = t / STEP;
+    if (f <= 0) return arr[0];
+    if (f >= n - 1) return arr[n - 1];
+    var k = Math.floor(f);
+    return arr[k] + (f - k) * (arr[k + 1] - arr[k]);
+  }
+
+  // Idem para azimute em [0°, 360°): interpola pelo caminho curto (359° → 1° passa por 0°).
+  function sampleAz(arr, t) {
+    var n = arr.length;
+    var f = t / STEP;
+    if (f <= 0) return arr[0];
+    if (f >= n - 1) return arr[n - 1];
+    var k = Math.floor(f);
+    var d = arr[k + 1] - arr[k];
+    if (d > 180) d -= 360;
+    else if (d < -180) d += 360;
+    var az = arr[k] + (f - k) * d;
+    return az < 0 ? az + 360 : az >= 360 ? az - 360 : az;
+  }
+
+  // O satélite visto da estação no instante t, e o estado de visibilidade.
+  function lookAt(s, t) {
+    if (!s.looks) return null;
+    var el = sampleArr(s.looks.el_deg, t);
+    return {
+      az: sampleAz(s.looks.az_deg, t),
+      el: el,
+      range: sampleArr(s.looks.range_km, t),
+      state: el >= EL_MIN ? "up" : el >= 0 ? "low" : "down",
+    };
   }
 
   // Pontos entre t0 e t1: extremos interpolados + amostras intermediárias (uma a cada
@@ -106,6 +187,26 @@
 
   function fmtUtc(ms) {
     return new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  }
+
+  function fmtNum(v, digits) {
+    return v.toFixed(digits).replace(".", ",");
+  }
+
+  // "dd/mm HH:MM:SS" de um instante (ms) deslocado por offsetMs (0 = UTC, BRT_OFFSET_MS = BRT).
+  function fmtDayTime(ms, offsetMs) {
+    var iso = new Date(ms + offsetMs).toISOString();
+    return iso.slice(8, 10) + "/" + iso.slice(5, 7) + " " + iso.slice(11, 19);
+  }
+
+  function fmtDuration(seconds) {
+    var s = Math.max(0, Math.round(seconds));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    if (h > 0) return h + " h " + (m < 10 ? "0" : "") + m + " min";
+    if (m > 0) return m + " min " + (sec < 10 ? "0" : "") + sec + " s";
+    return sec + " s";
   }
 
   function fmtLat(v) {
@@ -257,8 +358,45 @@
         gap: 0.008,
       });
     });
+    // S3-06: linha de visada estação → satélite selecionado, colorida pelo estado; só quando o
+    // satélite está acima do horizonte (abaixo dele a reta atravessaria a Terra).
+    var sel = state.selected;
+    if (STATION && sel && sel.visible && sel.looks) {
+      var look = lookAt(sel, t);
+      if (look.state !== "down") {
+        addPath({
+          pts: chordPoints(STATION, sel.now),
+          colors: VIS_COLORS[look.state],
+          stroke: look.state === "up" ? 1.6 : 0.9,
+          dash: 1,
+          gap: 0,
+        });
+      }
+    }
     globe.htmlElementsData(markers.concat(stationMarkers));
     globe.pathsData(paths);
+  }
+
+  // Pontos da reta (corda) entre a estação e o satélite, em (lat, lon, alt_km) para o globe.gl.
+  // Geometria de desenho no globo esférico do viewer: interpola em 3D e volta para lat/lon/alt.
+  function chordPoints(st, satNow) {
+    function xyz(lat, lon, r) {
+      var la = lat * D2R;
+      var lo = lon * D2R;
+      return [r * Math.cos(la) * Math.cos(lo), r * Math.cos(la) * Math.sin(lo), r * Math.sin(la)];
+    }
+    var a = xyz(st.lat_deg, st.lon_deg, 1 + st.alt_m / 1000 / EARTH_RADIUS_KM);
+    var b = xyz(satNow[0], satNow[1], 1 + satNow[2] / EARTH_RADIUS_KM);
+    var pts = [];
+    for (var i = 0; i <= LOS_POINTS; i++) {
+      var u = i / LOS_POINTS;
+      var x = a[0] + u * (b[0] - a[0]);
+      var y = a[1] + u * (b[1] - a[1]);
+      var z = a[2] + u * (b[2] - a[2]);
+      var r = Math.sqrt(x * x + y * y + z * z);
+      pts.push([Math.asin(z / r) / D2R, Math.atan2(y, x) / D2R, Math.max(0, (r - 1) * EARTH_RADIUS_KM)]);
+    }
+    return pts;
   }
 
   // --- mapa 2D (equiretangular, mesma textura) ------------------------------------------------
@@ -371,6 +509,62 @@
     ctx.fillText(text, tx, y);
   }
 
+  // S3-06: círculo de visibilidade (footprint) em torno do subponto. Cada vértice é o ponto à
+  // distância angular λ do centro na direção θ (geometria da esfera). As longitudes são
+  // desembrulhadas em torno do centro e o polígono é desenhado três vezes (deslocado em −360°,
+  // 0 e +360°): o canvas recorta o que sai do mapa, e o círculo que cruza o antimeridiano
+  // aparece inteiro, metade em cada borda. Se o círculo contém um polo, o contorno percorre todas
+  // as longitudes e o preenchimento fecha pela borda do polo.
+  function footprintRing(lat0, lon0, lamDeg) {
+    var p1 = lat0 * D2R;
+    var d = lamDeg * D2R;
+    var pts = [];
+    for (var k = 0; k <= FOOTPRINT_POINTS; k++) {
+      var th = (2 * Math.PI * k) / FOOTPRINT_POINTS;
+      var p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(th));
+      var dl = Math.atan2(
+        Math.sin(th) * Math.sin(d) * Math.cos(p1),
+        Math.cos(d) - Math.sin(p1) * Math.sin(p2)
+      );
+      var lon = lon0 + dl / D2R;
+      if (k > 0) {
+        var prev = pts[k - 1][1];
+        while (lon - prev > 180) lon -= 360;
+        while (lon - prev < -180) lon += 360;
+      }
+      pts.push([p2 / D2R, lon]);
+    }
+    return pts;
+  }
+
+  function drawFootprint(s, t, w, h, dpr) {
+    var lam = sampleArr(s.footprint, t);
+    var ring = footprintRing(s.now[0], s.now[1], lam);
+    var polar = Math.abs(s.now[0]) + lam > 90;
+    var poleLat = s.now[0] >= 0 ? 90 : -90;
+    var strong = s === state.selected;
+    [-360, 0, 360].forEach(function (shift) {
+      ctx.beginPath();
+      ring.forEach(function (p, i) {
+        var x = mapX(p[1] + shift, w);
+        var y = mapY(p[0], h);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = rgba(s.color, strong ? 0.85 : 0.45);
+      ctx.lineWidth = (strong ? 1.4 : 1) * dpr;
+      ctx.stroke();
+      if (polar) {
+        var last = ring[ring.length - 1];
+        ctx.lineTo(mapX(last[1] + shift, w), mapY(poleLat, h));
+        ctx.lineTo(mapX(ring[0][1] + shift, w), mapY(poleLat, h));
+      }
+      ctx.closePath();
+      ctx.fillStyle = rgba(s.color, strong ? 0.12 : 0.06);
+      ctx.fill();
+    });
+  }
+
   function drawMap(t, wallMs) {
     resizeMap();
     var w = mapCanvas.width;
@@ -399,6 +593,9 @@
     });
 
     var placedLabels = [];
+    sats.forEach(function (s) {
+      if (s.visible && s.footprint) drawFootprint(s, t, w, h, dpr);
+    });
     sats.forEach(function (s) {
       if (!s.visible) return;
       ctx.lineWidth = 2 * dpr;
@@ -482,6 +679,7 @@
     sats.forEach(function (o) {
       o.legendEl.classList.toggle("selected", o === s);
     });
+    buildPassList();
     render();
   }
 
@@ -493,6 +691,148 @@
     info.lat.textContent = Math.abs(s.now[0]).toFixed(3) + "° " + (s.now[0] >= 0 ? "N" : "S");
     info.lon.textContent = Math.abs(s.now[1]).toFixed(3) + "° " + (s.now[1] >= 0 ? "L" : "O");
     info.alt.textContent = s.now[2].toFixed(2) + " km";
+  }
+
+  // --- S3-06: painel "satélite × estação", lista de passagens e faixa do TLE ------------------
+  var stationPanel = document.getElementById("station-panel");
+  var stEls = {
+    title: document.getElementById("station-title"),
+    state: document.getElementById("st-state"),
+    el: document.getElementById("st-el"),
+    az: document.getElementById("st-az"),
+    range: document.getElementById("st-range"),
+    next: document.getElementById("st-next"),
+    passesTitle: document.getElementById("passes-title"),
+    passes: document.getElementById("passes"),
+    marks: document.getElementById("tl-marks"),
+    banner: document.getElementById("tle-banner"),
+  };
+  var STATE_TEXT = {
+    up: function () {
+      return "visível · acima de " + fmtNum(EL_MIN, 0) + "°";
+    },
+    low: function () {
+      return "baixo · entre 0° e " + fmtNum(EL_MIN, 0) + "°";
+    },
+    down: function () {
+      return "abaixo do horizonte";
+    },
+  };
+  if (HAS_STATION_VIEW) {
+    stationPanel.hidden = false;
+    Array.prototype.forEach.call(document.querySelectorAll(".k-optional"), function (el) {
+      el.hidden = false;
+    });
+  }
+
+  // Lista de passagens do satélite selecionado sobre a estação; clicar leva o relógio a AOS − 60 s.
+  function buildPassList() {
+    if (!HAS_STATION_VIEW) return;
+    var s = state.selected;
+    stEls.title.textContent = (s ? s.name : "—") + " × " + STATION.name;
+    stEls.passes.innerHTML = "";
+    stEls.marks.innerHTML = "";
+    var list = s ? s.passes : [];
+    stEls.passesTitle.textContent =
+      list.length +
+      " passage" +
+      (list.length === 1 ? "m" : "ns") +
+      " acima de " +
+      fmtNum(EL_MIN, 0) +
+      "° na janela · clique para ir ao AOS − 60 s · horário UTC e de Brasília (BRT)";
+    list.forEach(function (p, i) {
+      var li = document.createElement("li");
+      li.innerHTML =
+        '<span class="n"></span><span class="when"></span><span class="el"></span>' +
+        '<span class="dur"></span>';
+      li.querySelector(".n").textContent = i + 1;
+      li.querySelector(".when").textContent =
+        fmtDayTime(p.aosMs, 0) + " UTC · " + fmtDayTime(p.aosMs, BRT_OFFSET_MS).slice(6, 11) + " BRT";
+      li.querySelector(".el").textContent = "máx " + fmtNum(p.maxEl, 1) + "°";
+      li.querySelector(".dur").textContent = fmtNum(p.duration / 60, 1) + " min";
+      li.title = "AOS → LOS: " + fmtDayTime(p.aosMs, 0) + " → " +
+        fmtDayTime(p.aosMs + p.duration * 1000, 0) + " UTC";
+      li.addEventListener("click", function () {
+        state.simTime = Math.max(0, Math.min(DURATION, p.aos - 60));
+        jumpRender();
+      });
+      p.li = li;
+      stEls.passes.appendChild(li);
+      var mark = document.createElement("span");
+      mark.style.left = (100 * Math.max(0, p.aos)) / DURATION + "%";
+      mark.style.width = (100 * (Math.min(DURATION, p.los) - Math.max(0, p.aos))) / DURATION + "%";
+      mark.title = "Passagem " + (i + 1) + " · máx " + fmtNum(p.maxEl, 1) + "°";
+      stEls.marks.appendChild(mark);
+    });
+  }
+
+  function updateStationPanel(t) {
+    if (!HAS_STATION_VIEW) return;
+    var s = state.selected;
+    var look = s ? lookAt(s, t) : null;
+    if (!look) {
+      stEls.state.className = "st-state down";
+      stEls.state.textContent = "sem dados de visibilidade";
+      return;
+    }
+    stEls.state.className = "st-state " + look.state;
+    stEls.state.textContent = STATE_TEXT[look.state]();
+    stEls.el.textContent = fmtNum(look.el, 1) + "°";
+    stEls.az.textContent = fmtNum(look.az, 1) + "°";
+    stEls.range.textContent = Math.round(look.range) + " km";
+    var current = null;
+    var next = null;
+    s.passes.forEach(function (p) {
+      if (p.aos <= t && t <= p.los) current = p;
+      else if (p.aos > t && (!next || p.aos < next.aos)) next = p;
+      if (p.li) {
+        p.li.classList.toggle("now", p.aos <= t && t <= p.los);
+        p.li.classList.toggle("past", p.los < t);
+      }
+    });
+    s.passes.forEach(function (p) {
+      if (p.li) p.li.classList.toggle("next", p === next && !current);
+    });
+    if (current) {
+      stEls.next.innerHTML = "Passagem em andamento · termina em <b></b>";
+      stEls.next.querySelector("b").textContent = fmtDuration(current.los - t);
+    } else if (next) {
+      stEls.next.innerHTML = "Próxima passagem em <b></b> · ";
+      stEls.next.querySelector("b").textContent = fmtDuration(next.aos - t);
+      stEls.next.appendChild(
+        document.createTextNode(
+          "AOS " + fmtDayTime(next.aosMs, BRT_OFFSET_MS).slice(6, 11) + " BRT, máx " +
+            fmtNum(next.maxEl, 1) + "°"
+        )
+      );
+    } else {
+      stEls.next.textContent = "Sem mais passagens nesta janela.";
+    }
+  }
+
+  var SOURCE_TEXT = {
+    network: "CelesTrak (rede)",
+    cache: "cache local",
+    bundled: "TLE embarcado no pacote",
+  };
+  function updateTleBanner(t) {
+    if (!TLE) return;
+    var age = TLE.age_days_at_start + t / 86400;
+    var stale = age > TLE_STALE_DAYS;
+    stEls.banner.hidden = false;
+    stEls.banner.classList.toggle("stale", stale);
+    stEls.banner.innerHTML =
+      "<strong></strong> · época do TLE <strong></strong> · idade <strong></strong> · fonte: " +
+      "<span></span><span></span>";
+    var parts = stEls.banner.querySelectorAll("strong");
+    parts[0].textContent = (TLE.name || "satélite " + TLE.norad_id) + " real (TLE/SGP4)";
+    parts[1].textContent = fmtDayTime(Date.parse(TLE.epoch_utc), 0) + " UTC";
+    parts[2].textContent = fmtNum(age, 1) + " dias";
+    var spans = stEls.banner.querySelectorAll("span");
+    spans[0].textContent = SOURCE_TEXT[TLE.source] || TLE.source || "—";
+    spans[1].textContent = stale
+      ? " · ⚠ TLE com mais de " + TLE_STALE_DAYS + " dias: a posição real pode diferir de dezenas de km"
+      : "";
   }
 
   var clockEl = document.getElementById("clock");
@@ -539,7 +879,7 @@
   });
   document.getElementById("btn-start").addEventListener("click", function () {
     state.simTime = 0;
-    render();
+    jumpRender();
   });
   timeline.addEventListener("pointerdown", function () {
     state.dragging = true;
@@ -549,7 +889,7 @@
   });
   timeline.addEventListener("input", function () {
     state.simTime = Number(timeline.value);
-    render();
+    jumpRender();
   });
   window.addEventListener("keydown", function (e) {
     if (e.code === "Space" && e.target === document.body) {
@@ -560,6 +900,13 @@
 
   // --- laço de animação: uma única fonte de tempo (simTime) -----------------------------------
   var lastReadout = 0;
+
+  // Depois de um salto do relógio (passagem, linha do tempo, início), os painéis de texto, que
+  // normalmente atualizam a cada 100 ms, são refeitos já neste quadro.
+  function jumpRender() {
+    lastReadout = 0;
+    render();
+  }
 
   function render(wallMs) {
     wallMs = wallMs || performance.now();
@@ -578,6 +925,8 @@
           fmtLat(s.now[0]) + "  " + fmtLon(s.now[1]) + "  " + s.now[2].toFixed(1) + " km";
       });
       updateInfo();
+      updateStationPanel(t);
+      updateTleBanner(t);
     }
   }
 
@@ -590,6 +939,7 @@
   });
   resizeGlobe();
   if (state.selected) state.selected.legendEl.classList.add("selected");
+  buildPassList();
 
   var lastWall = null;
   function frame(wallMs) {

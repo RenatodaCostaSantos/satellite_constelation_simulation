@@ -7,6 +7,8 @@
   --muted: #8a97ad;
   --accent: #38bdf8;
   --station: #ff4d8d;
+  --vis-up: #3ddc84;
+  --vis-low: #ffd166;
   --gap: 10px;
   font-family: "Inter", "Segoe UI", "DejaVu Sans", Roboto, Helvetica, Arial, sans-serif;
 }
@@ -164,6 +166,83 @@ body {
 }
 .info-note { margin-top: 4px; font-size: 11px; color: #5d6a80; }
 
+/* --- faixa do TLE (S3-06) ----------------------------------------------------------------- */
+.tle-banner {
+  padding: 6px 16px;
+  font-size: 12.5px;
+  color: var(--muted);
+  background: #08101d;
+  border-bottom: 1px solid var(--panel-border);
+}
+.tle-banner strong { color: var(--ink); font-weight: 600; }
+.tle-banner.stale {
+  color: #ffe2a8;
+  background: linear-gradient(90deg, #3a2a05, #1d1606);
+  border-bottom-color: #8a6410;
+}
+.tle-banner.stale strong { color: #ffd166; }
+
+/* --- painel da estação e lista de passagens (S3-06) ---------------------------------------- */
+.station-panel { padding: 30px 14px 10px; flex: none; }
+.st-status { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.st-state {
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.st-state.up { color: var(--vis-up); background: rgba(61, 220, 132, 0.1); }
+.st-state.low { color: var(--vis-low); background: rgba(255, 209, 102, 0.1); }
+.st-state.down { color: var(--muted); background: rgba(138, 151, 173, 0.08); }
+.st-grid {
+  display: grid;
+  grid-template-columns: auto auto auto auto auto auto;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 13px;
+}
+.st-grid dt { color: var(--muted); }
+.st-grid dd {
+  margin: 0 8px 0 0;
+  font-family: "JetBrains Mono", "DejaVu Sans Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.st-next { margin-top: 8px; font-size: 13px; }
+.st-next b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.passes-title { margin-top: 8px; font-size: 11px; color: var(--muted); }
+.passes {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 150px;
+  overflow: auto;
+  display: grid;
+  gap: 2px;
+}
+.passes li {
+  display: grid;
+  grid-template-columns: 1.6em 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-family: "JetBrains Mono", "DejaVu Sans Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.passes li:hover { background: #142238; }
+.passes li .n { color: var(--muted); }
+.passes li .el { color: var(--vis-up); }
+.passes li .dur { color: var(--muted); }
+.passes li.now { background: rgba(61, 220, 132, 0.14); outline: 1px solid rgba(61, 220, 132, 0.5); }
+.passes li.next { outline: 1px solid rgba(56, 189, 248, 0.5); }
+.passes li.past { opacity: 0.55; }
+.k-footprint { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--ink); }
+.k-los { width: 22px; border-top: 2px solid var(--vis-up); }
+
 /* --- marcadores HTML no globo -------------------------------------------------------------- */
 .sat-marker { pointer-events: none; transition: opacity 0.25s; transform: translate(-50%, -50%); }
 .sat-marker .dot {
@@ -204,6 +283,17 @@ body {
   background: #070b14;
 }
 .timeline input { flex: 1; accent-color: var(--accent); cursor: pointer; }
+.tl-track { position: relative; flex: 1; display: flex; align-items: center; }
+.tl-track input { width: 100%; position: relative; z-index: 1; margin: 0; }
+.tl-marks { position: absolute; left: 8px; right: 8px; top: 50%; height: 14px; transform: translateY(-50%); }
+.tl-marks span {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 2px;
+  background: rgba(61, 220, 132, 0.55);
+}
 .tl-label {
   font-family: "JetBrains Mono", "DejaVu Sans Mono", Menlo, monospace;
   font-size: 11.5px;

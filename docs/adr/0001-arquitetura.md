@@ -69,6 +69,11 @@ satsim/                          (raiz do repositório)
   `t` = segundos (float) desde a `epoch` do propagador. Datas Julianas via `astrotime`.
 - **Quadros**: ECI = equatorial inercial (x → equinócio vernal, z → eixo polar);
   ECEF = Rz(θG)·ECI, com θG = GMST. ENU local no observador.
+- **TEME ≡ ECI do projeto (S3-02)**: o "ECI" do projeto é o equador verdadeiro e o equinócio
+  médio *da data*, sem precessão/nutação, que é exatamente o quadro TEME em que o SGP4 devolve o
+  estado. Não há conversão TEME → ECI: o `SGP4Propagator` entrega o estado já no quadro do
+  projeto, e a passagem ao ECEF é Rz(GMST), como para os outros propagadores (diferença para o
+  ITRS do Skyfield ≤ 86 m em 3 dias, por UT1 ≈ UTC e ausência de movimento polar).
 - **Shapes**: tempos `(N,)`; posições e velocidades `(N, 3)`; constelação `(P, N, 3)`.
   Entradas escalares são promovidas a `(1,)`.
 
@@ -98,6 +103,11 @@ class Propagator(ABC):
     def propagate(self, t: ArrayLike) -> tuple[NDArray, NDArray]:
         """t: segundos desde `epoch`, shape () ou (N,).
         Retorna (r, v) em ECI, SI, sempre com shape (N, 3)."""
+
+    def propagate_utc(self, epoch: datetime, t: ArrayLike) -> tuple[NDArray, NDArray]:
+        """S3-02 (não abstrato): estado em `epoch + t`, para qualquer `epoch`. Converte para
+        segundos desde `self.epoch` e chama `propagate`. O Cowell exige t ≥ 0 (ValueError antes
+        da sua época); Kepler, MeanJ2 e SGP4 aceitam t negativo."""
 
 
 @dataclass(frozen=True)
@@ -183,23 +193,34 @@ todas as etapas sem laços explícitos.
 ### Contrato de dados da cena (JSON)
 
 Python calcula; o viewer só desenha. Gerado por `satsim.app.scene_export.build_scene` (S1-08;
-subponto geodésico WGS84 desde a S2-07). Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell).
+subponto geodésico WGS84 desde a S2-07; estação, footprint, passagens e TLE desde a S3-06).
+Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua época.
 
 ```jsonc
 {
   "meta": {"schema_version": 1,
            "epoch_utc": "2026-09-29T12:00:00Z", "duration_s": 21600, "step_s": 10,
            "frame": "ECI simplificado (x -> equinócio vernal)",
-           "geodesy": "WGS84"},                   // S2-07: lla geodésico (campo novo)
+           "geodesy": "WGS84",                    // S2-07: lla geodésico (campo novo)
+           "el_min_deg": 10,                      // S3-06 (opcional): elevação mínima
+           "tle": {"name": "ISS (ZARYA)", "norad_id": 25544,          // S3-06 (opcional)
+                   "epoch_utc": "2026-10-22T23:36:04.211Z",
+                   "age_days_at_start": 0.69, "source": "network"}},  // network|cache|bundled
   "earth": {"gmst0_rad": 1.234, "gmst_rate_rad_s": 7.2921158553e-5},
   "satellites": [
     {"id": "sso1", "name": "SSO-1", "color": "#00e5ff",
      "eci_km": [[x, y, z], ...],                  // N pontos, um por passo
-     "lla":    [[lat_deg, lon_deg, alt_km], ...]} // subponto geodésico WGS84 (S2-07)
+     "lla":    [[lat_deg, lon_deg, alt_km], ...], // subponto geodésico WGS84 (S2-07)
+     "footprint_deg": [12.5, ...]}                // S3-06 (opcional): raio do footprint
   ],
   "stations": [{"id": "sbs", "name": "São Bento do Sapucaí",
-                "lat_deg": -22.69, "lon_deg": -45.73, "alt_m": 900}],
-  "passes": []                                    // preenchido a partir da Semana 3
+                "lat_deg": -22.69, "lon_deg": -45.73, "alt_m": 900,
+                "looks": {"sso1": {"az_deg": [...], "el_deg": [...],   // S3-06 (opcional):
+                                   "range_km": [...]}}}],            // por satélite e amostra
+  "passes": [{"sat_id": "iss", "station_id": "sbs",                    // S3-06
+              "aos_utc": "2026-10-24T00:10:18.123Z", "tca_utc": "...", "los_utc": "...",
+              "max_el_deg": 18.2, "az_aos_deg": 236.1, "az_tca_deg": 180.3,
+              "az_los_deg": 124.6, "duration_s": 287.4}]
 }
 ```
 
@@ -213,6 +234,20 @@ subponto geodésico WGS84 desde a S2-07). Aceita qualquer `Propagator` (Kepler, 
   altitude elipsoidal. Novo campo `meta.geodesy = "WGS84"`; sem ele (cenas da Semana 1) o
   subponto é esférico (lat = arcsin(z/r), alt = r − R⊕). A diferença chega a ~0,2° em latitude e
   ~21 km em altitude (polos). O viewer só muda o texto que exibe.
+- **S3-06 (compatível, `schema_version` continua 1; todos os campos novos são opcionais e só
+  aparecem quando `build_scene` recebe `el_min_deg`):**
+  - `satellites[i].footprint_deg[]`: raio angular geocêntrico do círculo de visibilidade a
+    `el_min`, por amostra, λ = arccos(R⊕/(R⊕ + h)·cos ε) − ε (`observer.footprint_half_angle`,
+    Sem4 §9.4), com h = a altitude publicada em `lla`. O viewer desenha o círculo com geometria
+    de esfera (destino a distância angular λ), não com equações orbitais;
+  - `stations[j].looks[sat_id] = {az_deg[], el_deg[], range_km[]}`: o satélite visto da estação
+    (`GroundStation.look_angles` sobre o mesmo r_ECEF do subponto), por amostra;
+  - `passes[]`: passagens acima de `el_min` (`passes.find_passes`, as mesmas de
+    `scripts/list_passes.py`), instantes ISO 8601 UTC arredondados ao milissegundo;
+  - `meta.el_min_deg` e `meta.tle` (época, idade no início da cena e fonte do TLE);
+  - `meta.epoch_utc` ganha milissegundos quando a época não é um segundo inteiro (ex.: a época
+    de um TLE); a época da cena é arredondada ao milissegundo antes da amostragem, para que
+    amostras, passagens e o relógio do viewer partam do mesmo instante.
 
 ### Decisão de stack
 
@@ -252,7 +287,9 @@ usamos scripts clássicos (UMD) e embutimos textura (data URI) e cena (`<script>
 - **ECI simplificado**: sem precessão nem nutação; o "ECI" é o equatorial da data, aproximado.
 - **UT1 ≈ UTC**: erro de até 0,9 s, ≈ 0,4 km no equador.
 - **Segundos intercalares** são ignorados pelo `datetime`.
-- **TEME ≠ ECI**: o SGP4 devolve estados em TEME; a conversão será tratada na Semana 3 (S3-02).
+- **TEME ≡ ECI** (S3-02): o SGP4 devolve estados em TEME, que é o próprio ECI do projeto
+  (equinócio médio da data, sem precessão/nutação); ver Convenções. O SGP4 usa internamente as
+  constantes WGS72 (o TLE é ajustado com elas); o resto do projeto usa WGS84 / Sem4.
 - **Elementos médios de primeira ordem em J2**: bom para projeto de órbita, mas não serve para a
   ISS por mais de poucos dias sem TLE fresco.
 - **Taxa de GMST vs. `OMEGA_EARTH`**: diferem levemente (≈ 5 m/dia no equador); a conversão

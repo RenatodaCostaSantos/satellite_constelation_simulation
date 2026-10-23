@@ -77,6 +77,10 @@
     <li><code>src/satsim/frames.py</code> e <code>geodesy.py</code> — onde o satélite está sobre a Terra (ECI → ECEF → WGS84)</li>
     <li><code>src/satsim/groundtrack.py</code> — o traço no solo: subponto, antimeridiano e nós ascendentes</li>
     <li><code>scripts/compare_propagators.py</code> — médio × osculador na prática (relatório da Semana 2)</li>
+    <li><code>src/satsim/tle.py</code> — o TLE da ISS: o que é, onde fica guardado e como vira condição inicial (inclui WGS72 × WGS84)</li>
+    <li><code>src/satsim/propagators/sgp4_ref.py</code> — o SGP4 como propagador e oráculo (inclui determinação de órbita e fontes de posição online)</li>
+    <li><code>forces/atmosphere.py</code>, <code>forces/drag.py</code>, <code>decay.py</code> — arrasto no Cowell e por que o arrasto padrão piora o resultado (o “V” do coeficiente balístico)</li>
+    <li><code>src/satsim/observer.py</code> — sistemas de coordenadas (ECI, ECEF, geodésico, geocêntrico, ENU), transformações e sutilezas (normal ao elipsoide × reta radial)</li>
   </ol>
 </nav>
 
@@ -1171,6 +1175,675 @@ latitude. Começando no equador (u = 0°), o semieixo osculador está ≈ 6 km <
 ISS-like do relatório usa ω0 = 0° (média 6,0 km abaixo do nominal) e a SSO, com ω0 = 90°, fica 9,5 km
 acima. Os mesmos números nominais, em pontos diferentes da órbita, descrevem órbitas médias
 diferentes.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="tle-py">
+<h2>8. tle.py — o TLE da ISS e de onde vêm as condições iniciais</h2>
+<div class="file">src/satsim/tle.py · scripts/fetch_tle.py · card S3-01</div>
+
+<h3>Para que serve o script</h3>
+<p>A partir da Semana 3 o simulador mostra a <strong>ISS real</strong>, não mais uma órbita
+“tipo ISS” inventada. Para isso ele precisa saber qual é a órbita da ISS hoje, e essa informação é
+publicada pelo NORAD num formato chamado TLE. O <code>tle.py</code> resolve <em>de onde vem</em>
+esse TLE de forma confiável: baixa da CelesTrak, guarda uma cópia local, valida o formato, registra a
+idade e funciona mesmo sem internet. Ele não calcula nenhuma posição; isso é papel do SGP4 (card
+S3-02).</p>
+
+<h3>O que é um TLE</h3>
+<p>TLE significa <strong>Two-Line Element set</strong>, “conjunto de elementos em duas linhas”. É um
+formato de texto dos anos 1960, pensado para cartões perfurados de 80 colunas: cada linha tem
+exatamente 69 caracteres e cada número ocupa colunas fixas. Este é o TLE embarcado no pacote:</p>
+<pre><code>ISS (ZARYA)
+1 25544U 98067A   26286.82178372  .00006592  00000+0  12831-3 0  9991
+2 25544  51.6325  73.0089 0006710 259.3258 100.6975 15.48855783590140</code></pre>
+<table>
+  <tr><th>Campo</th><th>No exemplo</th><th>Significado</th></tr>
+  <tr><td>nome (linha opcional)</td><td><code>ISS (ZARYA)</code></td><td>só informativo; o TLE também
+      pode vir em 2 linhas, sem nome</td></tr>
+  <tr><td>nº de catálogo (linhas 1 e 2)</td><td><code>25544</code></td><td>identifica o objeto: 25544 é a
+      ISS; tem de ser igual nas duas linhas</td></tr>
+  <tr><td>época (linha 1)</td><td><code>26286.82178372</code></td><td>ano 2026, dia 286,82 do ano →
+      13/10/2026 às 19:43 UTC: o instante em que os elementos valem</td></tr>
+  <tr><td>B* (linha 1)</td><td><code>12831-3</code></td><td>termo de arrasto, com ponto decimal implícito:
+      0,12831·10⁻³</td></tr>
+  <tr><td>i, Ω, e, ω, ψ (linha 2)</td><td><code>51.6325 … 100.6975</code></td><td>os elementos
+      orbitais em graus; a excentricidade <code>0006710</code> também tem ponto implícito: 0,000671</td></tr>
+  <tr><td>movimento médio (linha 2)</td><td><code>15.48855783</code></td><td>voltas por dia; dá o
+      período (≈ 93 min) e, com µ, o semieixo</td></tr>
+  <tr><td>checksum (último dígito de cada linha)</td><td><code>1</code>, <code>0</code></td><td>soma dos
+      dígitos (cada “−” conta 1) módulo 10; detecta erros de transcrição</td></tr>
+</table>
+<p>O ano tem só dois dígitos; a convenção é: menor que 57 → 20xx, senão 19xx (o primeiro satélite,
+o Sputnik, é de 1957).</p>
+
+<h3>Um TLE é uma foto, não um filme</h3>
+<p>A órbita da ISS muda com o tempo, mas um TLE <strong>não é uma série temporal</strong>: é um único
+conjunto de cerca de oito números, válido <strong>num único instante</strong>, a época. Dois pontos
+tornam isso suficiente:</p>
+<ul>
+  <li>Os elementos são <strong>médios</strong>: as oscilações rápidas de cada volta foram retiradas
+  (a mesma ideia de elementos médios × osculadores da seção 7).</li>
+  <li>O modelo <strong>SGP4</strong> sabe como esses elementos médios evoluem: o plano gira por causa
+  de J2 (a regressão do nó da seção 3), a órbita decai por arrasto (via B*) e ele recoloca as
+  oscilações periódicas. Por isso <strong>1 TLE + SGP4 → posição em qualquer instante</strong>.</li>
+</ul>
+<p>O limite é a realidade: o SGP4 é um modelo aproximado, a ISS faz manobras (<em>reboosts</em>) e o
+arrasto varia com a atividade solar. Quanto mais longe da época, maior o erro. Por isso o NORAD
+publica <strong>novos TLEs</strong> com frequência (para a ISS, várias vezes por dia), e cada um
+<strong>substitui</strong> o anterior. O <code>tle.py</code> avisa quando o TLE em uso tem mais de
+3 dias (“precisão degradada”) e mais de 14 dias (aviso forte).</p>
+
+<h3>Onde o TLE fica guardado</h3>
+<table>
+  <tr><th>Arquivo</th><th>O que é</th><th>No git?</th></tr>
+  <tr><td><code>src/satsim/data/iss_fallback.tle</code></td><td>TLE <strong>embarcado</strong> no pacote:
+      último recurso quando não há internet nem cache (data e fonte em <code>docs/creditos.md</code>)</td>
+      <td>sim</td></tr>
+  <tr><td><code>data/cache/tle/25544.json</code></td><td><strong>cache</strong>: a última cópia baixada
+      da CelesTrak e o instante do download</td><td>não</td></tr>
+  <tr><td><code>tests/data/iss_sample.tle</code></td><td>TLE <strong>congelado</strong> de 2019, usado só
+      nos testes, para que os números de referência sejam reproduzíveis</td><td>sim</td></tr>
+</table>
+<p>O <strong>cache</strong> é um armazenamento local: uma cópia em disco do último TLE baixado. Ele
+existe por dois motivos: a CelesTrak pede no máximo uma consulta a cada 2 h (com cache recente o
+programa nem acessa a rede) e, sem internet, o programa continua funcionando com o que tem. O cache
+guarda só o TLE mais recente; cada download sobrescreve o anterior, sem histórico. O diretório é
+<code>data/cache/tle</code> relativo ao diretório de trabalho e pode ser trocado por
+<code>cache_dir</code> ou pela variável de ambiente <code>SATSIM_CACHE_DIR</code>.</p>
+
+<h3>get_tle: a busca em camadas</h3>
+<pre><code>1. cache com menos de 2 h        → usa sem rede            source = "cache"
+2. rede (CelesTrak)              → grava o cache           source = "network"
+3. falha de rede / TLE inválido  → cache de qualquer idade source = "cache"   + aviso
+4. sem cache                     → TLE embarcado           source = "bundled" + aviso</code></pre>
+<p>Com <code>offline=True</code> o passo 2 é pulado. O resultado é um <code>TleResult</code> com o TLE,
+a fonte (<code>source</code>), o instante do download (<code>fetched_at</code>) e a idade do TLE
+(<code>age</code> = agora − época). Para quem usa o TLE depois, a origem não importa: rede, cache ou
+embarcado devolvem o mesmo objeto <code>Tle</code>.</p>
+<p>Dois cuidados de robustez: uma resposta inválida da rede (página HTML de erro, TLE de outro objeto)
+conta como falha, e um cache corrompido é ignorado com aviso, nunca derruba o programa. A gravação
+do cache é <strong>atômica</strong>: o JSON é escrito num arquivo temporário no mesmo diretório e só
+então renomeado por cima do antigo com <code>os.replace</code>. Se algo falhar no meio da escrita, o
+cache anterior continua íntegro, porque a renomeação é uma operação única do sistema de arquivos.</p>
+
+<h3>Validação no __post_init__</h3>
+<p><code>Tle</code> é um <code>@dataclass(frozen=True)</code> (seção 3) com só três campos de texto:
+<code>name</code>, <code>line1</code>, <code>line2</code>. Os números (época, inclinação, B*…) são
+<code>@property</code> que interpretam as colunas quando pedidos. O método especial
+<code>__post_init__</code>, que o <code>@dataclass</code> chama logo depois de preencher os campos,
+valida comprimento, primeiro caractere, checksum e nº de catálogo e levanta <code>TleError</code> se algo
+estiver errado. Assim <strong>não existe</strong> um objeto <code>Tle</code> inválido: se a construção
+deu certo, as linhas são boas.</p>
+
+<h3>Como o TLE vira condição inicial</h3>
+<p>O código usa o TLE para obter as condições iniciais, mas não diretamente: os números escritos no
+TLE precisam antes ser “traduzidos” pelo SGP4.</p>
+<pre><code>TLE ──(SGP4 traduz)──► r₀, v₀ (posição e velocidade iniciais) ──► Cowell simula</code></pre>
+<table>
+  <tr><th>Peça</th><th>Papel</th></tr>
+  <tr><td>TLE (S3-01)</td><td>dados de entrada: a “receita” da órbita</td></tr>
+  <tr><td>SGP4 (S3-02)</td><td>lê o TLE e calcula r(t), v(t); em t = 0 fornece r₀, v₀</td></tr>
+  <tr><td>r₀, v₀</td><td><strong>condições iniciais</strong> do Cowell
+      (<code>CowellPropagator.from_state</code>, S3-03)</td></tr>
+  <tr><td>Cowell (S3-03)</td><td>integra J2 + arrasto a partir de r₀, v₀; depois comparamos com o SGP4</td></tr>
+</table>
+<p><strong>Por que a tradução é necessária.</strong> Os números do TLE não são a órbita “crua” naquele
+instante: são valores <strong>médios</strong>, calculados pelo NORAD de um jeito específico do SGP4, e
+só o SGP4 sabe desfazer essa média. Se o Cowell lesse os números diretamente como elementos
+osculadores, partiria de um ponto alguns km errado, e o erro cresceria para centenas de km em um dia:
+a mesma armadilha da seção 7, em que elementos médios tratados como osculadores separaram o MeanJ2 do
+Cowell em ≈ 1 300 km em 24 h. Partindo de r₀, v₀ do SGP4, Cowell e SGP4 começam exatamente no mesmo
+ponto, e a diferença ao longo do tempo mede só os modelos de força.</p>
+<p>Kepler e MeanJ2 não recebem TLE: continuam com elementos de projeto (SSO, ISS-like). Nos testes e
+na comparação do S3-03 usa-se o TLE congelado de 2019; na demo (S3-06) e na lista de passagens
+(S3-05) usa-se <code>get_tle()</code>, para mostrar a ISS onde ela está de fato.</p>
+
+<h3>WGS72 dentro do SGP4, WGS84 no resto</h3>
+<p>WGS72 não é condição inicial: é um conjunto de <strong>constantes físicas da Terra</strong> (raio,
+µ, J2), como o WGS84 da seção 5, só que mais antigo. O NORAD gera os TLEs com WGS72, e o SGP4 usa
+essas mesmas constantes internamente. Cada parte do código usa as constantes coerentes com os seus
+dados:</p>
+<table>
+  <tr><th>Onde</th><th>Constantes</th><th>Por quê</th></tr>
+  <tr><td>SGP4 (S3-02)</td><td><strong>WGS72</strong></td><td>o TLE foi ajustado com WGS72; o SGP4 precisa
+      das mesmas constantes para desfazer a média corretamente</td></tr>
+  <tr><td>Todo o resto (Kepler, J2, Cowell, geodésia, estação, mapa)</td><td><strong>WGS84</strong> e os
+      valores do Sem4</td><td>é o padrão atual (GPS, mapas, coordenadas de São Bento do Sapucaí,
+      Skyfield) e o que os PDFs da disciplina usam</td></tr>
+</table>
+<p><strong>Por que não usar WGS72 em tudo.</strong> É de 1972 e foi substituído pelo WGS84 em 1984.
+As coordenadas geográficas que usamos (estação, textura do mapa, GPS) são WGS84, e convertê-las
+deslocaria a estação e o subponto em alguns metros sem ganho nenhum. Os golden tests vêm dos PDFs,
+que usam R⊕ = 6378,137 km e µ = 3,986004418·10¹⁴ m³/s²; trocar as constantes quebraria a verificação.
+O SGP4 é uma exceção histórica: o formato TLE ficou preso ao WGS72 por compatibilidade.</p>
+<p><strong>Por que não trocar o SGP4 para WGS84.</strong> A biblioteca <code>sgp4</code> até permite,
+mas o TLE foi ajustado com WGS72; rodá-lo com outras constantes interpretaria os elementos médios de
+forma ligeiramente errada, e o resultado ficaria <em>pior</em>. As diferenças são pequenas:</p>
+<table>
+  <tr><th></th><th>WGS72</th><th>Nosso (WGS84 / Sem4)</th></tr>
+  <tr><td>Raio equatorial</td><td>6378,135 km</td><td>6378,137 km</td></tr>
+  <tr><td>µ</td><td>398 600,8 km³/s²</td><td>398 600,4418 km³/s²</td></tr>
+  <tr><td>J2</td><td>1,082616·10⁻³</td><td>1,08262668·10⁻³</td></tr>
+</table>
+<p>O ponto de encontro é a <strong>saída do SGP4</strong>: ele devolve posição e velocidade, que
+convertemos para m e m/s, e daí em diante tudo é WGS84. A pequena incoerência que sobra é muito menor
+que o erro típico de um TLE da ISS (≈ 1 km na época).</p>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que verifica</th></tr>
+  <tr><td>TLE de exemplo (Apêndice A.1)</td><td>nº 25544, época 2019-12-09 16:38:29 UTC (±1 s),
+      inclinação 51,6439°, 15,50103472 rev/dia, B* = 3,8792·10⁻⁵</td></tr>
+  <tr><td>Rejeições</td><td>checksum alterado em 1 dígito, linha com 68 ou 70 caracteres, linhas trocadas e
+      catálogos diferentes levantam <code>TleError</code></td></tr>
+  <tr><td>Regra do ano</td><td>56 → 2056, 57 → 1957</td></tr>
+  <tr><td>Camadas do <code>get_tle</code></td><td>com <code>urlopen</code> simulado: rede, cache dentro de 2 h
+      (sem 2ª consulta), falha de rede → cache antigo, sem cache → embarcado, <code>offline</code> nunca
+      acessa a rede, resposta HTML → falha</td></tr>
+  <tr><td>Robustez</td><td>cache corrompido é ignorado; falha no meio da escrita mantém o cache anterior</td></tr>
+  <tr><td>Idade</td><td>avisos acima de 3 e de 14 dias, com <code>now</code> injetado</td></tr>
+</table>
+<p>Nenhum teste acessa a rede: <code>urllib.request.urlopen</code> é substituído (via
+<code>monkeypatch</code> do pytest) por uma função que falha, e cada teste que precisa da CelesTrak
+instala uma versão simulada.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="sgp4-ref-py">
+<h2>9. sgp4_ref.py — o SGP4 como propagador e oráculo</h2>
+<div class="file">src/satsim/propagators/sgp4_ref.py · src/satsim/propagators/base.py · card S3-02</div>
+
+<h3>Para que serve o script</h3>
+<p>O <code>sgp4_ref.py</code> coloca a biblioteca <code>sgp4</code> (a implementação de referência de
+Vallado) sob a mesma interface dos outros propagadores: <code>SGP4Propagator(tle).propagate(t) → (r, v)</code>,
+vetorizado, em SI e no ECI do projeto. Não implementamos a física do SGP4; o script só converte
+unidades (km → m), escolhe as constantes certas (WGS72) e trata os erros. Com isso, subponto, cena e
+observador funcionam com a ISS real sem nenhuma mudança.</p>
+
+<h3>O SGP4 é um propagador, não só um conversor</h3>
+<p>SGP4 significa <strong>Simplified General Perturbations 4</strong>. É um modelo analítico de
+propagação: recebe o TLE e <strong>qualquer instante t</strong> e devolve posição e velocidade naquele
+instante.</p>
+<ul>
+  <li>Com <strong>t = 0</strong> (a época do TLE), ele faz o papel de “conversor”: TLE → (r₀, v₀). É
+  assim que o usamos para dar a condição inicial ao Cowell (seção 8).</li>
+  <li>Com <strong>t ≠ 0</strong>, ele propaga: onde a ISS está 1 hora, 3 dias ou 1 semana depois (ou
+  antes: aceita t negativo).</li>
+</ul>
+<p>Mesmo a “conversão” em t = 0 já usa o modelo de propagação: os elementos do TLE são médios, e
+para obter o estado verdadeiro o SGP4 precisa somar as oscilações periódicas de J2. Não existe um modo
+“só converter”. Lado a lado com os nossos propagadores:</p>
+<table>
+  <tr><th>Propagador</th><th>Tipo</th><th>O que modela</th></tr>
+  <tr><td><code>KeplerPropagator</code></td><td>analítico</td><td>só gravidade central (elipse fixa)</td></tr>
+  <tr><td><code>MeanJ2Propagator</code></td><td>analítico</td><td>J2, só os efeitos seculares (o plano e o
+      perigeu giram)</td></tr>
+  <tr><td><strong><code>SGP4Propagator</code></strong></td><td><strong>analítico</strong></td><td><strong>J2, J3,
+      J4 (seculares e periódicos) + arrasto via B*</strong>; Sol e Lua para órbitas altas</td></tr>
+  <tr><td><code>CowellPropagator</code></td><td>numérico</td><td>integra as forças escolhidas (J2; arrasto
+      no S3-03)</td></tr>
+</table>
+<p>Fisicamente, o SGP4 é um “MeanJ2 bem mais completo”; no código, é a quarta implementação da
+mesma interface. Chamamos de <strong>oráculo</strong> porque, para a ISS real, ele é a referência: o
+TLE é ajustado justamente para que o SGP4 reproduza as observações, e nenhum outro modelo pode ser
+mais fiel ao TLE que o próprio SGP4. No S3-03 o Cowell parte do estado do SGP4 em t = 0 e depois é
+comparado com ele em 24 h, 72 h e 7 dias.</p>
+
+<h3>De onde o SGP4 tira as suas condições iniciais</h3>
+<p>Se o Cowell precisa do SGP4 para obter r₀, v₀, de onde vem o TLE do SGP4? Não de outra simulação:
+a referência é a <strong>medição real</strong>.</p>
+<pre><code>radares e telescópios ──► medições ──► ajuste por mínimos quadrados ──► TLE ──► SGP4
+(rede de vigilância      (distância,   (determinação de órbita)
+ espacial dos EUA)        azimute, elevação…)</code></pre>
+<ol>
+  <li><strong>Observação.</strong> A rede de vigilância espacial dos EUA (<em>Space Surveillance
+  Network</em>) acompanha cada objeto com radares e sensores ópticos. Cada passagem gera medidas reais
+  (distância, azimute, elevação e, no radar, velocidade radial) em vários instantes, ao longo de alguns
+  dias.</li>
+  <li><strong>Determinação de órbita.</strong> É um problema <em>inverso</em>: procurar os cerca de oito
+  números do TLE que, <strong>propagados pelo próprio SGP4</strong>, reproduzem essas medições com o
+  menor erro. Chuta-se um TLE, propaga-se com o SGP4, compara-se com as medições, corrige-se o TLE e
+  repete-se até convergir (correção diferencial, um ajuste por mínimos quadrados).</li>
+  <li><strong>Publicação.</strong> O TLE resultante é o “melhor ajuste do SGP4 às observações”. Com
+  observações novas, sai um TLE novo.</li>
+</ol>
+<p>Isso explica três fatos das seções anteriores: o TLE só funciona bem com o SGP4 (e com as
+constantes WGS72), porque foi ajustado através dele, e os seus números não têm sentido físico
+isolado; os elementos são “médios” porque é assim que o SGP4 os define; e saem TLEs novos com
+frequência porque a cada rodada de medições o ajuste é refeito, absorvendo reboosts e variações do
+arrasto que o modelo não prevê. As equações vêm da teoria analítica de perturbações (Brouwer e Kozai,
+1959), publicadas como SGP4 por Hoots e Roehrich em 1980 (<em>Spacetrack Report #3</em>); a condição
+inicial vem das medições.</p>
+<p><strong>O Cowell não é uma cópia do SGP4.</strong> É outra abordagem (integração numérica das
+forças, em vez de fórmulas analíticas). Usamos o SGP4 porque ele é o único acesso que temos às
+medições da ISS: o TLE é a forma comprimida em que o NORAD as publica, e o SGP4 é a ferramenta para
+descomprimi-la. Com as medições brutas, poderíamos ajustar r₀, v₀ e o arrasto do Cowell diretamente a
+elas. O S3-03 faz uma versão pequena dessa ideia: <code>fit_ballistic_coefficient</code> ajusta o
+coeficiente de arrasto C<sub>D</sub>·A/m por mínimos quadrados, usando o SGP4 como
+“pseudo-observações” no lugar dos radares.</p>
+
+<h3>Dá para obter a posição da ISS online sem o SGP4?</h3>
+<p>Dá, mas é preciso separar quem <strong>mede</strong> de quem <strong>calcula</strong>: quase toda
+“posição online” é, no fundo, um cálculo.</p>
+<ul>
+  <li><strong>Sites e APIs de “onde está a ISS agora”</strong> (ex.: wheretheiss.at, Open Notify): em
+  geral calculam a posição a partir do TLE, com SGP4 ou equivalente, no servidor deles. Não é uma
+  medição direta.</li>
+  <li><strong>Efemérides da NASA</strong> (“ISS Trajectory Data”): a fonte pública mais direta. O
+  controle da missão estima a órbita com o <strong>GPS de bordo</strong> e publica vetores de posição e
+  velocidade a cada poucos minutos, cobrindo alguns dias, incluindo <strong>manobras planejadas</strong>
+  que o TLE não prevê. É mais precisa que TLE + SGP4, mas também é uma previsão, feita com o
+  propagador de alta fidelidade da NASA a partir do último estado medido. Vem no quadro
+  <strong>J2000</strong>, não no TEME: usá-la exigiria precessão e nutação, que o projeto deliberadamente
+  não tem (ADR, “ECI simplificado”).</li>
+  <li><strong>Telemetria bruta do GPS de bordo</strong>: é a medição de verdade, mas não é publicada
+  nesse formato; o que chega ao público é o produto processado do item anterior.</li>
+</ul>
+<p>A ideia central: mesmo a “posição atual” é sempre uma estimativa. A medição tem atraso, e entre
+duas medições alguém precisa propagar com algum modelo. O que muda é <em>qual modelo</em> e <em>quão
+perto da medição</em> se parte:</p>
+<table>
+  <tr><th>Fonte</th><th>Modelo usado</th><th>Precisão</th></tr>
+  <tr><td>TLE + SGP4 (este projeto)</td><td>analítico, ajustado a radares</td><td>≈ 1 km na época; piora
+      alguns km por dia</td></tr>
+  <tr><td>Efemérides da NASA</td><td>numérico de alta fidelidade, a partir do GPS de bordo</td><td>melhor
+      que TLE + SGP4 nos primeiros dias; inclui manobras planejadas</td></tr>
+</table>
+<p>O plano usa TLE/SGP4 porque é o padrão universal: vale para qualquer satélite, não só a ISS, e não
+exige conversão de quadros. As efemérides da NASA podem virar uma segunda referência para a ISS mais
+adiante (por exemplo, para medir o erro real do SGP4 após alguns dias), o que pediria a conversão
+J2000 → TEME.</p>
+
+<h3>O código, por partes</h3>
+<p><strong>Constantes WGS72.</strong> <code>Satrec.twoline2rv(line1, line2, WGS72)</code> cria o objeto
+da biblioteca com as constantes com que o TLE foi ajustado (seção 8: WGS72 dentro do SGP4, WGS84 no
+resto). <strong>TEME = ECI do projeto</strong>: o SGP4 devolve o estado no quadro TEME (equador
+verdadeiro, equinócio médio da data), que é exatamente o “ECI simplificado” do projeto, sem
+precessão nem nutação. Por isso não há conversão: a passagem ao ECEF é Rz(GMST), como para os outros
+propagadores.</p>
+<p><strong>Vetorização com <code>sgp4_array</code>.</strong> A biblioteca recebe o tempo como Data
+Juliana partida em duas: <code>jd</code> (parte grande) e <code>fr</code> (fração). O script mantém
+<code>jd = jdsatepoch</code> constante e põe todo o t na fração:</p>
+<pre><code>jd = np.full(t.shape, sat.jdsatepoch)
+fr = sat.jdsatepochF + t / 86400
+errors, r_km, v_km_s = sat.sgp4_array(jd, fr)</code></pre>
+<p>Um JD inteiro (≈ 2,46·10⁶ dias) em float tem resolução de ≈ 40 µs (seção 2); somando t só à
+fração, que é um número pequeno, a resolução fica muito melhor. Uma única chamada processa todos os
+instantes em C, sem laço Python.</p>
+<p><strong>Erros sem exceção.</strong> Para cada instante, a biblioteca devolve um código de erro (0 = ok;
+6 = o satélite decaiu, por exemplo). O script põe <code>NaN</code> nas linhas que falharam, emite
+<em>um</em> <code>logging.warning</code> por chamada (não um por instante) e guarda os códigos em
+<code>last_error_codes</code>. Assim uma série de 10 000 instantes não é interrompida no meio por um
+instante ruim, e quem chama decide o que fazer com os <code>NaN</code>.</p>
+<p><strong><code>propagate_utc</code> na classe base.</strong> Cada propagador tem a sua época (o TLE
+da ISS tem a dele; a SSO de projeto, outra). O método novo da ABC <code>Propagator</code> recebe uma
+época qualquer e tempos relativos a ela, converte para segundos desde <code>self.epoch</code> e chama
+<code>propagate</code>:</p>
+<pre><code>offset_s = (epoch - self.epoch).total_seconds()
+return self.propagate(as_time_array(t) + offset_s)</code></pre>
+<p>Por estar na classe base e não ser abstrato, todos os propagadores o herdam sem escrever nada. O
+Cowell continua exigindo t ≥ 0 e levanta <code>ValueError</code> para instantes antes da sua época;
+Kepler, MeanJ2 e SGP4 aceitam t negativo.</p>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que verifica</th></tr>
+  <tr><td>Regressão (Apêndice A.1)</td><td>r e v em t = 0, 24, 72 e 168 h iguais aos do experimento de
+      referência (1 m e 1·10⁻³ m/s)</td></tr>
+  <tr><td>Sanidade em t = 0</td><td>|r| ≈ 6787 km, |v| ≈ 7,665 km/s, inclinação osculadora 51,62°,
+      período 2π/n = 5573,82 s</td></tr>
+  <tr><td>Skyfield</td><td>posição ECEF a cada 600 s em 3 dias: diferença máxima 85,6 m, média 70 m
+      (critério &lt; 150 m; a diferença vem de UT1 ≈ UTC e da falta de movimento polar)</td></tr>
+  <tr><td>Erro simulado</td><td>código 6 → linhas <code>NaN</code>, um só aviso, sem exceção</td></tr>
+  <tr><td>Intercambialidade</td><td><code>subpoint</code> e <code>build_scene</code> rodam sem mudança com
+      Kepler, MeanJ2, Cowell e SGP4</td></tr>
+  <tr><td>Latitude do subponto</td><td>geocêntrica ≤ 51,7°; geodésica = geocêntrica + f·sin 2φ·R⊕/(R⊕ + h)
+      ≈ 51,80° (o prompt dizia “≤ 51,7° geodésica”; mesma correção da S2-07)</td></tr>
+</table>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="arrasto">
+<h2>10. Arrasto no Cowell — por que o arrasto padrão piora o resultado</h2>
+<div class="file">src/satsim/forces/atmosphere.py · forces/drag.py · decay.py · analysis.py ·
+scripts/compare_sgp4_cowell.py · card S3-03</div>
+
+<h3>O que o card acrescenta</h3>
+<table>
+  <tr><th>Peça</th><th>O que faz</th></tr>
+  <tr><td><code>ExponentialAtmosphere</code></td><td>densidade ρ(h) por uma tabela exponencial por partes
+      (Vallado): em cada faixa ρ = ρ0·e<sup>−(h−h0)/H</sup> (Sem3 eq. 19)</td></tr>
+  <tr><td><code>DragAcceleration</code></td><td>a = −½·C<sub>D</sub>·(A/m)·ρ·|v<sub>rel</sub>|·v<sub>rel</sub>, com a
+      atmosfera girando com a Terra, v<sub>rel</sub> = v − ω⊕ × r (Sem3 eqs. 5–6)</td></tr>
+  <tr><td><code>decay.py</code></td><td>forma fechada para órbita circular: taxa de queda (eq. 14), perda por
+      revolução (eq. 15) e tempo de vida (integração da eq. 22)</td></tr>
+  <tr><td><code>CowellPropagator</code></td><td><code>from_state(r, v, …)</code> para partir do estado do SGP4 e
+      evento de reentrada a 100 km (depois dele, <code>NaN</code>)</td></tr>
+  <tr><td><code>fit_ballistic_coefficient</code></td><td>acha o C<sub>D</sub>·A/m que minimiza o RMS do erro do
+      Cowell contra o SGP4 em 72 h</td></tr>
+</table>
+<p>O arrasto foi validado contra o Sem3: 1,2·10⁻⁶ m/s² a 400 km, −11,8 m por revolução, a Tabela 3
+inteira e os tempos de vida (4,64 anos a partir de 500 km com C<sub>D</sub>·A/m = 0,011). Mesmo assim,
+contra o SGP4 o resultado surpreende:</p>
+<table>
+  <tr><th>Cowell partindo do SGP4 em t = 0</th><th>24 h</th><th>72 h</th><th>7 dias [km]</th></tr>
+  <tr><td>só J2</td><td>1,0</td><td>8,7</td><td>47,2</td></tr>
+  <tr><td>J2 + arrasto padrão (C<sub>D</sub> = 2,2, A/m = 0,004)</td><td>5,8</td><td>52,4</td><td>286,1</td></tr>
+  <tr><td>J2 + arrasto ajustado (C<sub>D</sub>·A/m = 0,00163)</td><td>0,3</td><td>2,7</td><td>14,5</td></tr>
+</table>
+<figure>
+  <img src="../../reports/s3_arrasto/erro_sgp4_cowell.png" style="width:100%"
+       alt="Erro de posição Cowell × SGP4 ao longo de 7 dias">
+  <figcaption>Erro de posição 3D contra o SGP4 em 7 dias (escala log). A oscilação rápida é a da órbita
+  (≈ 93 min); a tendência é o que interessa.</figcaption>
+</figure>
+<p>Seria natural esperar que, com arrasto, o modelo ficasse <em>mais perto</em> do SGP4. Com o arrasto
+padrão ele fica <strong>mais longe</strong> que só com J2.</p>
+
+<h3>O erro tem forma de “V”</h3>
+<p>Para entender, o Cowell foi rodado com vários valores de C<sub>D</sub>·A/m, do zero (só J2) ao padrão.
+As duas primeiras colunas são o RMS do erro numa janela, que varia suavemente; as outras, o erro num
+instante exato, que oscila com a fase da órbita.</p>
+<table>
+  <tr><th>C<sub>D</sub>·A/m [m²/kg]</th><th>RMS 0–72 h</th><th>RMS 0–7 d</th><th>24 h</th><th>72 h</th><th>7 dias [km]</th></tr>
+  <tr><td>0 (só J2)</td><td>5,19</td><td>23,88</td><td>1,0</td><td>8,7</td><td>47,2</td></tr>
+  <tr><td>0,0008</td><td>2,81</td><td>10,54</td><td>0,4</td><td>3,1</td><td>17,0</td></tr>
+  <tr><td>0,0012</td><td>1,74</td><td>4,30</td><td>0,1</td><td>0,5</td><td>2,3</td></tr>
+  <tr><td>0,0014</td><td>1,32</td><td><strong>2,56</strong></td><td>0,2</td><td>1,1</td><td>5,9</td></tr>
+  <tr><td><strong>0,00163 (ajustado)</strong></td><td><strong>1,11</strong></td><td>4,63</td><td>0,3</td><td>2,7</td><td>14,5</td></tr>
+  <tr><td>0,0020</td><td>1,59</td><td>10,40</td><td>0,6</td><td>5,2</td><td>28,4</td></tr>
+  <tr><td>0,0025</td><td>2,91</td><td>18,72</td><td>1,0</td><td>8,7</td><td>47,3</td></tr>
+  <tr><td>0,0050</td><td>10,53</td><td>60,96</td><td>2,9</td><td>26,0</td><td>141,9</td></tr>
+  <tr><td>0,0088 (padrão)</td><td>22,32</td><td>125,46</td><td>5,8</td><td>52,4</td><td>286,1</td></tr>
+</table>
+<figure>
+  <img src="../../reports/s3_arrasto/erro_vs_coeficiente.png" style="width:100%"
+       alt="Erro em função do coeficiente balístico: curva em V">
+  <figcaption>Erro em função do C<sub>D</sub>·A/m usado. Acrescentar arrasto ajuda até o valor certo; depois,
+  o erro volta a crescer rápido.</figcaption>
+</figure>
+<p>Acrescentar arrasto ajuda enquanto a quantidade se aproxima da certa; passando dela, o erro volta a
+crescer, e rápido. O que importa é <strong>quão errado está o arrasto</strong>, não se ele está
+presente:</p>
+<ul>
+  <li><strong>Só J2</strong> erra para <em>menos</em>: falta arrasto (0 em vez de ≈ 0,0016).</li>
+  <li><strong>O arrasto padrão</strong> erra para <em>mais</em>: 0,0088, cerca de <strong>5 vezes</strong> o arrasto
+  que o SGP4 “enxerga”.</li>
+</ul>
+<p>Errar para mais por um fator 5 é pior que não ter arrasto algum: um valor só ≈ 50% acima do
+ajustado (0,0025) já empata com o caso sem arrasto no erro em 7 dias.</p>
+
+<h3>Por que o erro de arrasto cresce tão depressa</h3>
+<p>O arrasto tira energia, a órbita baixa, e uma órbita mais baixa tem período menor: o satélite
+<em>adianta</em> ao longo da trajetória (o “paradoxo do arrasto”, Sem3 §3.5: freado, mas mais rápido).
+O semieixo cai de forma aproximadamente linear no tempo, mas o adiantamento acumula essa diferença de
+velocidade angular, de modo que o erro ao longo da órbita cresce com o <strong>quadrado do
+tempo</strong>. Um erro pequeno em C<sub>D</sub>·A/m vira centenas de km em uma semana.</p>
+
+<h3>Por que o SGP4 “vê” tão pouco arrasto</h3>
+<p>O arrasto do SGP4 vem do <strong>B*</strong> do TLE, que o NORAD ajustou às medições de radar daquela
+semana (seção 9, determinação de órbita). Em dezembro de 2019 a atividade solar estava no
+<strong>mínimo</strong> do ciclo: com pouca radiação EUV a termosfera esfria e se contrai, e o arrasto
+real era fraco. O B* registra isso. A tabela de Vallado representa atividade <em>moderada</em> (o Sem3
+avisa: ρ varia por fatores de 5 a 10 ao longo do ciclo solar); ela não sabe que era mínimo solar e põe
+muito mais ar a 400 km do que havia. Some-se o A/m de 0,004, um valor nominal: a área frontal da ISS
+depende da atitude e dos painéis solares, que giram para seguir o Sol.</p>
+
+<h3>Onde fica o mínimo depende da janela</h3>
+<p>O RMS em 0–72 h, que é o que <code>fit_ballistic_coefficient</code> minimiza, tem o mínimo exatamente no
+valor ajustado (0,00163). Em 0–7 dias o melhor valor é outro (≈ 0,0014), e os erros pontuais oscilam
+com a fase da órbita, então o seu mínimo pode cair ao lado. Se o arrasto fosse o único erro do modelo,
+todas as janelas apontariam para o mesmo valor. Como não apontam, o C<sub>D</sub>·A/m ajustado é um
+parâmetro <strong>efetivo</strong>: além da atmosfera do dia e da atitude, ele compensa parte do que o
+Cowell não tem e o SGP4 tem (J3, J4 e, em menor grau, Sol e Lua). Por isso o erro ajustado não vai a
+zero e cresce com o tempo.</p>
+
+<h3>A lição</h3>
+<p>Mais física deixa o modelo mais fiel <em>se os parâmetros forem certos</em>. Com o valor certo, o
+arrasto de fato aproxima o Cowell do SGP4: o RMS em 7 dias cai de 23,9 km (só J2) para 4,6 km. Com
+parâmetros genéricos, um modelo mais completo pode ser pior que um mais simples. Por isso, na prática,
+operadores <strong>ajustam</strong> um coeficiente balístico efetivo contra dados de rastreio em vez de
+calculá-lo do zero (Sem3 §7, item 4). É o que <code>fit_ballistic_coefficient</code> faz aqui, com o SGP4 no
+papel dos radares: uma versão mínima da determinação de órbita da seção 9.</p>
+<p>Tudo isso é gerado por um único comando, que também escreve o relatório completo em
+<code>reports/s3_arrasto/relatorio.md</code>:</p>
+<pre><code>python scripts/compare_sgp4_cowell.py      # ~1 min</code></pre>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="coordenadas">
+<h2>11. observer.py — sistemas de coordenadas, transformações e sutilezas</h2>
+<div class="file">src/satsim/frames.py · src/satsim/geodesy.py · src/satsim/observer.py · cards S2-03 e S3-04</div>
+
+<h3>Por que tantos sistemas</h3>
+<p>Para responder “onde a ISS aparece no céu de São Bento do Sapucaí” o simulador passa por vários
+sistemas de coordenadas, cada um natural para uma parte do problema. A física da órbita é simples num
+referencial que não gira; a estação é fixa num referencial que gira com a Terra; e o observador quer
+direções no seu próprio céu. Nenhum sistema serve para tudo, e cada função de transformação existe para
+navegar entre eles. A seção 5 introduziu ECI, ECEF e WGS84; esta seção junta tudo, acrescenta o ENU e
+detalha as sutilezas.</p>
+<table>
+  <tr><th>Sistema</th><th>Origem</th><th>Eixos ou coordenadas</th><th>Para quê</th></tr>
+  <tr><td><strong>ECI</strong></td><td>centro da Terra</td><td>x, y, z fixos: x → equinócio vernal, z → polo</td>
+      <td>propagar a órbita</td></tr>
+  <tr><td><strong>ECEF</strong></td><td>centro da Terra</td><td>x, y, z que giram com a Terra: x → Greenwich, z → polo</td>
+      <td>pontos fixos no solo</td></tr>
+  <tr><td><strong>Geodésico (WGS84)</strong></td><td>—</td><td>latitude φ, longitude λ, altitude h, medidas pela
+      <em>normal ao elipsoide</em></td><td>mapas, GPS, subponto, estação</td></tr>
+  <tr><td><strong>Geocêntrico (esférico)</strong></td><td>centro da Terra</td><td>latitude ψ, longitude λ, raio r,
+      medidos pela <em>reta até o centro</em></td><td>aproximação da Semana 1; comparação</td></tr>
+  <tr><td><strong>ENU</strong></td><td>a estação</td><td>E (leste), N (norte), U (zênite do lugar)</td>
+      <td>o céu do observador</td></tr>
+  <tr><td><strong>Az, el, distância</strong></td><td>a estação</td><td>azimute, elevação, distância (o ENU em
+      forma esférica)</td><td>para onde apontar</td></tr>
+</table>
+<p>Uma distinção ajuda a não confundir: <strong>referencial</strong> é um conjunto de eixos (ECI, ECEF,
+ENU); <strong>sistema de coordenadas</strong> é uma forma de descrever um ponto nesses eixos. Geodésico e
+geocêntrico não são referenciais novos: são duas formas de escrever um ponto do <em>ECEF</em> por
+ângulos e altura, como coordenadas polares e cartesianas descrevem o mesmo ponto do plano. Da mesma
+forma, (azimute, elevação, distância) é o ENU escrito em coordenadas esféricas.</p>
+<pre><code>satélite: propagador ─► r_ECI(t) ─Rz(GMST)─► r_ECEF(t) ─┬─► geodésico (φ,λ,h): subponto
+                                                        │
+estação:  (φ, λ, h) ─geodetic_to_ecef─► r_est ──────────┤
+          (φ, λ) ─► matriz M_ENU                         ▼
+                              d = r_ECEF − r_est ─► M_ENU·d = (E, N, U) ─► az, el, dist.</code></pre>
+
+<h3>ECI → ECEF: só uma rotação</h3>
+<p>Os dois têm a mesma origem e o mesmo eixo z; o ECEF está girado em torno de z pelo ângulo que a
+Terra girou, o tempo sideral de Greenwich θG = GMST(t) (seção 2):</p>
+<pre><code>r_ECEF = Rz(θG) · r_ECI          frames.eci_to_ecef(r, gmst_at(epoch, t))</code></pre>
+<p>Sutilezas: (1) a velocidade não se transforma só pela rotação, porque o ECEF gira; soma-se
+−ω⊕ × r (seção 5). (2) Uma rotação não muda comprimentos: a <em>distância</em> satélite–estação é a
+mesma em ECI, ECEF ou ENU, desde que os dois pontos estejam no mesmo referencial e no mesmo instante. A
+estação, fixa no ECEF, está em movimento no ECI (≈ 430 m/s em São Bento), por isso a comparação é feita
+no ECEF. (3) O ECI do projeto é o equador e equinócio da data, sem precessão nem nutação, que é
+exatamente o TEME do SGP4 (seção 9).</p>
+
+<h3>Geodésico × geocêntrico: a sutileza da normal</h3>
+<p>Se a Terra fosse uma esfera, “para cima” seria a direção que se afasta do centro, e latitude e
+altitude seriam óbvias. Mas a Terra é achatada: o elipsoide WGS84 tem raio equatorial a = 6378,137 km
+e raio polar b = 6356,752 km, 21,4 km menor. Num elipsoide há duas retas diferentes saindo de um ponto P
+da superfície:</p>
+<ul>
+  <li>a <strong>reta radial</strong>, que liga o centro O a P;</li>
+  <li>a <strong>normal</strong>, a reta perpendicular ao <em>plano tangente</em> em P. Todo ponto de uma
+  superfície lisa tem um plano tangente, o plano que “encosta” na superfície ali; a normal é a reta
+  perpendicular a ele.</li>
+</ul>
+<p>Numa esfera as duas coincidem: a normal sempre passa pelo centro. Num elipsoide achatado elas só
+coincidem no equador e nos polos; nas latitudes intermediárias a normal é mais inclinada e cruza o eixo
+polar <em>ao lado</em> do centro.</p>
+<figure>
+<svg viewBox="0 0 600 380" width="100%" style="max-width:600px" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, sans-serif" font-size="12">
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#118ab2"/></marker></defs>
+  <ellipse cx="230.0" cy="190.0" rx="200.0" ry="130.0" fill="#eef5f8" stroke="#0b6e8a" stroke-width="2"/>
+  <line x1="10.0" y1="190.0" x2="460.0" y2="190.0" stroke="#5b6475" stroke-dasharray="4 3"/>
+  <text x="438.0" y="206.0" fill="#5b6475">equador</text>
+  <line x1="230.0" y1="345.0" x2="230.0" y2="30.0" stroke="#5b6475" stroke-dasharray="4 3"/>
+  <text x="222.0" y="42.0" fill="#5b6475" text-anchor="end">eixo polar (z)</text>
+  <circle cx="230.0" cy="190.0" r="3" fill="#1d2330"/><text x="214.0" y="206.0">O</text>
+  <line x1="230.0" y1="190.0" x2="438.1" y2="68.2" stroke="#ef476f" stroke-width="2"/>
+  <text x="444.1" y="72.2" fill="#ef476f">reta radial</text>
+  <line x1="230.0" y1="308.9" x2="425.5" y2="38.1" stroke="#118ab2" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="433.5" y="42.1" fill="#118ab2">normal = vertical (U)</text>
+  <circle cx="230.0" cy="308.9" r="3" fill="#118ab2"/>
+  <text x="238.0" y="324.9" fill="#118ab2" font-size="11">a normal cruza o eixo abaixo de O</text>
+  <line x1="289.4" y1="38.6" x2="467.8" y2="167.4" stroke="#06a77d" stroke-width="2"/>
+  <text x="473.8" y="171.4" fill="#06a77d">plano tangente</text>
+  <text x="473.8" y="185.4" fill="#06a77d">= horizonte</text>
+  <circle cx="378.6" cy="103.0" r="4.5" fill="#1d2330"/><text x="360.6" y="95.0" font-weight="bold">P</text>
+  <path d="M278.0,190.0 A48,48 0 0,0 271.4,165.8" fill="none" stroke="#ef476f" stroke-width="1.5"/>
+  <text x="284.0" y="180.0" fill="#ef476f">ψ</text>
+  <path d="M300.0,308.9 A70,70 0 0,0 271.0,252.1" fill="none" stroke="#118ab2" stroke-width="1.5"/>
+  <line x1="230.0" y1="308.9" x2="310.0" y2="308.9" stroke="#118ab2" stroke-dasharray="2 2"/>
+  <text x="306.0" y="292.9" fill="#118ab2">φ</text>
+  <text x="10" y="372" fill="#5b6475" font-size="11">Achatamento exagerado (b/a = 0,65; no WGS84, b/a = 0,9966). Aqui ψ = 30° e φ = 54°.</text>
+</svg>
+  <figcaption>Corte meridiano de um elipsoide com o achatamento exagerado. A reta radial (vermelho)
+  define a latitude geocêntrica ψ; a normal (azul), perpendicular ao plano tangente (verde), define a
+  latitude geodésica φ. Numa esfera as duas retas coincidiriam.</figcaption>
+</figure>
+<p>Cada reta define uma latitude:</p>
+<ul>
+  <li><strong>latitude geocêntrica ψ</strong>: o ângulo da reta radial com o plano do equador. É a latitude
+  das coordenadas esféricas;</li>
+  <li><strong>latitude geodésica φ</strong>: o ângulo da normal com o plano do equador. É a latitude dos
+  mapas, do GPS e de São Bento do Sapucaí (−22,69°).</li>
+</ul>
+<p>Para um ponto na superfície, escrevendo a elipse do corte meridiano como x²/a² + z²/b² = 1, a normal
+tem a direção do gradiente, ∝ (x/a², z/b²). Daí:</p>
+<pre><code>tan ψ = z / x                       (reta radial)
+tan φ = (a²/b²) · (z / x)  =  (a²/b²) · tan ψ        (normal)</code></pre>
+<p>Como a²/b² ≈ 1,0067 &gt; 1, |φ| &gt; |ψ| fora do equador e dos polos. A diferença é máxima a 45°:</p>
+<table>
+  <tr><th>Latitude geodésica φ</th><th>geocêntrica ψ</th><th>φ − ψ</th></tr>
+  <tr><td>−22,69° (São Bento)</td><td>−22,553°</td><td>−0,137°</td></tr>
+  <tr><td>45°</td><td>44,808°</td><td>0,192° (máximo)</td></tr>
+  <tr><td>51,8° (latitude máxima da ISS)</td><td>51,613°</td><td>0,187°</td></tr>
+  <tr><td>89°</td><td>88,993°</td><td>0,007°</td></tr>
+</table>
+<p>Para um ponto <em>acima</em> da superfície, como o satélite, a latitude geodésica é a da normal que
+desce do ponto até o elipsoide, e a altitude h é o comprimento desse segmento. A diferença de latitude
+encolhe com a altura, ≈ f·sin 2φ·R⊕/(R⊕ + h): para a ISS a 420 km, 0,18° no máximo (S2-07). A
+<strong>longitude é a mesma</strong> nos dois sistemas: o achatamento é simétrico em torno do eixo polar.</p>
+<p><strong>A altitude também muda.</strong> A altitude geocêntrica é r − R⊕, sempre contra o raio
+<em>equatorial</em>; a geodésica é a distância ao elipsoide ao longo da normal. Como o elipsoide fica
+dentro da esfera de raio R⊕, a altitude geodésica é sempre maior ou igual à esférica: a diferença vai de
+0 no equador a 21,4 km nos polos (≈ 21,4 km·sin²φ). Em São Bento o raio do elipsoide é 6374,98 km,
+3,16 km abaixo de R⊕. Isso pesa no arrasto: a densidade cai ≈ e vezes a cada 58 km a 400 km, então 13 km
+a mais de altitude (ISS a 51,6°) já dão ≈ 25% menos densidade (seção 10).</p>
+<p><strong>As conversões.</strong> Geodésico → ECEF tem fórmula fechada, com N(φ) = a/√(1 − e²·sin²φ), o
+raio de curvatura no primeiro vertical (a distância de P, ao longo da normal, até o eixo polar):</p>
+<pre><code>x = (N + h)·cos φ·cos λ
+y = (N + h)·cos φ·sin λ
+z = (N·(1 − e²) + h)·sin φ                         geodesy.geodetic_to_ecef</code></pre>
+<p>O caminho inverso, ECEF → geodésico, não tem forma fechada simples, porque φ aparece dos dois lados;
+o projeto usa o método iterativo de Bowring, que converge em 2 a 3 iterações
+(<code>geodesy.ecef_to_geodetic</code>). As coordenadas esféricas saem direto:
+ψ = arctan2(z, √(x² + y²)), r = |r| (<code>geodesy.ecef_to_spherical</code>).</p>
+<p><strong>Por que a normal é a direção física certa.</strong> Um fio de prumo aponta na direção da gravidade
+aparente (atração da Terra mais o efeito centrífugo da rotação). A superfície em que essa gravidade é
+sempre perpendicular é o geoide, quase igual ao elipsoide; o próprio achatamento da Terra é o equilíbrio
+entre gravidade e rotação (Sem4 §2.2, Clairaut). Então a normal ao elipsoide é, com ótima aproximação, a
+vertical do lugar e o plano tangente é o horizonte que um nível de bolha indica. A diferença para a
+vertical real, o “desvio da vertical” causado por montanhas e variações de massa, é tipicamente de
+segundos de arco e fica fora do modelo.</p>
+
+<h3>ENU: o referencial do observador</h3>
+<p>Para quem está em São Bento, os eixos do ECEF não dizem nada: “o satélite está 487 km na direção de
+Greenwich” não indica para onde olhar. O ENU é um referencial cartesiano com <strong>origem na estação</strong>
+e eixos alinhados com o chão daquele lugar:</p>
+<ul>
+  <li><strong>E (leste)</strong>: horizontal, à direita de quem olha para o norte;</li>
+  <li><strong>N (norte)</strong>: horizontal, em direção ao polo norte;</li>
+  <li><strong>U (zênite)</strong>: a <em>normal ao elipsoide</em> na estação, a vertical do lugar.</li>
+</ul>
+<p>E e N formam o plano tangente, isto é, o horizonte. Escritos em ECEF, os três versores são as linhas
+da matriz M (φ e λ geodésicas da estação):</p>
+<pre><code>     ⎡ E ⎤   ⎡ −sin λ          cos λ          0     ⎤
+M =  ⎢ N ⎥ = ⎢ −sin φ·cos λ   −sin φ·sin λ    cos φ ⎥
+     ⎣ U ⎦   ⎣  cos φ·cos λ    cos φ·sin λ    sin φ ⎦
+
+enu = M · (r_sat − r_estação)          GroundStation.enu_matrix, GroundStation.enu</code></pre>
+<p>Cada linha tem uma interpretação geométrica: E é a direção em que o ponto se move quando a longitude
+aumenta; N, a direção em que ele se move quando a latitude aumenta; U é perpendicular aos dois. Os três são
+unitários e perpendiculares entre si (M·Mᵀ = I) e formam um sistema destro: E × N = U, det M = +1. M é
+uma rotação; multiplicar por ela troca os eixos sem mudar o vetor.</p>
+<p><strong>Exemplo: a ISS no ponto mais alto da 1ª passagem</strong> (t = 29 457 s após a época do TLE de
+teste, linha 1 do Apêndice A.2):</p>
+<pre><code>estação, ECEF            (4110,2;  −4216,3;  −2445,4) km
+ISS, ECEF                (4597,4;  −4381,0;  −2438,4) km
+d = r_sat − r_est, ECEF  ( 487,1;   −164,7;      7,1) km     |d| = 514,2 km
+d em ENU = M·d           ( 233,9;    183,2;    419,8) km     |d| = 514,2 km
+                           leste     norte    para cima</code></pre>
+<p>O comprimento é o mesmo; só a descrição mudou, e agora faz sentido: a ISS está 234 km para leste,
+183 km para norte e 420 km acima do horizonte de São Bento.</p>
+
+<h3>Azimute, elevação e distância: o ENU em coordenadas esféricas</h3>
+<pre><code>distância = |d|                  = 514,2 km
+azimute   = atan2(E, N) mod 360° = 51,9°    (nordeste)
+elevação  = arcsin(U / |d|)      = 54,7°    (acima da metade do caminho ao zênite)
+
+                                            GroundStation.look_angles</code></pre>
+<p>É a conversão cartesiana → esférica usual, só que centrada no observador: o azimute faz o papel da
+longitude, a elevação o da latitude e a distância o do raio. Três sutilezas:</p>
+<ul>
+  <li><strong>Ordem dos argumentos do atan2.</strong> Na matemática o ângulo é medido a partir do eixo x, no
+  sentido anti-horário: atan2(y, x). Na navegação o azimute é medido a partir do <em>norte</em>, no sentido
+  <em>horário</em> (0° norte, 90° leste, 180° sul, 270° oeste). Trocar os argumentos para atan2(E, N) faz
+  exatamente isso. O <code>mod 2π</code> leva o resultado de (−180°, 180°] para [0°, 360°).</li>
+  <li><strong>Elevação em relação ao horizonte geodésico.</strong> U é a normal ao elipsoide, então elevação 0°
+  é o horizonte de quem está lá, e não “perpendicular à reta para o centro da Terra”.</li>
+  <li><strong>Sem refração.</strong> A atmosfera curva a luz e faz o satélite parecer mais alto, até ≈ 0,5°
+  perto do horizonte e quase nada acima de 10°. Para visibilidade por rádio com elevação mínima de 10° é
+  desprezível, e não é modelada.</li>
+</ul>
+
+<h3>O que aconteceria com o “para cima” radial</h3>
+<p>Seria tentador usar como eixo U a reta radial (r_estação/|r_estação|), mais simples de calcular. Em São
+Bento ela difere da normal em 0,137°, exatamente φ − ψ da tabela acima. O horizonte ficaria inclinado
+por esse ângulo e todas as elevações sairiam erradas. Com a ISS, em 3 dias, o erro na elevação vai de
+−0,137° a +0,137°, conforme o satélite esteja do lado norte ou sul do céu:</p>
+<table>
+  <tr><th></th><th>Diferença de elevação</th></tr>
+  <tr><td>U = normal ao elipsoide (o projeto) × Skyfield</td><td>≤ 0,009°</td></tr>
+  <tr><td>critério do card S3-04</td><td>&lt; 0,05°</td></tr>
+  <tr><td>U = reta radial × U = normal</td><td>até ±0,137°</td></tr>
+</table>
+<p>A escolha da normal não é para facilitar a conta, e sim para que ela esteja certa: com a reta radial
+o erro seria quase o triplo do critério e quinze vezes a diferença medida contra o Skyfield.</p>
+
+<h3>As funções de transformação</h3>
+<table>
+  <tr><th>De → para</th><th>Função</th><th>O que muda</th></tr>
+  <tr><td>ECI → ECEF</td><td><code>frames.eci_to_ecef(r, θG[, v])</code></td><td>gira os eixos por θG(t)</td></tr>
+  <tr><td>ECEF → ECI</td><td><code>frames.ecef_to_eci(r, θG[, v])</code></td><td>o inverso</td></tr>
+  <tr><td>instante → θG</td><td><code>frames.gmst_at(epoch, t)</code></td><td>ângulo da Terra (UT1 ≈ UTC)</td></tr>
+  <tr><td>geodésico → ECEF</td><td><code>geodesy.geodetic_to_ecef(φ, λ, h)</code></td><td>fórmula fechada; usada para a
+      estação</td></tr>
+  <tr><td>ECEF → geodésico</td><td><code>geodesy.ecef_to_geodetic(r)</code></td><td>iterativo (Bowring); subponto e
+      altitude do arrasto</td></tr>
+  <tr><td>ECEF → geocêntrico</td><td><code>geodesy.ecef_to_spherical(r)</code></td><td>ψ e r − R⊕ (Semana 1,
+      comparação)</td></tr>
+  <tr><td>ECEF → ENU</td><td><code>GroundStation.enu(r)</code></td><td>origem na estação, eixos E, N, U</td></tr>
+  <tr><td>ECEF → az, el, distância</td><td><code>GroundStation.look_angles(r)</code></td><td>ENU em forma esférica</td></tr>
+  <tr><td>tudo de uma vez</td><td><code>observer.observe(propagador, estação, t)</code></td><td>ECI → ECEF → ENU → az,
+      el, distância</td></tr>
+</table>
+
+<h3>Validação</h3>
+<table>
+  <tr><th>Teste</th><th>O que verifica</th></tr>
+  <tr><td>Geometria exata (estação em 0°, 0°, 0 m)</td><td>satélite no zênite → el = 90°; deslocado ao norte,
+      leste, sul e oeste → az = 0°, 90°, 180° e 270° (1·10⁻⁶°)</td></tr>
+  <tr><td>Horizonte e footprint</td><td>satélite no equador defasado λ = arccos(R⊕/(R⊕ + h)) → el = 0°; com
+      λ = footprint(h, 10°) → el = 10°; do outro lado da Terra → el &lt; 0</td></tr>
+  <tr><td>Matriz ENU</td><td>M·Mᵀ = I, det M = +1 e E × N = U, inclusive perto do polo</td></tr>
+  <tr><td>Estação de São Bento</td><td>ECEF = (4 110 248,7; −4 216 342,7; −2 445 429,5) m (Apêndice A.2)</td></tr>
+  <tr><td>Skyfield</td><td>ISS em 3 dias, a cada 30 s, com el &gt; 0: |Δaz| ≤ 0,026°, |Δel| ≤ 0,009°,
+      |Δdistância| ≤ 74 m</td></tr>
+</table>
 </section>
 
 </main>

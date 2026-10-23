@@ -39,6 +39,24 @@ offline (ADR 0001, requisito R10). Nenhum deles é baixado em tempo de execuçã
 Gerado em tempo de execução por `viewer.js` (canvas com gerador pseudoaleatório de semente fixa).
 Não há arquivo de imagem nem licença de terceiros.
 
+## Dados orbitais
+
+### TLE da ISS — `src/satsim/data/iss_fallback.tle`
+
+- TLE embarcado, usado por `satsim.tle.get_tle()` quando não há rede nem cache (S3-01).
+- Fonte: CelesTrak, GP data, <https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE>,
+  baixado em 14/10/2026 11:44 UTC. Época do TLE: 2026-10-13 19:43:22 UTC (13/10/2026).
+- Fica **desatualizado** com o tempo: a precisão do SGP4 cai após poucos dias, e o
+  `get_tle()` avisa quando a idade passa de 3 e de 14 dias. Atualize baixando um TLE novo
+  (`python scripts/fetch_tle.py`) e copiando as 3 linhas para este arquivo.
+- Dados do NORAD/U.S. Space Force redistribuídos pela CelesTrak (T.S. Kelso); uso livre, com
+  crédito à CelesTrak.
+
+### TLE de teste — `tests/data/iss_sample.tle`
+
+- TLE congelado da ISS com época 2019-12-09 16:38:29 UTC (Apêndice A.1 do prompt da Semana 3),
+  usado só nos testes. Mesma fonte (CelesTrak/NORAD).
+
 ## Verificação de uso offline
 
 `grep -n "http"` nos assets do viewer (S1-08):
