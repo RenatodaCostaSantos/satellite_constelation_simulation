@@ -1,12 +1,22 @@
-"""Testes da exportação da cena para o viewer (S1-08; subponto geodésico WGS84 na S2-07)."""
+"""Testes da exportação da cena para o viewer (S1-08; geodésico na S2-07; ISS real na S3-06)."""
 
+import importlib.util
 import json
 import math
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pytest
-from golden.reference_values import DESIGN_ORBIT, SCENE_S2
+from golden.reference_values import (
+    DESIGN_ORBIT,
+    FOOTPRINT_A6,
+    PASSES_A2,
+    PASSES_A2_META,
+    SCENE_S2,
+)
 
 from satsim.app.scene_export import (
     SCHEMA_VERSION,
@@ -18,7 +28,15 @@ from satsim.constants import R_EARTH
 from satsim.elements import KeplerianElements
 from satsim.frames import eci_to_ecef
 from satsim.geodesy import ecef_to_geodetic, ecef_to_spherical
-from satsim.propagators import CowellPropagator, KeplerPropagator, MeanJ2Propagator
+from satsim.observer import SAO_BENTO_DO_SAPUCAI, footprint_half_angle, observe
+from satsim.passes import find_passes
+from satsim.propagators import (
+    CowellPropagator,
+    KeplerPropagator,
+    MeanJ2Propagator,
+    SGP4Propagator,
+)
+from satsim.tle import Tle
 
 EPOCH = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
 DURATION_S = 6 * 3600
@@ -250,3 +268,193 @@ def test_iss_like_j2_vs_kepler_after_48h() -> None:
     mean_j2 = MeanJ2Propagator(ISS_LIKE, EPOCH)
     d_raan = math.degrees(mean_j2.elements_at(2 * 86400.0).raan[0] - ISS_LIKE.raan)
     assert d_raan == pytest.approx(SCENE_S2.iss_raan_regression_48h_deg, abs=0.05)
+
+
+# --- S3-06: ISS real, estação, footprint e passagens -------------------------------------------
+# Referências: PASSES_A2 e PASSES_A2_META (Apêndice A.2 do prompt da Semana 3), FOOTPRINT_A6
+# (A.6). Cena determinística: TLE de teste A.1, início na época do TLE, 3 dias a 20 s.
+
+S3_STEP_S = 20
+S3_DURATION_S = 3 * 86400
+S3_EL_MIN = 10.0
+SBS = SceneStation.from_ground_station("sbs", SAO_BENTO_DO_SAPUCAI)
+
+
+@pytest.fixture(scope="module")
+def iss_tle() -> Tle:
+    return Tle.from_text((Path(__file__).parent / "data" / "iss_sample.tle").read_text())
+
+
+@pytest.fixture(scope="module")
+def iss_scene(iss_tle) -> dict:
+    iss = SceneSatellite("iss", "ISS", "#ffb020", SGP4Propagator(iss_tle))
+    return build_scene([iss], [SBS], iss_tle.epoch, S3_DURATION_S, S3_STEP_S,
+                       el_min_deg=S3_EL_MIN, tle=iss_tle, tle_source="arquivo")  # fmt: skip
+
+
+def _scene_seconds(iso: str, scene: dict) -> float:
+    start = datetime.fromisoformat(scene["meta"]["epoch_utc"].replace("Z", "+00:00"))
+    return (datetime.fromisoformat(iso.replace("Z", "+00:00")) - start).total_seconds()
+
+
+def test_s3_scene_passes_match_a2(iss_scene, iss_tle) -> None:
+    passes = iss_scene["passes"]
+    assert len(passes) == PASSES_A2_META.n_passes_10deg
+    # A.2 conta desde a época do TLE; a cena, desde meta.epoch_utc (a mesma, ao milissegundo)
+    start = datetime.fromisoformat(iss_scene["meta"]["epoch_utc"].replace("Z", "+00:00"))
+    assert iss_scene["meta"]["epoch_utc"] == "2019-12-09T16:38:29.363Z"
+    offset = (start - iss_tle.epoch).total_seconds()
+    for p, ref in zip(passes, PASSES_A2, strict=True):
+        assert p["sat_id"] == "iss" and p["station_id"] == "sbs"
+        for key, ref_s in (("aos_utc", ref.aos_s), ("tca_utc", ref.tca_s), ("los_utc", ref.los_s)):
+            got = _scene_seconds(p[key], iss_scene) + offset
+            assert got == pytest.approx(ref_s, abs=PASSES_A2_META.tol_time_s)
+        assert p["max_el_deg"] == pytest.approx(ref.max_el_deg, abs=PASSES_A2_META.tol_el_deg)
+        assert p["duration_s"] == pytest.approx(ref.duration_s, abs=1.0)
+
+
+def test_s3_scene_meta_tle(iss_scene, iss_tle) -> None:
+    meta = iss_scene["meta"]
+    assert meta["schema_version"] == SCHEMA_VERSION == 1
+    assert meta["el_min_deg"] == S3_EL_MIN
+    tle = meta["tle"]
+    assert set(tle) == {"name", "norad_id", "epoch_utc", "age_days_at_start", "source"}
+    assert tle["norad_id"] == 25544 and tle["source"] == "arquivo"
+    assert tle["epoch_utc"] == "2019-12-09T16:38:29.363Z"
+    assert tle["age_days_at_start"] == pytest.approx(0.0, abs=1e-4)
+
+
+def test_s3_looks_lengths_ranges_and_crossings(iss_scene) -> None:
+    n = S3_DURATION_S // S3_STEP_S + 1
+    looks = iss_scene["stations"][0]["looks"]["iss"]
+    assert set(looks) == {"az_deg", "el_deg", "range_km"}
+    assert all(len(v) == n for v in looks.values())
+    az = np.array(looks["az_deg"])
+    el = np.array(looks["el_deg"])
+    assert np.all((az >= 0.0) & (az < 360.0)) and np.all((el >= -90.0) & (el <= 90.0))
+    assert np.all(np.array(looks["range_km"]) > 300.0)
+    t = np.arange(n) * S3_STEP_S
+    # el cruza el_min a menos de 1 passo (±20 s) de cada AOS (subindo) e LOS (descendo)
+    above = el >= S3_EL_MIN
+    rises = t[1:][~above[:-1] & above[1:]]
+    sets = t[1:][above[:-1] & ~above[1:]]
+    aos = np.array([_scene_seconds(p["aos_utc"], iss_scene) for p in iss_scene["passes"]])
+    los = np.array([_scene_seconds(p["los_utc"], iss_scene) for p in iss_scene["passes"]])
+    assert len(rises) == len(aos) and len(sets) == len(los)
+    assert np.max(np.abs(rises - aos)) <= S3_STEP_S
+    assert np.max(np.abs(sets - los)) <= S3_STEP_S
+
+
+def test_s3_looks_consistent_with_observe(iss_scene, iss_tle) -> None:
+    looks = iss_scene["stations"][0]["looks"]["iss"]
+    k = np.array([0, 1000, 5000, 12000])
+    t = k * S3_STEP_S
+    start = datetime.fromisoformat(iss_scene["meta"]["epoch_utc"].replace("Z", "+00:00"))
+    offset = (start - iss_tle.epoch).total_seconds()  # < 1 ms (época arredondada ao ms)
+    obs = observe(SGP4Propagator(iss_tle), SAO_BENTO_DO_SAPUCAI, t + offset)
+    np.testing.assert_allclose(np.array(looks["el_deg"])[k], obs.el_deg, atol=1e-3)
+    np.testing.assert_allclose(np.array(looks["range_km"])[k], obs.range / 1e3, atol=2e-3)
+
+
+def test_s3_footprint_matches_formula(iss_scene) -> None:
+    sat = iss_scene["satellites"][0]
+    fp = np.array(sat["footprint_deg"])
+    alt_km = np.array(sat["lla"])[:, 2]  # a altitude publicada na própria cena
+    expected = np.degrees(footprint_half_angle(alt_km * 1e3, math.radians(S3_EL_MIN)))
+    np.testing.assert_allclose(fp, expected, rtol=0, atol=1e-6)
+    # valor típico: ≈ 12,5° para a ISS a ~420 km com el_min = 10° (A.6)
+    assert np.median(fp) == pytest.approx(FOOTPRINT_A6.h420_el10_deg, abs=0.3)
+
+
+def test_s3_new_fields_are_optional(scene: dict) -> None:
+    # sem el_min_deg, a cena é a mesma das semanas anteriores (o viewer funciona sem os campos)
+    assert "el_min_deg" not in scene["meta"] and "tle" not in scene["meta"]
+    assert all("footprint_deg" not in s for s in scene["satellites"])
+    assert all("looks" not in st for st in scene["stations"])
+    assert scene["passes"] == []
+
+
+def test_s3_multi_satellite_iss_sgp4_and_sso_j2(iss_tle) -> None:
+    iss = SceneSatellite("iss", "ISS", "#ffb020", SGP4Propagator(iss_tle))
+    sso = SceneSatellite("sso", "SSO", "#00e5ff", MeanJ2Propagator(SSO_ELEMENTS, EPOCH))
+    start = iss_tle.epoch.replace(microsecond=0)
+    sc = build_scene([iss, sso], [SBS], start, 6 * 3600, 20, el_min_deg=10.0, tle=iss_tle)
+    assert [s["id"] for s in sc["satellites"]] == ["iss", "sso"]
+    assert set(sc["stations"][0]["looks"]) == {"iss", "sso"}
+    assert all(len(s["footprint_deg"]) == 1081 for s in sc["satellites"])
+    # cada satélite com a sua época: em t = 0 da cena, a SSO está onde o MeanJ2 a põe
+    r_sso, _ = MeanJ2Propagator(SSO_ELEMENTS, EPOCH).propagate_utc(start, [0.0])
+    np.testing.assert_allclose(sc["satellites"][1]["eci_km"][0], r_sso[0] / 1e3, atol=1e-5)
+    assert [p["aos_utc"] for p in sc["passes"]] == sorted(p["aos_utc"] for p in sc["passes"])
+
+
+def test_s3_scene_passes_coherent_with_find_passes(iss_scene, iss_tle) -> None:
+    # o viewer mostra as mesmas passagens que scripts/list_passes.py (mesma função)
+    start = datetime.fromisoformat(iss_scene["meta"]["epoch_utc"].replace("Z", "+00:00"))
+    direct = find_passes(SGP4Propagator(iss_tle), SAO_BENTO_DO_SAPUCAI, start, S3_DURATION_S)
+    assert len(direct) == len(iss_scene["passes"])
+    for p, q in zip(iss_scene["passes"], direct, strict=True):
+        # os instantes do JSON são arredondados ao milissegundo
+        dt = _scene_seconds(p["aos_utc"], iss_scene) - (q.aos - start).total_seconds()
+        assert abs(dt) <= 0.5e-3
+        assert p["max_el_deg"] == pytest.approx(q.max_elevation_deg, abs=1e-3)
+
+
+def test_s3_scene_station_from_ground_station() -> None:
+    assert SBS.ground_station() == SAO_BENTO_DO_SAPUCAI
+    assert (SBS.lat_deg, SBS.lon_deg, SBS.alt_m) == (-22.69, -45.73, 900.0)
+
+
+# --- S3-06: build_demo.py offline ---------------------------------------------------------------
+
+
+def _load_build_demo():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "build_demo.py"
+    spec = importlib.util.spec_from_file_location("build_demo", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _scene_from_html(html: str) -> dict:
+    start = html.index("window.SATSIM_SCENE = ") + len("window.SATSIM_SCENE = ")
+    end = html.index(";\nwindow.SATSIM_TEXTURE", start)
+    return json.loads(html[start:end])
+
+
+def test_build_demo_offline_without_network(tmp_path, monkeypatch) -> None:
+    def no_network(*args, **kwargs):
+        raise urllib.error.URLError("sem rede (teste)")
+
+    monkeypatch.setattr(urllib.request, "urlopen", no_network)
+    out = tmp_path / "index.html"
+    _load_build_demo().main(["--offline", "--cache-dir", str(tmp_path / "cache"), "-o", str(out)])
+    html = out.read_text(encoding="utf-8")
+    scene = _scene_from_html(html)
+    assert scene["meta"]["tle"]["source"] == "bundled"
+    assert [s["id"] for s in scene["satellites"]] == ["iss", "sso1"]
+    assert scene["meta"]["duration_s"] == 24 * 3600 and scene["meta"]["step_s"] == 20
+    assert "looks" in scene["stations"][0] and "footprint_deg" in scene["satellites"][0]
+    assert 'src="vendor' not in html and "<script src=" not in html  # tudo embutido
+
+
+def test_build_demo_network_failure_falls_back(tmp_path, monkeypatch) -> None:
+    # sem --offline, a rede falha e get_tle cai no TLE embarcado: a demo sai igual
+    def no_network(*args, **kwargs):
+        raise urllib.error.URLError("sem rede (teste)")
+
+    monkeypatch.setattr(urllib.request, "urlopen", no_network)
+    out = tmp_path / "index.html"
+    _load_build_demo().main(["--cache-dir", str(tmp_path / "cache"), "-o", str(out)])
+    assert _scene_from_html(out.read_text(encoding="utf-8"))["meta"]["tle"]["source"] == "bundled"
+
+
+def test_build_demo_deterministic_tle_epoch(tmp_path) -> None:
+    out = tmp_path / "index.html"
+    tle_file = Path(__file__).parent / "data" / "iss_sample.tle"
+    _load_build_demo().main(["--tle-file", str(tle_file), "--start", "tle-epoch", "-o", str(out)])
+    scene = _scene_from_html(out.read_text(encoding="utf-8"))
+    iss_passes = [p for p in scene["passes"] if p["sat_id"] == "iss"]
+    # 24 h após a época: as passagens 1 e 2 do A.2 (AOS em 29 258,7 s e 64 638,7 s)
+    assert len(iss_passes) == 2
+    assert iss_passes[0]["max_el_deg"] == pytest.approx(PASSES_A2[0].max_el_deg, abs=0.05)

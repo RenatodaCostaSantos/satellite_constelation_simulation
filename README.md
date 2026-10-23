@@ -50,31 +50,49 @@ tests/                       testes (pytest)
 
 ## Demo visual
 
-![Demo do satsim: globo 3D e traço no solo 2D, fim da janela de 48 h, com as órbitas tipo ISS com e sem J2 deslocadas](docs/img/demo.png)
+![Demo do satsim: a ISS real em passagem sobre São Bento do Sapucaí, com a linha estação → satélite no globo, o círculo de visibilidade no mapa e a lista de passagens](docs/img/demo.png)
 
-Globo 3D e mapa 2D com o traço no solo, na mesma tela e sincronizados. As órbitas são calculadas
-em Python e o viewer só desenha. A demo cobre **48 h** (passo de 20 s) com três satélites:
+Globo 3D e mapa 2D na mesma tela e sincronizados, com a **ISS real** (TLE/SGP4) desde a
+Semana 3. Tudo é calculado em Python; o viewer só desenha. A demo cobre **24 h a partir de
+agora** (passo de 20 s) com dois satélites:
 
 | Satélite | Propagador | O que mostra |
 |---|---|---|
+| ISS | `SGP4Propagator` | a ISS real, a partir do TLE mais recente (CelesTrak → cache → TLE embarcado) |
 | SSO-1 (J2) | `MeanJ2Propagator` | a órbita heliossíncrona de projeto 91/6 |
-| ISS-like (exemplo J2) | `MeanJ2Propagator` | órbita tipo ISS (a = R⊕ + 420 km, i = 51,64°) com J2 |
-| ISS-like sem J2 (Kepler) | `KeplerPropagator` | a mesma órbita sem J2, em cinza |
 
-**O efeito de J2 fica visível:** as duas ISS-like começam juntas e se separam no mapa, porque J2
-faz o plano da órbita girar (regressão do nó, ≈ −9,9° em 2 dias). Arraste a linha do tempo até o
-fim da janela para ver os dois traços deslocados. A ISS-like é só um exemplo: a ISS real (TLE/SGP4)
-entra na Semana 3.
+E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
+
+- **painel "ISS × São Bento do Sapucaí"**: elevação, azimute e distância atuais e o estado,
+  com cor própria: *visível* (acima de 10°, verde), *baixo* (entre 0° e 10°, amarelo) ou
+  *abaixo do horizonte*;
+- **contagem regressiva** para a próxima passagem (ou o tempo que falta para a atual terminar);
+- **lista de passagens** em UTC e no horário de Brasília (BRT), com elevação máxima e duração;
+  clicar numa passagem leva o relógio a 60 s antes do AOS. As passagens também aparecem como
+  marcas verdes na linha do tempo;
+- **linha estação → satélite** no globo, colorida pelo estado, enquanto o satélite está acima
+  do horizonte;
+- **círculo de visibilidade (footprint)** no mapa: a região do solo de onde o satélite é visto
+  acima de 10° (≈ 12,5° de raio, ≈ 1 400 km, para a ISS). A estação está dentro dele
+  exatamente durante as passagens;
+- **faixa do TLE** abaixo da barra superior: época, idade e fonte do TLE, em destaque quando a
+  idade passa de 3 dias (a posição real pode diferir de dezenas de km).
+
+As passagens do viewer são as mesmas de `scripts/list_passes.py` (a mesma função,
+`satsim.passes.find_passes`).
 
 **Gerar** (na raiz do repositório, com o venv ativo):
 
 ```bash
-python scripts/build_demo.py      # cria demo/index.html (~4 MB, autocontido)
+python scripts/build_demo.py              # ISS real, 24 h a partir de agora (~3 MB)
+python scripts/build_demo.py --offline    # sem rede: cache local ou TLE embarcado
+python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-epoch   # reprodutível
 ```
 
 **Abrir:** dê dois cliques em `demo/index.html`, ou rode `xdg-open demo/index.html` no Linux
 (`open` no macOS). Não precisa de servidor nem de internet: biblioteca, textura e cena vão
-embutidas no arquivo. A pasta `demo/` não é versionada; gere de novo quando o código mudar.
+embutidas no arquivo. A rede só é usada ao **gerar** a demo, para baixar um TLE recente, e é
+opcional. A pasta `demo/` não é versionada; gere de novo para atualizar a ISS.
 
 **Adicionar um satélite:** acrescente uma linha à lista `SATELLITES` em
 [`scripts/build_demo.py`](scripts/build_demo.py), por exemplo
@@ -85,7 +103,9 @@ sat("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator, a_km=7200.0, e=0.0
 
 (o quarto argumento é o propagador: `MeanJ2Propagator` com J2, `KeplerPropagator` sem J2)
 
-e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado com 18).
+e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado com 18); cada um
+ganha o seu footprint e as suas passagens. O painel da estação mostra o satélite selecionado na
+lista.
 
 **Controles:**
 
@@ -93,16 +113,19 @@ e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado c
 |---|---|
 | ▶ / ❚❚ (ou barra de espaço) | reproduzir / pausar |
 | 1x · 10x · 60x · 300x · 1000x | velocidade da simulação |
-| linha do tempo (embaixo) | arrastar para qualquer instante da janela de 48 h |
+| linha do tempo (embaixo) | arrastar para qualquer instante da janela de 24 h; marcas verdes = passagens |
 | ⏮ início | voltar ao início da janela |
+| passagem na lista | ir a 60 s antes do AOS |
 | caixas na lista de satélites | mostrar / ocultar cada satélite |
-| nome na lista de satélites | selecionar: o painel **Informações** mostra latitude, longitude e altitude geodésicas atuais |
+| nome na lista de satélites | selecionar: os painéis **Informações** e da estação passam a mostrar esse satélite |
 | arrastar / roda do mouse no globo | girar / zoom |
 
-No mapa, a linha cheia é o traço já percorrido e a tracejada é o futuro. São Bento do Sapucaí
-aparece em rosa nos dois painéis. A vista mantém a Terra fixa (ECEF); o subponto é geodésico
-WGS84 desde a Semana 2 (latitude da vertical local, altitude acima do elipsoide). Os créditos e
-licenças dos assets estão em [`docs/creditos.md`](docs/creditos.md).
+No mapa, a linha cheia é o traço já percorrido, a tracejada é o futuro e o círculo é o footprint.
+São Bento do Sapucaí aparece em rosa nos dois painéis. A vista mantém a Terra fixa (ECEF); o
+subponto é geodésico WGS84 (latitude da vertical local, altitude acima do elipsoide). "Passagem"
+aqui é visibilidade por rádio (satélite acima de 10°); ver a ISS a olho nu, com o Sol abaixo do
+horizonte e a ISS iluminada, entra na Semana 4. Os créditos e licenças dos assets estão em
+[`docs/creditos.md`](docs/creditos.md).
 
 ## Relatório da Semana 2
 
