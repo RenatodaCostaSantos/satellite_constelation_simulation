@@ -1,10 +1,46 @@
 """Passagens de um satélite sobre uma estação: AOS, TCA e LOS por busca de raízes na elevação.
 
-Uma *passagem* é o intervalo em que o satélite fica acima da elevação mínima ε (``el_min``):
+O que é uma passagem
+--------------------
+A estação é um ponto fixo no solo (fixo no ECEF). Dela, a **elevação** de um satélite é o ângulo
+acima do horizonte em que ele aparece: 0° no horizonte, 90° no zênite. Atenção: elevação é um
+ângulo, não a altura do satélite. Fixada uma elevação mínima ε (``el_min``), por exemplo 10°
+para evitar montanhas, prédios e a atmosfera espessa perto do horizonte, o satélite conta como
+"visível" quando a elevação é ≥ ε, em **qualquer azimute**.
 
-    AOS (Acquisition Of Signal)   instante em que a elevação sobe e cruza ε
-    TCA (Time of Closest Approach) instante de elevação máxima (o satélite mais alto no céu)
-    LOS (Loss Of Signal)          instante em que a elevação desce e cruza ε
+Essa condição define uma região em duas dimensões, que pode ser vista de dois jeitos
+equivalentes:
+
+- **no céu**: um cone em torno da vertical da estação (o zênite), de abertura 90° − ε. Como vale
+  para qualquer azimute, a região é circular: uma calota do céu centrada no zênite;
+- **no chão**: um círculo em torno da estação, onde precisa estar o *subponto* do satélite (o
+  ponto do solo logo abaixo dele). O raio angular, medido no centro da Terra, é o do footprint
+  (``observer.footprint_half_angle``, Sem4 §9.4)::
+
+      λ = arccos(R⊕/(R⊕ + h)·cos ε) − ε    ISS a 420 km: ε = 10° → 12,5° ≈ 1 390 km
+                                                         ε = 0°  → 20,2° ≈ 2 250 km
+
+  O círculo cresce com a altura h do satélite: quanto mais alto, de mais longe ele é visto. É
+  um círculo, e não outra forma, porque a elevação só depende da distância entre o subponto e a
+  estação, não da direção.
+
+Uma *passagem* é o **intervalo de tempo** em que o satélite está dentro dessa região, ou seja,
+em que o traço no solo atravessa o círculo:
+
+    AOS (Acquisition Of Signal)   instante em que a elevação sobe e cruza ε (entra no círculo)
+    TCA (Time of Closest Approach) instante de elevação máxima (o ponto do traço mais próximo
+                                  da estação: o satélite mais alto no céu)
+    LOS (Loss Of Signal)          instante em que a elevação desce e cruza ε (sai do círculo)
+
+Um traço que corta o círculo pela borda dá uma passagem curta e baixa (A.2, passagem 9: 2,2 min,
+11°); um que passa perto do centro dá uma passagem longa e alta (passagem 5: 6,7 min, 71,5°).
+
+O código **não constrói o círculo**: a cada instante calcula a elevação do satélite vista da
+estação (``observer.observe``) e testa el ≥ ε, que é a mesma condição. O teste no céu é exato
+com o elipsoide WGS84; o círculo de raio λ é uma aproximação esférica, boa para desenhar (o
+footprint do viewer, S3-06). ε é o mesmo em todos os azimutes, como se o horizonte fosse plano;
+relevo real (São Bento fica na Serra da Mantiqueira) pediria uma máscara de horizonte ε(az), fora
+do escopo.
 
 Aqui "passagem" é visibilidade por **rádio** (satélite acima de ε). A regra óptica, satélite
 iluminado com o Sol abaixo do horizonte, entra na Semana 4.
