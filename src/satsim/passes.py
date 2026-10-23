@@ -142,67 +142,101 @@ def find_passes(
     Raises:
         ValueError: ``start`` naive, duração negativa ou passo não positivo.
     """
+    # --- Preparação --------------------------------------------------------------------------
+    # Rejeita datetime sem fuso: "10:00" sem fuso é ambíguo (UTC? Brasília?).
     _check_aware(start, "start")
+    # A duração pode vir como timedelta ou como segundos; daqui em diante, sempre segundos.
     duration_s = _as_seconds(duration)
     if duration_s < 0.0 or step_s <= 0.0:
         raise ValueError("duration deve ser ≥ 0 e step_s > 0")
+    # Todos os instantes de saída (AOS, TCA, LOS) ficam em UTC, mesmo que start venha em BRT.
     start_utc = start.astimezone(UTC)
+    # Internamente o tempo é contado em segundos desde start (t_rel = 0 no início da janela),
+    # mas o propagador conta desde a SUA época (ex.: a época do TLE). offset_s converte:
+    #   t_propagador = offset_s + t_rel
     offset_s = (start_utc - propagator.epoch).total_seconds()
+    # O usuário passa ε em graus; observe devolve a elevação em radianos.
     el_min = math.radians(el_min_deg)
 
     def look(t_rel: float) -> tuple[float, float]:
+        """(elevação, azimute) [rad] num único instante t_rel [s desde start]."""
         obs = observe(propagator, station, offset_s + t_rel)
         return float(obs.el[0]), float(obs.az[0])
 
     def g(t_rel: float) -> float:  # el − ε: positiva dentro da passagem
+        """Função cuja raiz é o cruzamento de ε: negativa abaixo, positiva acima."""
         return look(t_rel)[0] - el_min
 
-    # 1. varredura vetorizada, em blocos
+    # --- 1. Varredura vetorizada: acima ou abaixo de ε a cada step_s ---------------------------
+    # Número de passos para cobrir a janela; ceil garante que a grade chega até o fim.
     n_steps = max(1, math.ceil(duration_s / step_s))
+    # Grade 0, step_s, 2·step_s, …; o np.minimum faz o último ponto cair exatamente no fim da
+    # janela (duration_s), mesmo que a duração não seja múltipla do passo.
     t_grid = np.minimum(np.arange(n_steps + 1) * step_s, duration_s)
+    # above[k] = True se o satélite está acima de ε no instante t_grid[k].
     above = np.empty(t_grid.size, dtype=bool)
+    # Quantas amostras cabem num bloco de 6 h: calcular dias inteiros de uma vez criaria arrays
+    # grandes demais para janelas longas; em blocos, a memória fica limitada.
     per_block = max(1, int(BLOCK_S // step_s))
     for k0 in range(0, t_grid.size, per_block):
-        sl = slice(k0, k0 + per_block)
+        sl = slice(k0, k0 + per_block)  # as amostras k0, k0+1, …, k0+per_block−1
+        # Uma única chamada vetorizada de observe para todo o bloco (sem laço por instante).
         above[sl] = observe(propagator, station, offset_s + t_grid[sl]).el >= el_min
 
-    # 2. trocas de sinal → raízes por brentq
-    rises, sets = [], []
+    # --- 2. Onde above troca de valor, a elevação cruzou ε: refina o instante exato ------------
+    rises, sets = [], []  # rises: instantes de subida (AOS); sets: de descida (LOS) [s]
+    # above[:-1] != above[1:] compara cada amostra com a seguinte; flatnonzero devolve os k em
+    # que houve troca, ou seja, o cruzamento ocorreu entre t_grid[k] e t_grid[k+1].
     for k in np.flatnonzero(above[:-1] != above[1:]):
+        # g troca de sinal nesse intervalo de step_s segundos; brentq estreita o intervalo até
+        # achar a raiz g = 0 (elevação exatamente ε) com precisão de XTOL_S (1 ms).
         root = brentq(g, t_grid[k], t_grid[k + 1], xtol=XTOL_S)
+        # Se depois da troca está acima (F → T), o satélite subiu: AOS. Senão (T → F): LOS.
         (rises if above[k + 1] else sets).append(root)
+    # Bordas: se já está acima no 1º instante, a subida aconteceu antes da janela e não aparece
+    # como troca; idem para a descida no fim. Sem correção, sobraria um LOS sem AOS (ou o
+    # contrário) e o emparelhamento abaixo falharia.
     starts_inside, ends_inside = bool(above[0]), bool(above[-1])
     if starts_inside:
-        rises.insert(0, 0.0)
+        rises.insert(0, 0.0)  # subida artificial no início da janela
     if ends_inside:
-        sets.append(duration_s)
+        sets.append(duration_s)  # descida artificial no fim da janela
 
+    # --- 3 e 4. Emparelha subidas e descidas em passagens; acha TCA e azimutes -----------------
     passes = []
+    # Subidas e descidas se alternam no tempo (sobe, desce, sobe, desce…), então a k-ésima
+    # subida casa com a k-ésima descida. strict=True acusa erro se as listas não emparelharem.
     for t_aos, t_los in zip(rises, sets, strict=True):
-        # 3. TCA: máximo da elevação entre AOS e LOS
+        # 3. TCA: o instante de elevação máxima entre AOS e LOS. minimize_scalar minimiza, então
+        #    minimizamos −el; method="bounded" restringe a busca ao intervalo [AOS, LOS].
         if t_los > t_aos:
             res = minimize_scalar(lambda t: -look(t)[0], bounds=(t_aos, t_los), method="bounded",
                                   options={"xatol": XTOL_S})  # fmt: skip
             t_tca = float(res.x)
-        else:
+        else:  # intervalo de duração nula (janela de duração 0): não há o que maximizar
             t_tca = t_aos
         el_tca, az_tca = look(t_tca)
+        # Salvaguarda: por construção el ≥ ε entre AOS e LOS, mas arredondamentos nas raízes de
+        # uma passagem rasante podem deixar o máximo abaixo de ε; essas não contam.
         if el_tca < el_min:  # só passagens que de fato superam ε
             continue
-        # 4. azimutes nas bordas
+        # 4. Azimutes nas bordas: de onde o satélite surge (AOS) e onde some (LOS).
         _, az_aos = look(t_aos)
         _, az_los = look(t_los)
         passes.append(
             Pass(
                 sat_id=sat_id,
+                # Segundos desde start → datetime UTC (timedelta arredonda ao microssegundo).
                 aos=start_utc + timedelta(seconds=t_aos),
                 tca=start_utc + timedelta(seconds=t_tca),
                 los=start_utc + timedelta(seconds=t_los),
+                # Saída em graus, como no nome dos campos.
                 max_elevation_deg=math.degrees(el_tca),
                 az_aos_deg=math.degrees(az_aos),
                 az_tca_deg=math.degrees(az_tca),
                 az_los_deg=math.degrees(az_los),
                 duration_s=t_los - t_aos,
+                # Só a passagem que usou a subida/descida artificial é marcada como cortada.
                 starts_inside=starts_inside and t_aos == 0.0,
                 ends_inside=ends_inside and t_los == duration_s,
             )
