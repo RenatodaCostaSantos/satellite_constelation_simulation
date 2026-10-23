@@ -163,6 +163,47 @@ idade:      0.67 dias
 Os testes não acessam a rede: usam o TLE congelado de `tests/data/iss_sample.tle` (época
 2019-12-09) e simulam a CelesTrak.
 
+## Passagens sobre São Bento do Sapucaí (Semana 3)
+
+`scripts/list_passes.py` lista quando a ISS passa acima de uma elevação mínima sobre São Bento do
+Sapucaí, com AOS (nasce), TCA (máxima elevação) e LOS (se põe), em UTC e no horário de Brasília
+(BRT = UTC−03:00). O TLE vem de `get_tle` (cache → CelesTrak → TLE embarcado), e o script mostra a
+fonte e a idade do TLE no início da janela, com aviso acima de 3 dias.
+
+```bash
+python scripts/list_passes.py                        # próximos 3 dias, el ≥ 10°
+python scripts/list_passes.py --days 7 --el-min 5 --offline --csv passagens.csv
+python scripts/list_passes.py --tle-file tests/data/iss_sample.tle --start tle-epoch
+```
+
+Saída do último comando (TLE de teste, reproduz o Apêndice A.2 do prompt da Semana 3):
+
+```text
+TLE:      ISS (ZARYA) (catálogo 25544), fonte: arquivo tests/data/iss_sample.tle
+época:    2019-12-09 16:38:29 UTC
+idade:    0.00 dias no início da janela
+estação:  São Bento do Sapucaí (-22.69°, -45.73°, 900 m)
+janela:   2019-12-09 16:38 UTC + 3 dia(s), el ≥ 10°
+
+ #  satélite     AOS UTC              AOS BRT   TCA BRT   LOS BRT   el máx  az AOS/TCA/LOS [°]     dur
+------------------------------------------------------------------------------------------------------
+ 1  ISS (ZARYA)  2019-12-10 00:46:08  21:46:08  21:49:26  21:52:46   54.7°  333.4/ 51.9/130.3     6.6m
+ 2  ISS (ZARYA)  2019-12-10 10:35:48  07:35:48  07:39:02  07:42:14   46.9°  232.8/307.7/ 22.7     6.4m
+ 3  ISS (ZARYA)  2019-12-10 23:58:15  20:58:15  21:01:03  21:03:53   24.3°  357.9/ 54.3/110.6     5.6m
+ 4  ISS (ZARYA)  2019-12-11 01:35:27  22:35:27  22:37:44  22:40:02   16.7°  265.9/223.5/181.2     4.6m
+ 5  ISS (ZARYA)  2019-12-11 09:47:15  06:47:15  06:50:37  06:53:56   71.5°  215.4/130.3/ 45.3     6.7m
+ 6  ISS (ZARYA)  2019-12-11 23:11:26  20:11:26  20:12:43  20:14:00   11.7°   34.0/ 56.4/ 78.8     2.6m
+ 7  ISS (ZARYA)  2019-12-12 00:46:06  21:46:06  21:49:10  21:52:16   31.5°  291.9/226.7/161.6     6.2m
+ 8  ISS (ZARYA)  2019-12-12 08:59:04  05:59:04  06:02:08  06:05:09   31.4°  198.4/133.3/ 68.2     6.1m
+ 9  ISS (ZARYA)  2019-12-12 10:37:28  07:37:28  07:38:34  07:39:40   11.3°  284.1/303.5/323.0     2.2m
+```
+
+"Passagem" aqui é o satélite acima da elevação mínima (visibilidade por rádio); ver a ISS a olho
+nu exige também Sol abaixo do horizonte e satélite iluminado (Semana 4). A previsão perde precisão
+com a idade do TLE: prefira um TLE com menos de 3 dias. Em Python:
+`satsim.passes.find_passes(propagador, estação, início, duração, el_min_deg=10)` funciona com
+qualquer propagador; `find_passes_many` junta vários satélites, ordenados por AOS.
+
 ## Relatório do arrasto (Semana 3)
 
 Cowell com J2 e arrasto atmosférico contra o SGP4 da ISS (TLE de teste, época 2019-12-09). Um

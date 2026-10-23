@@ -690,3 +690,67 @@ class FootprintA6:
 
 
 FOOTPRINT_A6 = FootprintA6()
+
+# ===============================================================================================
+# Semana 3 — Apêndice A.2 do prompt da Semana 3: passagens da ISS (TLE de teste A.1) sobre São
+#     Bento do Sapucaí, el_min = 10°, 3 dias após a época. Instantes em SEGUNDOS DESDE A ÉPOCA DO
+#     TLE; UTC = época + t. Tolerâncias do card S3-05: AOS/TCA/LOS ±1 s; el. máx. ±0,05°;
+#     azimutes ±0,1°. Skyfield find_events: TCA ≤ 0,1 s, AOS/LOS ≤ 0,19 s, el. máx. ≤ 0,01°.
+#     Com el_min = 5°: 11 passagens (22 cruzamentos); as de 10° estão contidas nas de 5°.
+#
+#     Correção (passagem 9): o prompt traz AOS = 237528,4 s, incoerente com a própria linha —
+#     a coluna UTC (10:37:28) e a duração (132 s) dão AOS = 237538,4 s; confirmado pelo satsim
+#     (237538,7 s) e pelo Skyfield (237538,66 s). Erro de digitação (2 ↔ 3); ver
+#     test_passes_a2_internal_consistency em tests/test_golden_consistency.py.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class PassA2:
+    aos_s: float
+    tca_s: float
+    los_s: float
+    duration_s: float
+    max_el_deg: float
+    az_aos_deg: float
+    az_tca_deg: float
+    az_los_deg: float
+    aos_utc: str  # coluna UTC (AOS → LOS) do A.2, "dd/mm HH:MM:SS"
+    los_utc: str
+
+
+PASSES_A2: tuple[PassA2, ...] = (
+    PassA2(29258.7, 29457.1, 29657.6, 399, 54.72, 333.4, 51.9, 130.3,
+           "10/12 00:46:08", "10/12 00:52:46"),
+    PassA2(64638.7, 64833.5, 65025.6, 387, 46.88, 232.8, 307.7, 22.7,
+           "10/12 10:35:48", "10/12 10:42:14"),
+    PassA2(112786.2, 112954.4, 113124.0, 338, 24.27, 357.9, 54.3, 110.6,
+           "10/12 23:58:15", "11/12 00:03:53"),
+    PassA2(118618.4, 118755.1, 118892.7, 274, 16.69, 265.9, 223.6, 181.2,
+           "11/12 01:35:27", "11/12 01:40:02"),
+    PassA2(148126.5, 148328.2, 148526.8, 400, 71.54, 215.4, 130.3, 45.3,
+           "11/12 09:47:15", "11/12 09:53:56"),
+    PassA2(196377.3, 196454.1, 196531.0, 154, 11.70, 34.0, 56.4, 78.8,
+           "11/12 23:11:26", "11/12 23:14:00"),
+    PassA2(202056.8, 202241.1, 202427.1, 370, 31.53, 291.9, 226.7, 161.6,
+           "12/12 00:46:06", "12/12 00:52:16"),
+    PassA2(231634.9, 231818.7, 232000.0, 365, 31.40, 198.4, 133.3, 68.2,
+           "12/12 08:59:04", "12/12 09:05:09"),
+    PassA2(237538.4, 237604.9, 237670.9, 132, 11.26, 284.1, 303.5, 323.0,
+           "12/12 10:37:28", "12/12 10:39:40"),  # AOS corrigido (prompt: 237528,4)
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class PassesA2Meta:
+    el_min_deg: float = 10.0
+    window_days: float = 3.0
+    n_passes_10deg: int = 9
+    n_passes_5deg: int = 11
+    skyfield_max_dt_s: float = 0.19  # AOS/LOS (TCA ≤ 0,1 s); critério do card: < 1 s
+    tol_time_s: float = 1.0
+    tol_el_deg: float = 0.05
+    tol_az_deg: float = 0.1
+
+
+PASSES_A2_META = PassesA2Meta()
