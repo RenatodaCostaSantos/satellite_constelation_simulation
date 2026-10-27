@@ -59,6 +59,7 @@ def _check_degrees(degrees: Iterable[int], coefficients: Mapping[int, float]) ->
 
 def _legendre(s: NDArray[np.float64], n_max: int) -> tuple[list, list]:
     """P_n(s) e P_n'(s) para n = 0 … n_max pela recorrência de Bonnet."""
+    # Cada item da lista é um nparray. O append adiciona um novo np.array nas listas p e dp.
     p = [np.ones_like(s), s]
     dp = [np.zeros_like(s), np.ones_like(s)]
     for n in range(1, n_max):
