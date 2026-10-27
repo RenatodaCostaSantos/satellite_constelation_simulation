@@ -3,6 +3,7 @@
 from satsim.forces.atmosphere import ExponentialAtmosphere
 from satsim.forces.drag import DragAcceleration, altitude
 from satsim.forces.j2 import AccelerationModel, J2Acceleration, j2_acceleration, j2_potential
+from satsim.forces.third_body import ThirdBodyAcceleration, third_body_acceleration
 from satsim.forces.zonal import (
     ZONAL_COEFFICIENTS,
     ZonalAcceleration,
@@ -15,11 +16,13 @@ __all__ = [
     "DragAcceleration",
     "ExponentialAtmosphere",
     "J2Acceleration",
+    "ThirdBodyAcceleration",
     "ZONAL_COEFFICIENTS",
     "ZonalAcceleration",
     "altitude",
     "j2_acceleration",
     "j2_potential",
+    "third_body_acceleration",
     "zonal_acceleration",
     "zonal_potential",
 ]

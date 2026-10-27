@@ -810,3 +810,76 @@ class ZonalA2S4:
 
 
 ZONAL_A2_S4 = ZonalA2S4()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.3 do prompt da Semana 4: Sol, Lua e terceiro corpo (card S4-02).
+#     Quadro: equador verdadeiro e equinócio da data (= ECI/TEME do projeto). Posições do JPL
+#     DE421 via Skyfield 1.55 (experimento de referência, 23/10/2026), em km, 00:00 UTC.
+#     Erros em 2026 (a cada 6 h, 1460 instantes) × DE421: Sol (Astronomical Almanac) direção máx.
+#     0,0140°, |Δr|/r ≤ 8,5e-5; Lua (Montenbruck & Gill §3.3.2, da data) direção máx. 0,085°,
+#     |Δr| ≤ 445 km. Nota (S4-02): esses |Δr| são diferenças de DISTÂNCIA (|r| − |r_DE421|); a
+#     diferença vetorial inclui o erro de direção (Lua em 2026-10-23: distância 439 km, vetor
+#     494 km; Sol: o erro de direção sozinho já dá ~2,2e-4 relativo).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class EphemerisPointA3:
+    date_utc: str
+    sun_km: tuple[float, float, float]
+    moon_km: tuple[float, float, float]
+
+
+EPHEMERIS_A3: tuple[EphemerisPointA3, ...] = (
+    EphemerisPointA3("2026-03-20T00:00:00+00:00",
+                     (148953369.6, -1445437.0, -626444.2), (362066.5, 61667.2, 46759.2)),
+    EphemerisPointA3("2026-06-21T00:00:00+00:00",
+                     (872345.9, 139472241.3, 60464721.9), (-375552.0, 72784.2, 20825.8)),
+    EphemerisPointA3("2026-10-23T00:00:00+00:00",
+                     (-129426274.1, -67475521.4, -29252187.5), (376788.1, -72295.8, -18052.9)),
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class ThirdBodyA3:
+    # Tolerâncias do card S4-02 e erros máximos medidos em 2026 (A.3)
+    sun_dir_tol_deg: float = 0.02
+    sun_dist_rel_tol: float = 1e-4
+    moon_dir_tol_deg: float = 0.1
+    moon_dist_tol_km: float = 500.0
+    sun_dir_max_2026_deg: float = 0.0140
+    sun_dist_rel_max_2026: float = 8.5e-5
+    moon_dir_max_2026_deg: float = 0.085
+    moon_dist_max_2026_km: float = 445.0
+    sun_mg_rejected_deg: float = 0.094  # Sol de M&G §3.3.2 (periélio fixo)
+    no_precession_sun_deg: float = 0.47  # sem a correção para o equinócio da data
+    no_precession_moon_deg: float = 0.46
+    # 2026-10-23 00:00 UTC
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    sun_ra_aa_deg: float = 207.5235  # fórmula do AA (tolerância do card: abs 0,001°)
+    sun_ra_de421_deg: float = 207.5350
+    sun_distance_au: float = 0.995080
+    ltan_raan_deg: float = 5.0235  # Ω que dá LTAN 22h30 nessa data
+    ltan_h: float = 22.500  # tolerância: abs 0,005 h
+    # Terceiro corpo em r = (R⊕ + 500 km, 0, 0), m/s² (tolerância do card: rel 1%)
+    mu_sun_m3_s2: float = 1.32712440018e20  # IERS Conventions 2010
+    mu_moon_m3_s2: float = 4.9028000661e12  # DE421
+    au_m: float = 149597870700.0  # IAU 2012
+    r_alt_km: float = 500.0
+    a_sun_m_s2: float = 5.002320e-7
+    a_moon_m_s2: float = 1.200458e-6
+    # SSO calibrada (A.7), Cowell J2–J4, 30 dias: efeito de Sol/Lua em Ω̇. Discrepância com o
+    # Sem4 §10, que estima a precessão nodal lunissolar em "~1e-3 grau/dia em LEO" (~40× maior).
+    lunisolar_raan_dot_deg_day: float = -2.45e-5
+    lunisolar_ltan_drift_min_year: float = -0.035
+    sem4_s10_estimate_deg_day: float = 1e-3
+    i_calibrated_with_sun_moon_deg: float = 97.46344  # +0,0002° sobre a calibrada só J2–J4
+    # Medido no S4-02 (não substitui o A.3; a conversão médio → osculador só chega no S4-04):
+    # elementos do A.7 tomados como osculadores (Ω0 = 5,0235°, LTAN 22h30), Cowell J2–J4 ± Sol/Lua,
+    # 30 dias a 60 s. O ajuste linear de Ω dá −3,52e-4 °/dia (Sol sozinho −2,17e-4), porque o Sol
+    # produz di/dt ≈ −9,8e-5 °/dia (deriva de inclinação da SSO) e, via J2, ΔΩ ∝ t²
+    # (−0,0058° previsto, −0,0065° medido em 30 dias com o Sol). Nos primeiros 5 dias
+    # ΔΩ ≈ −1e-4° (≈ −2e-5 °/dia), coerente com o A.3. Reavaliar com o estado convertido no S4-05.
+
+
+THIRD_BODY_A3 = ThirdBodyA3()

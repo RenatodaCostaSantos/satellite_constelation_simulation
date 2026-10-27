@@ -66,6 +66,17 @@ OMEGA_SUN: Final[float] = 2.0 * math.pi / (T_TROP_DAYS * SECONDS_PER_DAY)
 """Taxa heliossíncrona alvo: movimento médio aparente do Sol [rad/s] (Sem4 eq. 26).
 Vale ≈ 1,991064e-7 rad/s = 0,985647 °/dia."""
 
+# --- Sol e Lua: terceiro corpo (S4-02) ------------------------------------------------------------
+
+MU_SUN: Final[float] = 1.32712440018e20
+"""Parâmetro gravitacional do Sol µ☉ [m³/s²] (IERS Conventions 2010, Tabela 1.1)."""
+
+MU_MOON: Final[float] = 4.9028000661e12
+"""Parâmetro gravitacional da Lua µ☾ [m³/s²] (efemérides JPL DE421, GM da Lua)."""
+
+AU: Final[float] = 149597870700.0
+"""Unidade astronômica [m] (IAU 2012, Resolução B2: valor exato por definição)."""
+
 # --- Conversão de ângulos -----------------------------------------------------------------------
 
 DEG2RAD: Final[float] = math.pi / 180.0
