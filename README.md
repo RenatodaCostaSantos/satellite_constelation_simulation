@@ -274,6 +274,36 @@ Para adicionar um valor:
 2. cite a fonte num comentário (documento, seção, tabela ou equação);
 3. se o número puder ser deduzido de outros, acrescente um teste de consistência.
 
+## Limitações
+
+### Manutenção da SSO em intervalos longos (correção de trajetória)
+
+A física do propagador é completa o bastante para mostrar que **nenhuma órbita heliossíncrona
+mantém o LTAN constante para sempre sem manobras**. Só com a gravidade da Terra (J2–J4), a
+precessão do nó é linear e uma inclinação calibrada mantém o LTAN fixo. Com o Sol, o efeito muda:
+
+- numa SSO a geometria entre o plano da órbita e o Sol fica congelada (é a definição de LTAN
+  constante), então a maré solar empurra a inclinação sempre no mesmo sentido. Para a SSO de
+  projeto com LTAN 22h30, di/dt ≈ −1e-4 °/dia ≈ **−0,036°/ano** (medido no Cowell no S4-02);
+- como Ω̇ depende de i (via J2), o nó e o LTAN passam a derivar de forma ~quadrática no tempo:
+  em poucos anos são dezenas de minutos de LTAN;
+- a Lua soma termos periódicos de ~14 dias, e o Sol um termo semestral.
+
+Missões reais corrigem isso com **manobras periódicas de inclinação**, espaçadas de meses a anos.
+A ordem de grandeza do custo é Δv ≈ v·Δi ≈ 7 607 m/s × 6,3e-4 rad ≈ **4,8 m/s por ano** de deriva
+corrigida.
+
+**O simulador não cobre isso:**
+
+- não há modelo de manobras nem de manutenção de órbita (faixa de tolerância de LTAN ou de
+  inclinação, data prevista da próxima correção, Δv);
+- a demo visual cobre só **24 h**. Nesse intervalo a deriva causada pelo Sol é de milésimos de
+  minuto de LTAN, invisível na tela. O efeito só aparece em escalas de meses a anos, que exigem
+  um propagador médio rápido (e não o Cowell da cena) com o termo solar em di/dt.
+
+Um indicador de manutenção da SSO no painel (deriva prevista, próxima correção e Δv/ano) está
+registrado como proposta para as próximas semanas.
+
 ## Roadmap
 
 **Concluído:**
