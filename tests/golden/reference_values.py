@@ -754,3 +754,59 @@ class PassesA2Meta:
 
 
 PASSES_A2_META = PassesA2Meta()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.2 do prompt da Semana 4: gravidade zonal J2–J4 (Sem4 eq. 6, card S4-01).
+#     Experimento de referência independente (23/10/2026): forças escritas do zero e integradas no
+#     CowellPropagator do projeto (DOP853). J2 1,08262668e-3, J3 −2,533e-6, J4 −1,620e-6; µ e R⊕
+#     do projeto. Acelerações em m/s², em r = 7000 km; o ponto de 45° N é 7000 km·(cos 45°, 0,
+#     sin 45°) (o prompt imprime (4949,7; 0; 4949,7) km).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class ZonalPointA2S4:
+    label: str
+    r_km: tuple[float, float, float]
+    a_j2: tuple[float, float, float]
+    a_j3: tuple[float, float, float]
+    a_j4: tuple[float, float, float]
+
+
+_C45_KM = 7000.0 * 0.5**0.5
+
+ZONAL_POINTS_A2_S4: tuple[ZonalPointA2S4, ...] = (
+    ZonalPointA2S4("equador", (7000.0, 0.0, 0.0),
+                   (-1.0967390000e-2, 0.0, 0.0),
+                   (0.0, 0.0, -2.3380594778e-5),
+                   (-1.7031041069e-5, 0.0, 0.0)),
+    ZonalPointA2S4("45N", (_C45_KM, 0.0, _C45_KM),
+                   (1.1632673762e-2, 0.0, -3.8775579205e-3),
+                   (-9.7419144910e-6, 0.0, 2.5328977677e-5),
+                   (9.0320734728e-6, 0.0, 1.7060583226e-5)),
+    ZonalPointA2S4("polo N", (0.0, 0.0, 7000.0),
+                   (0.0, 0.0, 2.1934780000e-2),
+                   (0.0, 0.0, -6.2348252742e-5),
+                   (0.0, 0.0, -4.5416109517e-5)),
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class ZonalA2S4:
+    # Medidas do experimento (A.2): parte J2 × j2_acceleration (rel máx, 200 pontos de LEO),
+    # gradiente numérico do potencial (h = 1 m) e energia no Cowell J2–J4 (10 dias, rtol 1e-11)
+    j2_consistency_rel: float = 1.3e-15  # critério do card: ≤ 1e-12
+    gradient_rel: float = 1.4e-9  # critério: ≤ 1e-7
+    energy_rel_10d: float = 3.4e-11  # critério: ≤ 1e-9
+    # Elementos de projeto tomados como osculadores (Ω0 = 30°, ψ0 = 0, 2026-10-23 00:00 UTC),
+    # 30 dias a 60 s, fit_rate de Ω [°/dia]
+    raan_dot_j2_deg_day: float = 0.979419
+    raan_dot_j2_j3_deg_day: float = 0.979418
+    raan_dot_j2_j4_deg_day: float = 0.977169
+    raan_dot_ratio_j2j4_j2: float = 0.997703  # tolerância do card: abs 2e-5
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    raan0_deg: float = 30.0
+    psi0_deg: float = 0.0
+
+
+ZONAL_A2_S4 = ZonalA2S4()
