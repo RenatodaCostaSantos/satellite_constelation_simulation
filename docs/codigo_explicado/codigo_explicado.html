@@ -82,6 +82,7 @@
     <li><code>forces/atmosphere.py</code>, <code>forces/drag.py</code>, <code>decay.py</code> — arrasto no Cowell e por que o arrasto padrão piora o resultado (o “V” do coeficiente balístico)</li>
     <li><code>src/satsim/observer.py</code> — sistemas de coordenadas (ECI, ECEF, geodésico, geocêntrico, ENU), transformações e sutilezas (normal ao elipsoide × reta radial)</li>
     <li>CelesTrak e Skyfield — de onde vêm os dados (TLE) e quem confere os cálculos (os testes)</li>
+    <li><code>src/satsim/forces/third_body.py</code> — Sol e Lua: o atraso de 24 h, a deriva de inclinação da SSO e a analogia do peão (J2 inclina só de forma oscilatória)</li>
   </ol>
 </nav>
 
@@ -1904,6 +1905,113 @@ sem baixar nada): nenhum teste acessa a internet.</p>
 esconderia justamente o que o projeto quer implementar e entender — propagação, referenciais, geodésia,
 visibilidade. Por isso ele fica na lista de dependências de <em>desenvolvimento</em> (<code>pip install -e ".[dev]"</code>),
 não nas de execução: o simulador roda sem ele, e ele só confirma que o que construímos está certo.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="third-body-py">
+<h2>13. third_body.py — Sol e Lua: precessão, inclinação e a analogia do peão</h2>
+<div class="file">src/satsim/forces/third_body.py · src/satsim/ephemeris.py · card S4-02</div>
+
+<h3>O que o card acrescenta</h3>
+<p>O Sol e a Lua também atraem o satélite. Como a Terra é atraída quase igualmente, o que importa
+no referencial geocêntrico é a <em>diferença</em> entre as duas atrações, uma <strong>maré</strong>:</p>
+<pre><code>a = µ_b · [ (s − r)/|s − r|³ − s/|s|³ ]      s = posição do corpo, r = satélite</code></pre>
+<p>Ela estica a órbita ao longo da linha Terra–corpo e a comprime na perpendicular. Em LEO vale
+≈ 5·10⁻⁷ m/s² (Sol) e ≈ 1,2·10⁻⁶ m/s² (Lua): cerca de 10⁻⁴ de J2 e 10⁻⁷ da gravidade central.</p>
+
+<h3>O efeito em 24 horas: um atraso ao longo da trajetória</h3>
+<p>Comparando o Cowell J2–J4 com e sem Sol/Lua, partindo do mesmo estado, na SSO de demonstração (LTAN 22h30):</p>
+<table>
+  <tr><th>Após</th><th>Radial (altura)</th><th>Ao longo da órbita</th><th>Normal ao plano</th></tr>
+  <tr><td>6 h</td><td>0,3 m</td><td>−49 m</td><td>0,8 m</td></tr>
+  <tr><td>12 h</td><td>3,2 m</td><td>−95 m</td><td>−1,5 m</td></tr>
+  <tr><td>24 h</td><td>0,4 m</td><td><strong>−188 m</strong></td><td>−0,6 m</td></tr>
+</table>
+<p>Quase tudo aparece <em>ao longo</em> da trajetória: o satélite passa pelos mesmos lugares um pouco atrasado. A
+altura média não deriva, porque a força é conservativa (vem de um potencial, como J2): na média sobre uma volta, o
+semieixo não tem variação secular, ao contrário do arrasto. O que muda é o período: o mesmo estado inicial
+corresponde, com Sol/Lua, a uma órbita média ligeiramente diferente (semieixo médio ≈ 1 m maior), e a diferença de
+período acumula ≈ 8 m por hora. É o mesmo fenômeno “médio ≠ osculador” da seção 7. Na tela da demo, 188 m são
+invisíveis; numa validação de precisão (critério de 0,2 km em 24 h no S4-06), não.</p>
+
+<h3>O efeito em meses e anos: o Sol muda a inclinação</h3>
+<p>Uma órbita heliossíncrona precessa 0,9856°/dia graças a J2, acompanhando o Sol. Com o Sol incluído, ela deixa de
+ser SSO perfeita, mas não porque o Sol mude diretamente a precessão (esse efeito direto é minúsculo, ≈ −2·10⁻⁵ °/dia).
+A cadeia é indireta:</p>
+<pre><code>Sol puxa a órbita (maré)
+   └─► a INCLINAÇÃO muda devagar           (≈ −0,036°/ano na SSO de 22h30)
+          └─► via J2, <span class="od">Ω</span> depende de i       (<span class="od">Ω</span> ∝ cos i, Sem4 eq. 23)
+                 └─► a precessão sai do ritmo do Sol
+                        └─► o LTAN deriva</code></pre>
+<p>Na SSO de 22h30 a inclinação <em>diminui</em> (fica menos retrógrada), |cos i| diminui, e a precessão fica
+<em>mais lenta</em>: o plano atrasa em relação ao Sol. Extrapolando a taxa medida: ≈ −3,5 min de LTAN em 1 ano e
+≈ −30 min em 3 anos. O ΔLTAN cresce com t², porque o erro de taxa aumenta à medida que a inclinação deriva. O sentido
+e o tamanho dependem do LTAN: pela teoria média, a deriva de inclinação é aproximadamente nula em LTAN 6h/18h e
+12h/0h e máxima perto de 3h, 9h, 15h e 21h. É por isso que missões reais fazem <strong>manobras de correção de
+inclinação</strong> (Δv ≈ v·Δi ≈ 4,8 m/s por ano de deriva). O simulador não modela manobras (README, “Limitações”).</p>
+<p>Consequência para a calibração da SSO (S4-05): com só J2–J4, Ω(t) é uma reta e “o” <span class="od">Ω</span> é
+bem definido. Com o Sol, Ω(t) vira uma curva, e a inclinação de uma reta ajustada depende da janela: ≈ −2·10⁻⁵ °/dia
+nos primeiros dias, ≈ −3,5·10⁻⁴ °/dia num ajuste de 30 dias.</p>
+
+<h3>A analogia do peão</h3>
+<p>A precessão de uma órbita é a de um giroscópio, desde que o mapeamento seja o certo. O satélite sozinho não é um
+“elemento de massa do peão”: fazendo a média ao longo de uma volta, ele equivale a um <strong>anel de massa
+espalhado pela órbita</strong>, e esse anel girando é o peão.</p>
+<table>
+  <tr><th>Peão</th><th>Órbita</th></tr>
+  <tr><td>eixo de rotação do peão (momento angular L)</td><td>normal ao plano da órbita (momento angular ℓ)</td></tr>
+  <tr><td>massa girando do peão</td><td>satélite “espalhado” ao longo da órbita (anel)</td></tr>
+  <tr><td>eixo vertical (do chão)</td><td>eixo polar da Terra</td></tr>
+  <tr><td>torque da gravidade sobre o peão</td><td>torque do <strong>bojo equatorial (J2)</strong> sobre o anel</td></tr>
+  <tr><td>precessão do peão em torno da vertical</td><td>precessão do nó <span class="od">Ω</span> em torno do eixo da Terra</td></tr>
+</table>
+<p>Quem faz o papel da gravidade no peão é J2, não o Sol. O Sol é um segundo torque, bem mais fraco e em outra
+direção.</p>
+<p><strong>Uma diferença importante.</strong> No peão rápido a velocidade de precessão <em>não</em> depende da
+inclinação: o torque é τ = m·g·l·sin θ, a parte de L que precisa girar também é ∝ sin θ, e Ω<sub>p</sub> =
+τ/(L·sin θ) = m·g·l/L. O peão que está caindo precessa mais rápido porque <em>perde rotação</em> por atrito (L
+diminui), não por estar mais inclinado. Na órbita o torque de J2 é ∝ sin i·cos i; dividindo por ℓ·sin i sobra
+<span class="od">Ω</span> ∝ cos i. A taxa de precessão <em>depende</em> da inclinação, e é isso que permite escolher
+i ≈ 97,5° para obter exatamente 0,9856°/dia. É também por isso que uma pequena mudança de i, causada pelo Sol,
+desregula a precessão.</p>
+
+<h3>J2 também inclina a órbita, mas só de forma oscilatória</h3>
+<p>A força de J2 não é só perpendicular ao plano da órbita, então seria natural esperar que ela também mudasse a
+inclinação. Ela muda, mas de forma <em>oscilatória</em>, que se cancela a cada volta:</p>
+<ul>
+  <li><strong>A componente radial não inclina nada:</strong> uma força ao longo de r não faz torque (r × F = 0). Ela
+  mexe no tamanho e no formato da órbita (a, e, período), não na orientação do plano.</li>
+  <li><strong>A componente fora do plano gira o plano:</strong> ela tanto faz precessionar quanto muda a inclinação
+  a cada instante.</li>
+</ul>
+<p>Medido no Cowell só com J2, na SSO de demonstração:</p>
+<table>
+  <tr><th>Grandeza</th><th>Valor</th></tr>
+  <tr><td>i osculadora na 1ª volta</td><td>oscila entre 97,4530° e 97,4633° (≈ 0,010° pico a pico, duas vezes por volta)</td></tr>
+  <tr><td>i <strong>média</strong> na 1ª volta</td><td>97,458095°</td></tr>
+  <tr><td>i <strong>média</strong> na última volta, após 10 dias</td><td>97,458116° (diferença de 2·10⁻⁵°, ruído da média)</td></tr>
+  <tr><td>Ω no mesmo período</td><td>girou <strong>9,82°</strong></td></tr>
+</table>
+<p>J2 inclina e desinclina o plano em ≈ 0,01° a cada meia volta, mas não acumula nada; a precessão acumula
+0,98°/dia.</p>
+<p><strong>O motivo é a simetria.</strong> O bojo equatorial é simétrico em torno do eixo da Terra; uma força com
+essa simetria não faz torque em torno de z. A componente z do momento angular, ℓ<sub>z</sub> = ℓ·cos i, se conserva
+exatamente (no Cowell variou 1,7·10⁻¹¹ em 10 dias, ruído numérico). Como o tamanho de ℓ também não tem deriva secular
+com J2, <strong>cos i não pode derivar</strong>: a inclinação só oscila em torno de um valor fixo. A precessão não é
+limitada por nenhuma lei de conservação, e por isso acumula.</p>
+<p><strong>Com o Sol a simetria quebra.</strong> O Sol não está sobre o eixo da Terra: o torque dele tem componente
+em z, e ℓ<sub>z</sub> deixa de ser conservado. Numa SSO a geometria entre o plano e o Sol é a mesma todo dia (é a
+definição de LTAN constante), então a parte do torque que inclina <em>não se cancela na média</em>: empurra sempre
+no mesmo sentido e acumula.</p>
+
+<h3>Resumo em linguagem de peão</h3>
+<table>
+  <tr><th>Efeito</th><th>Na órbita</th><th>No peão</th></tr>
+  <tr><td>J2, torque perpendicular (médio)</td><td>precessão do nó, 0,98°/dia, acumula</td><td>a gravidade fazendo o peão precessionar</td></tr>
+  <tr><td>J2, oscilação de curto período</td><td>i oscila ≈ 0,01° duas vezes por volta e volta ao mesmo valor</td><td>o eixo balança para a frente e para trás (nutação), sem mudar a inclinação média</td></tr>
+  <tr><td>Sol, componente que inclina</td><td>i deriva ≈ −0,036°/ano e não volta</td><td>uma brisa fraca soprando sempre do mesmo lado, acompanhando a precessão</td></tr>
+  <tr><td>Consequência</td><td>com outra inclinação, J2 precessiona em outro ritmo e o LTAN deriva</td><td>(sem análogo direto: no peão rápido a precessão não depende da inclinação)</td></tr>
+</table>
 </section>
 
 </main>
