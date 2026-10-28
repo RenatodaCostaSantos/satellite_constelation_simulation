@@ -46,6 +46,20 @@ def sun_position_eci(jd: ArrayLike) -> NDArray[np.float64]:
         R = (1,00014 − 0,01671·cos g − 0,00014·cos 2g) UA
         r☉ = R·(cos λ, cos ε·sin λ, sin ε·sin λ)
 
+    Variáveis:
+
+    - n: dias desde J2000.0 (2000-01-01 12:00 TT).
+    - L: longitude média do Sol, medida na eclíptica a partir do equinócio: onde o Sol estaria
+      se a órbita da Terra fosse circular (avança ≈ 360° por ano trópico).
+    - g: anomalia média do Sol, o ângulo médio desde o periélio da órbita da Terra.
+    - λ: longitude eclíptica verdadeira do Sol. Os termos 1,915°·sin g + 0,020°·sin 2g são a
+      equação do centro, a correção pela excentricidade da órbita da Terra (e ≈ 0,0167).
+    - β: latitude eclíptica. É ≈ 0 por definição: a eclíptica é o plano da órbita da Terra.
+    - ε: obliquidade da eclíptica, o ângulo entre a eclíptica e o equador da data.
+    - R: distância Terra–Sol [UA]; o termo 0,01671·cos g é a excentricidade da órbita.
+    - r☉: o vetor (cos λ, sin λ, 0) na eclíptica, girado de ε em torno do eixo x (a linha do
+      equinócio) para o quadro equatorial.
+
     λ e ε já são da data (o periélio avança com g), por isso não há correção de precessão.
 
     Args:
@@ -54,12 +68,14 @@ def sun_position_eci(jd: ArrayLike) -> NDArray[np.float64]:
     Returns:
         Posição [m], shape (3,) ou (N, 3).
     """
-    n = np.asarray(jd, dtype=float) - JD_J2000
-    mean_lon = (280.460 + 0.9856474 * n) * DEG2RAD
-    g = (357.528 + 0.9856003 * n) * DEG2RAD
+    n = np.asarray(jd, dtype=float) - JD_J2000  # dias desde J2000.0
+    mean_lon = (280.460 + 0.9856474 * n) * DEG2RAD  # L: longitude média
+    g = (357.528 + 0.9856003 * n) * DEG2RAD  # g: anomalia média
+    # λ: longitude eclíptica verdadeira = L + equação do centro
     lam = mean_lon + (1.915 * np.sin(g) + 0.020 * np.sin(2.0 * g)) * DEG2RAD
-    eps = (23.439 - 0.0000004 * n) * DEG2RAD
-    dist = (1.00014 - 0.01671 * np.cos(g) - 0.00014 * np.cos(2.0 * g)) * AU
+    eps = (23.439 - 0.0000004 * n) * DEG2RAD  # ε: obliquidade da eclíptica
+    dist = (1.00014 - 0.01671 * np.cos(g) - 0.00014 * np.cos(2.0 * g)) * AU  # R: distância
+    # eclíptica (β = 0) → equatorial: rotação de ε em torno de x
     return dist[..., None] * _stack_xyz(
         np.cos(lam), np.cos(eps) * np.sin(lam), np.sin(eps) * np.sin(lam)
     )
@@ -73,26 +89,51 @@ def moon_position_eci(jd: ArrayLike) -> NDArray[np.float64]:
     data soma-se de volta a precessão, λ ← λ + 1,3972°·T, e usa-se a obliquidade da data
     ε = 23,43929111° − 0,0130042°·T. Sem essa correção o erro em 2026 seria 0,46°.
 
+    Variáveis (argumentos fundamentais de Delaunay, em graus; séries em segundos de arco "):
+
+    - T: séculos julianos desde J2000.0.
+    - L0: longitude média da Lua, onde ela estaria numa órbita circular sem perturbações
+      (≈ 13,18°/dia).
+    - l: anomalia média da Lua, o ângulo médio desde o perigeu lunar (período anomalístico
+      ≈ 27,55 dias).
+    - l': anomalia média do Sol, a mesma g de ``sun_position_eci``.
+    - F: argumento médio de latitude, a distância média da Lua ao seu nó ascendente na
+      eclíptica (período draconítico ≈ 27,21 dias).
+    - D: elongação média da Lua, a diferença entre as longitudes médias da Lua e do Sol (ciclo
+      das fases, período sinódico ≈ 29,53 dias).
+    - λ − L0 (``dlam``): perturbações em longitude. Os termos principais são 22640"·sin l
+      (equação do centro, excentricidade da órbita lunar ≈ 0,055), −4586"·sin(l − 2D)
+      (evecção), +2370"·sin 2D (variação) e −668"·sin l' (equação anual, efeito do Sol).
+    - β: latitude eclíptica da Lua. O termo 18520"·sin(F + …) vem da inclinação da órbita lunar
+      sobre a eclíptica (≈ 5,1°).
+    - r: distância Terra–Lua [km]. O valor médio é 385 000 km, e −20905·cos l é a
+      excentricidade.
+    - ε: obliquidade da eclíptica da data.
+    - r☾: o versor eclíptico (cos β·cos λ, cos β·sin λ, sin β) girado de ε em torno de x para
+      o quadro equatorial, vezes r.
+
     Args:
         jd: Data Juliana (UTC usado como TT), escalar ou shape (N,).
 
     Returns:
         Posição [m], shape (3,) ou (N, 3).
     """
-    t = (np.asarray(jd, dtype=float) - JD_J2000) / DAYS_PER_JULIAN_CENTURY
+    t = (np.asarray(jd, dtype=float) - JD_J2000) / DAYS_PER_JULIAN_CENTURY  # T: séculos julianos
+    # L0: longitude média da Lua (referida ao equinócio J2000, por isso o −1,3972°·T)
     l0 = (218.31617 + 481267.88088 * t - PRECESSION_DEG_PER_CENTURY * t) * DEG2RAD
-    l = (134.96292 + 477198.86753 * t) * DEG2RAD  # anomalia média da Lua  # noqa: E741
-    lp = (357.52543 + 35999.04944 * t) * DEG2RAD  # anomalia média do Sol
-    f = (93.27283 + 483202.01873 * t) * DEG2RAD  # distância média ao nó
-    d = (297.85027 + 445267.11135 * t) * DEG2RAD  # elongação média
+    l = (134.96292 + 477198.86753 * t) * DEG2RAD  # l: anomalia média da Lua  # noqa: E741
+    lp = (357.52543 + 35999.04944 * t) * DEG2RAD  # l': anomalia média do Sol
+    f = (93.27283 + 483202.01873 * t) * DEG2RAD  # F: argumento médio de latitude
+    d = (297.85027 + 445267.11135 * t) * DEG2RAD  # D: elongação média Lua–Sol
     sin = np.sin
+    # λ − L0: perturbações em longitude ["]
     dlam = (
-        22640 * sin(l)
+        22640 * sin(l)  # equação do centro (excentricidade da órbita lunar)
         + 769 * sin(2 * l)
-        - 4586 * sin(l - 2 * d)
-        + 2370 * sin(2 * d)
-        - 668 * sin(lp)
-        - 412 * sin(2 * f)
+        - 4586 * sin(l - 2 * d)  # evecção (o Sol deforma a órbita)
+        + 2370 * sin(2 * d)  # variação
+        - 668 * sin(lp)  # equação anual (distância Terra–Sol varia)
+        - 412 * sin(2 * f)  # redução à eclíptica
         - 212 * sin(2 * l - 2 * d)
         - 206 * sin(l + lp - 2 * d)
         + 192 * sin(l + 2 * d)
@@ -101,8 +142,9 @@ def moon_position_eci(jd: ArrayLike) -> NDArray[np.float64]:
         - 125 * sin(d)
         - 110 * sin(l + lp)
         - 55 * sin(2 * f - 2 * d)
-    ) * _ARCSEC  # λ − L0
-    lam = l0 + dlam
+    ) * _ARCSEC
+    lam = l0 + dlam  # λ: longitude eclíptica (equinócio J2000)
+    # β: latitude eclíptica ["]; 18520" ≈ 5,1° é a inclinação da órbita lunar sobre a eclíptica
     beta = (
         18520 * sin(f + dlam + (412 * sin(2 * f) + 541 * sin(lp)) * _ARCSEC)
         - 526 * sin(f - 2 * d)
@@ -114,9 +156,10 @@ def moon_position_eci(jd: ArrayLike) -> NDArray[np.float64]:
         + 11 * sin(-lp + f - 2 * d)
     ) * _ARCSEC
     cos = np.cos
+    # r: distância Terra–Lua [km]
     dist_km = (
-        385000
-        - 20905 * cos(l)
+        385000  # distância média
+        - 20905 * cos(l)  # excentricidade
         - 3699 * cos(2 * d - l)
         - 2956 * cos(2 * d)
         - 570 * cos(2 * l)
@@ -126,7 +169,8 @@ def moon_position_eci(jd: ArrayLike) -> NDArray[np.float64]:
         - 152 * cos(l + lp - 2 * d)
     )
     lam = lam + PRECESSION_DEG_PER_CENTURY * t * DEG2RAD  # equinócio da data
-    eps = (23.43929111 - 0.0130042 * t) * DEG2RAD
+    eps = (23.43929111 - 0.0130042 * t) * DEG2RAD  # ε: obliquidade da eclíptica da data
+    # versor eclíptico (cos β cos λ, cos β sin λ, sin β) girado de ε em torno de x → equatorial
     cb, sb, cl, sl, ce, se = cos(beta), sin(beta), cos(lam), sin(lam), cos(eps), sin(eps)
     return (dist_km * 1e3)[..., None] * _stack_xyz(
         cb * cl, ce * cb * sl - se * sb, se * cb * sl + ce * sb
