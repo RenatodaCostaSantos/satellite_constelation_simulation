@@ -883,3 +883,42 @@ class ThirdBodyA3:
 
 
 THIRD_BODY_A3 = ThirdBodyA3()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.4 do prompt da Semana 4: pressão de radiação solar e eclipse (card S4-03).
+#     P☉ = 4,56e-6 N/m² a 1 UA (Montenbruck & Gill §3.4). Sombra cilíndrica (Sem4 §5.3), fração de
+#     eclipse de órbita circular (Sem4 eq. 30). SSO de demonstração do A.7: a 6888,089 km,
+#     i 97,46325°, e 1,07721e-3, ω 90°, ψ0 = 0, Ω = 5,0235° (LTAN 22h30 em 2026-10-23 00:00 UTC).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SrpEclipseA4:
+    p_sun_n_m2: float = 4.56e-6
+    cr: float = 1.3
+    area_over_mass_m2_kg: float = 0.01
+    a_1au_m_s2: float = 5.928e-8  # P☉·C_R·A/m a 1 UA
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    sun_distance_au: float = 0.995080
+    a_epoch_m_s2: float = 5.986762e-8  # tolerância do card: rel 1e-4
+    # SSO de demonstração (LTAN 22h30), Cowell completo no A.4 (J2–J4 no teste; diferença
+    # desprezível), 24 h a 20 s, sombra cilíndrica
+    demo_a_km: float = 6888.089
+    demo_i_deg: float = 97.46325
+    demo_e: float = 1.07721e-3
+    demo_argp_deg: float = 90.0
+    demo_raan_deg: float = 5.0235
+    demo_beta_min_deg: float = 23.41
+    demo_beta_max_deg: float = 23.43
+    demo_eclipse_fraction: float = 0.3603  # tolerância do card: abs 0,01
+    demo_eclipse_fraction_eq30: float = 0.3650  # Sem4 eq. 30 com β médio
+    demo_eclipse_min_per_rev: float = 34.7  # por volta de 5 696 s (Sem4 §5.3: "~35 min")
+    demo_period_s: float = 5696.0
+    # Caso meio-dia/meia-noite (Ω = 30°, LTAN ≈ 0h10), 24 h a 5 s
+    midnight_raan_deg: float = 30.0
+    midnight_beta_deg: float = -0.94
+    midnight_eclipse_fraction: float = 0.3720
+    midnight_eclipse_fraction_eq30: float = 0.3767
+
+
+SRP_ECLIPSE_A4 = SrpEclipseA4()

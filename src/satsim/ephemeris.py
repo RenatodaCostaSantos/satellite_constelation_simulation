@@ -16,15 +16,16 @@ Precisão em 2026 (a cada 6 h, 1460 instantes, contra o JPL DE421; Apêndice A.3
 - Lua (Montenbruck & Gill 2000, §3.3.2, com +1,3972°·T na longitude para o equinócio da data):
   direção máx. 0,085°, |Δr| ≤ 445 km.
 
-Iluminação (Sem4 §5): o LTAN (hora solar local do nó ascendente, eq. 28) e o ângulo β entre o
-plano da órbita e a direção do Sol (eq. 29).
+Iluminação (Sem4 §5): o LTAN (hora solar local do nó ascendente, eq. 28), o ângulo β entre o
+plano da órbita e a direção do Sol (eq. 29) e o eclipse: sombra cilíndrica da Terra (§5.3) e a
+fração de eclipse de uma órbita circular (eq. 30). Penumbra (sombra cônica) fica fora do escopo.
 """
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from satsim.astrotime import DAYS_PER_JULIAN_CENTURY, JD_J2000
-from satsim.constants import AU, DEG2RAD
+from satsim.constants import AU, DEG2RAD, R_EARTH
 
 _ARCSEC = DEG2RAD / 3600.0
 PRECESSION_DEG_PER_CENTURY = 1.3972
@@ -222,3 +223,48 @@ def beta_angle(r: ArrayLike, v: ArrayLike, jd: ArrayLike) -> NDArray[np.float64]
     ell_hat = ell / np.linalg.norm(ell, axis=-1, keepdims=True)
     sin_beta = np.sum(sun_direction(jd) * ell_hat, axis=-1)
     return np.arcsin(np.clip(sin_beta, -1.0, 1.0))
+
+
+def in_shadow_cylindrical(
+    r: ArrayLike, sun_dir: ArrayLike, re: float = R_EARTH
+) -> NDArray[np.bool_]:
+    """Satélite na sombra cilíndrica da Terra (Sem4 §5.3), vetorizado.
+
+    A Terra é uma esfera de raio ``re`` e os raios do Sol são paralelos a ŝ: a sombra é o cilindro
+    de raio R⊕ atrás da Terra. O satélite está na sombra se estiver do lado noturno (r·ŝ < 0) e a
+    menos de R⊕ do eixo Sol–Terra (|r − (r·ŝ)ŝ| < R⊕). Sem penumbra: a transição é instantânea
+    (na realidade dura ~8 s em LEO).
+
+    Args:
+        r: posição ECI do satélite [m], shape (3,) ou (N, 3).
+        sun_dir: versor ŝ do Sol (``sun_direction``), shape (3,) ou (N, 3).
+        re: raio da Terra [m].
+
+    Returns:
+        ``True`` na sombra, shape () ou (N,).
+    """
+    r = np.asarray(r, dtype=float)
+    s = np.asarray(sun_dir, dtype=float)
+    along = np.sum(r * s, axis=-1)  # r·ŝ
+    perp = r - along[..., None] * s  # componente perpendicular ao eixo Sol–Terra
+    return (along < 0.0) & (np.sum(perp * perp, axis=-1) < re * re)
+
+
+def eclipse_fraction_circular(
+    a: ArrayLike, beta: ArrayLike, re: float = R_EARTH
+) -> NDArray[np.float64]:
+    """Fração da volta em eclipse de uma órbita circular, sombra cilíndrica (Sem4 eq. 30).
+
+        f_E = (1/π)·arccos( √(a² − R⊕²) / (a·cos β) )
+
+    válida enquanto o argumento for < 1; acima disso (|β| > β* = arcsin(R⊕/a)) não há eclipse e
+    f_E = 0. Em β = 0, f_E = β*/π (≈ 0,377 a 510 km, o maior eclipse possível).
+
+    Args:
+        a: raio da órbita [m], escalar ou (N,).
+        beta: ângulo β [rad], escalar ou (N,).
+        re: raio da Terra [m].
+    """
+    a = np.asarray(a, dtype=float)
+    arg = np.sqrt(a * a - re * re) / (a * np.cos(np.asarray(beta, dtype=float)))
+    return np.where(arg < 1.0, np.arccos(np.minimum(arg, 1.0)) / np.pi, 0.0)

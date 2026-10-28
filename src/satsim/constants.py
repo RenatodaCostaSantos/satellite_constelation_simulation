@@ -77,6 +77,12 @@ MU_MOON: Final[float] = 4.9028000661e12
 AU: Final[float] = 149597870700.0
 """Unidade astronômica [m] (IAU 2012, Resolução B2: valor exato por definição)."""
 
+# --- Pressão de radiação solar (S4-03) ------------------------------------------------------------
+
+P_SUN: Final[float] = 4.56e-6
+"""Pressão de radiação solar a 1 UA P☉ [N/m²] (Montenbruck & Gill 2000, §3.4: fluxo ≈ 1367 W/m²
+dividido pela velocidade da luz c)."""
+
 # --- Conversão de ângulos -----------------------------------------------------------------------
 
 DEG2RAD: Final[float] = math.pi / 180.0
