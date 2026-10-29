@@ -84,6 +84,7 @@
     <li>CelesTrak e Skyfield — de onde vêm os dados (TLE) e quem confere os cálculos (os testes)</li>
     <li><code>src/satsim/forces/third_body.py</code> — Sol e Lua: o atraso de 24 h, a deriva de inclinação da SSO e a analogia do peão (J2 inclina só de forma oscilatória)</li>
     <li><code>src/satsim/forces/srp.py</code> e o eclipse — a fração da órbita na sombra: corda × arco e a eq. 30 do Sem4</li>
+    <li><code>src/satsim/mean_osc.py</code> — elementos médios × osculadores: de onde vêm, o método do tiro e quais forças entram na conversão (comparação com o SGP4)</li>
   </ol>
 </nav>
 
@@ -2127,6 +2128,74 @@ volta) e da variação de β ao longo do dia. O “~35 minutos” do Sem4 §5.3 
   <li><strong>A força tem um degrau</strong> de ≈ 6·10⁻⁸ m/s² na borda da sombra. O integrador DOP853 reduz o passo
   em torno dele; o erro em posição é da ordem de 10⁻⁴ m (docstring de <code>srp.py</code>).</li>
 </ul>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="mean-osc-py">
+<h2>15. mean_osc.py — elementos médios × osculadores e quais forças entram na conversão</h2>
+<div class="file">src/satsim/mean_osc.py · card S4-04 (convenção de forças: S4-05)</div>
+
+<h3>De onde vêm os elementos médios</h3>
+<p>Os elementos da órbita de projeto não são um chute: cada um sai de um requisito da missão, pela teoria secular
+do Sem4, que descreve só o comportamento médio de longo prazo:</p>
+<table>
+  <tr><th>Elemento médio</th><th>Valor</th><th>Requisito</th></tr>
+  <tr><td>a</td><td>6 888,089 km</td><td>altitude de ≈ 510 km (escolha de projeto)</td></tr>
+  <tr><td>i</td><td>97,4396°</td><td>heliossíncrona: <span class="od">Ω</span> do J2 = 0,9856 °/dia (eq. 26)</td></tr>
+  <tr><td>e, ω</td><td>1,074·10⁻³, 90°</td><td>congelada: e = −(J3/2J2)(R⊕/a) sin i, com o perigeu no ponto mais ao norte</td></tr>
+  <tr><td>Ω</td><td>depende da data</td><td>LTAN desejada (eq. 28)</td></tr>
+</table>
+<p>O Cowell, porém, interpreta o estado inicial como <strong>instantâneo</strong> (osculador). Entregar os
+elementos médios direto a ele dá uma órbita com a média 9,5 km acima do projetado e ω variando 21,5° em 10 dias:
+o J2 faz o raio oscilar ≈ ±9,4 km ao longo da volta, e o estado médio ignora essa oscilação.</p>
+
+<h3>O método do tiro</h3>
+<p><code>mean_to_osculating</code> pergunta ao próprio Cowell qual estado instantâneo produz a média desejada,
+por tentativa e correção. Cada iteração é uma integração <em>nova</em> de uma volta:</p>
+<pre><code>x = elementos médios de projeto          # alvo e primeiro chute
+repete:
+    Cowell a partir de x por 1 período nodal → média da volta m(x)
+    x = x − (m(x) − alvo)                # corrige o chute
+até |m(x) − alvo| pequeno</code></pre>
+<table>
+  <tr><th>Iteração</th><th>Média do Cowell − alvo (em a)</th></tr>
+  <tr><td>0</td><td>+9 483,6 m</td></tr>
+  <tr><td>1</td><td>+74,3 m</td></tr>
+  <tr><td>2</td><td>+0,25 m</td></tr>
+  <tr><td>3</td><td>+0,0002 m → convergiu</td></tr>
+</table>
+<p>Com o estado convertido, a órbita voa congelada (ω entre 90,00° e 90,10° em 10 dias) e o semieixo médio fica
+constante. Sem perturbações, a média de uma volta é o próprio estado, e a conversão devolve a entrada na primeira
+iteração: é o teste de sanidade da média por janela.</p>
+
+<h3>Quais forças entram na conversão</h3>
+<p>A conversão aceita qualquer conjunto de forças, mas a convenção do projeto é usar <strong>só a gravidade
+zonal</strong> (J2–J4) na conversão. Arrasto, SRP e Sol/Lua entram só na propagação, depois de encontrada a
+condição inicial:</p>
+<ul>
+  <li><strong>Peso:</strong> o J2 responde pelos 9,5 km da conversão. Arrasto (a cai ≈ 3,9 m por volta a 510 km),
+  SRP e Sol/Lua mudam o resultado em poucos metros.</li>
+  <li><strong>Definição limpa:</strong> com forças conservativas e simétricas, o médio é uma constante (a, e, i) ou
+  uma taxa constante (Ω, ω), e serve para projeto. O arrasto é dissipativo: dentro da janela o semieixo cai, e a
+  média passaria a depender de onde a janela começa.</li>
+  <li><strong>Projeto × manutenção:</strong> não existe órbita em que o arrasto se cancela (a cai ≈ 59 m/dia com os
+  parâmetros do projeto). Ele não muda onde a órbita deveria estar, só a tira de lá; as missões compensam com
+  manobras, como a deriva de inclinação causada pelo Sol.</li>
+</ul>
+
+<h3>O SGP4 faz a mesma divisão</h3>
+<table>
+  <tr><th>Etapa</th><th>SGP4 (analítico)</th><th>satsim (numérico)</th></tr>
+  <tr><td>Médio ↔ osculador</td><td>só gravidade: J2 nos termos de curto período, J3 nos de período longo</td>
+      <td>Cowell + média por janela, J2–J4 completos</td></tr>
+  <tr><td>Arrasto</td><td>só como deriva secular dos elementos médios (B*)</td>
+      <td>integrado no estado osculador pelo Cowell</td></tr>
+  <tr><td>Sol/Lua</td><td>só no SDP4 (períodos &gt; 225 min)</td><td>integrados pelo Cowell, se incluídos</td></tr>
+</table>
+<p>A filosofia é a mesma: gravidade na conversão, o resto na propagação. A diferença é que o satsim não trunca a
+série, é mais exato e mais lento (4 integrações de uma volta). Atenção: os elementos de um TLE também são médios,
+mas na teoria do SGP4, que não é a mesma definição do satsim. Para partir de um TLE, usa-se o (r, v) que o SGP4
+calcula na época, nunca os elementos do TLE como se fossem osculadores.</p>
 </section>
 
 </main>
