@@ -83,6 +83,7 @@
     <li><code>src/satsim/observer.py</code> — sistemas de coordenadas (ECI, ECEF, geodésico, geocêntrico, ENU), transformações e sutilezas (normal ao elipsoide × reta radial)</li>
     <li>CelesTrak e Skyfield — de onde vêm os dados (TLE) e quem confere os cálculos (os testes)</li>
     <li><code>src/satsim/forces/third_body.py</code> — Sol e Lua: o atraso de 24 h, a deriva de inclinação da SSO e a analogia do peão (J2 inclina só de forma oscilatória)</li>
+    <li><code>src/satsim/forces/srp.py</code> e o eclipse — a fração da órbita na sombra: corda × arco e a eq. 30 do Sem4</li>
   </ol>
 </nav>
 
@@ -2012,6 +2013,120 @@ no mesmo sentido e acumula.</p>
   <tr><td>Sol, componente que inclina</td><td>i deriva ≈ −0,036°/ano e não volta</td><td>uma brisa fraca soprando sempre do mesmo lado, acompanhando a precessão</td></tr>
   <tr><td>Consequência</td><td>com outra inclinação, J2 precessiona em outro ritmo e o LTAN deriva</td><td>(sem análogo direto: no peão rápido a precessão não depende da inclinação)</td></tr>
 </table>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="srp-eclipse">
+<h2>14. srp.py e eclipse — a fração da órbita na sombra</h2>
+<div class="file">src/satsim/forces/srp.py · src/satsim/ephemeris.py (in_shadow_cylindrical, eclipse_fraction_circular) · card S4-03</div>
+
+<h3>O que o card acrescenta</h3>
+<p>A luz do Sol empurra o satélite: é a <strong>pressão de radiação solar</strong> (SRP). No modelo de
+“bola de canhão”, o satélite é uma superfície de área A sempre voltada para o Sol:</p>
+<pre><code>a = ν · P☉ · C_R · (A/m) · (AU/|r − s|)² · (r − s)/|r − s|      ν = 0 na sombra, 1 fora</code></pre>
+<p>Com C_R = 1,3 e A/m = 0,01 m²/kg, |a| ≈ 6·10⁻⁸ m/s², cerca de 10⁻⁸ da gravidade. O fator ν
+desliga a força quando a Terra tapa o Sol. Para isso é preciso saber <em>quando</em> o satélite está na sombra,
+e a mesma pergunta interessa ao painel solar e à bateria: quanto tempo de cada volta o satélite passa no
+escuro?</p>
+
+<h3>O que a função calcula</h3>
+<p><code>eclipse_fraction_circular(a, beta)</code> devolve a <strong>fração da volta</strong> passada na sombra.
+É um número adimensional, não um comprimento. Como a órbita é circular e a velocidade é constante, a fração do
+perímetro e a fração do tempo são a mesma coisa. Na SSO de demonstração, f<sub>E</sub> = 0,365: cerca de 35
+minutos de eclipse em cada volta de 95 minutos.</p>
+
+<h3>O caso mais simples: β = 0 (o Sol no plano da órbita)</h3>
+<p>Os raios do Sol são praticamente paralelos, então a sombra da Terra é um cilindro de raio R⊕ atrás dela (sem
+penumbra). Olhando de cima do plano da órbita:</p>
+<figure>
+<svg viewBox="0 0 520 250" width="440" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, sans-serif" font-size="11">
+  <!-- sombra cilíndrica -->
+  <rect x="200" y="65" width="310" height="120" fill="#e3e6ec"/>
+  <text x="430" y="80" fill="#5b6475">sombra</text>
+  <!-- raios do Sol -->
+  <g stroke="#c9a227" stroke-width="1.5">
+    <line x1="20" y1="85" x2="110" y2="85"/><line x1="20" y1="125" x2="110" y2="125"/><line x1="20" y1="165" x2="110" y2="165"/>
+  </g>
+  <g fill="#c9a227">
+    <polygon points="110,81 118,85 110,89"/><polygon points="110,121 118,125 110,129"/><polygon points="110,161 118,165 110,169"/>
+  </g>
+  <text x="20" y="72" fill="#8a6d0b">luz do Sol</text>
+  <!-- órbita -->
+  <circle cx="200" cy="125" r="90" fill="none" stroke="#8a94a6" stroke-width="1.2"/>
+  <!-- arco na sombra -->
+  <path d="M 267.08 65 A 90 90 0 0 1 267.08 185" fill="none" stroke="#0b6e8a" stroke-width="4"/>
+  <!-- corda -->
+  <line x1="267.08" y1="65" x2="267.08" y2="185" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <!-- Terra -->
+  <circle cx="200" cy="125" r="60" fill="#5d8fb8" stroke="#2c5577"/>
+  <text x="150" y="129" fill="#fff">Terra</text>
+  <!-- raios até as bordas e ângulo β* -->
+  <line x1="200" y1="125" x2="267.08" y2="65" stroke="#1d2330" stroke-width="0.8"/>
+  <line x1="200" y1="125" x2="267.08" y2="185" stroke="#1d2330" stroke-width="0.8"/>
+  <line x1="200" y1="125" x2="286" y2="125" stroke="#1d2330" stroke-width="0.8" stroke-dasharray="2 2"/>
+  <path d="M 230 125 A 30 30 0 0 0 222.36 105" fill="none" stroke="#1d2330"/>
+  <text x="234" y="113">β*</text>
+  <!-- legendas -->
+  <text x="298" y="129" fill="#0b6e8a">arco na sombra = 2·a·β*</text>
+  <text x="272" y="200" fill="#c0392b">corda = 2R⊕</text>
+  <text x="150" y="240" fill="#5b6475">órbita de raio a (fora de escala: a/R⊕ exagerado para clareza)</text>
+</svg>
+<figcaption>O satélite está na sombra quando está do lado noturno e a menos de R⊕ do eixo Sol–Terra. Um ponto
+da órbita a um ângulo θ da direção anti-Sol está a a·sin θ do eixo; a borda da sombra é sin β* = R⊕/a.</figcaption>
+</figure>
+<pre><code>a·sin θ &lt; R⊕   →   |θ| &lt; β* = arcsin(R⊕/a)
+
+arco na sombra = 2·a·β*        fração = 2·a·β* / (2π·a) = β*/π</code></pre>
+
+<h3>Corda ou arco: por que a fração não é “2R⊕ dividido pelo perímetro”</h3>
+<p>A intuição natural é que o satélite atravessa a sombra percorrendo cerca de 2R⊕, a largura do cilindro. Essa
+distância é a <strong>corda</strong>: a linha reta entre os pontos de entrada e de saída, que estão a exatamente
+R⊕ do eixo, um de cada lado. Mas o satélite não anda em linha reta; ele percorre o <strong>arco</strong>, que é
+mais longo porque a órbita curva em volta da Terra. Para a órbita de projeto (a = 6 888 km):</p>
+<table>
+  <tr><th></th><th>Comprimento</th><th>Fração da volta</th></tr>
+  <tr><td>Corda (intuição)</td><td>2R⊕ = 12 756 km</td><td>2R⊕/(2πa) = 0,295</td></tr>
+  <tr><td>Arco (o real)</td><td>2aβ* = 16 300 km (β* = 67,8°)</td><td>β*/π = <strong>0,377</strong></td></tr>
+</table>
+<p>A aproximação pela corda subestima a fração em cerca de 22% em LEO. Ela só fica boa em órbitas altas, onde
+R⊕/a é pequeno e arcsin(R⊕/a) ≈ R⊕/a: aí a fração vira R⊕/(πa), exatamente “2R⊕ dividido pelo perímetro”.</p>
+
+<h3>O caso geral: β ≠ 0 (Sem4 eq. 30)</h3>
+<p>Quando o plano da órbita está inclinado de β em relação à direção do Sol, a órbita atravessa o cilindro de
+sombra “de lado”. A distância de um ponto da órbita ao eixo da sombra passa a ser a·√(1 − cos²β·cos²θ), e a
+condição de sombra vira:</p>
+<pre><code>cos θ &gt; √(a² − R⊕²) / (a·cos β)
+
+f_E = (1/π)·arccos( √(a² − R⊕²) / (a·cos β) )                     (Sem4 eq. 30)</code></pre>
+<ul>
+  <li>Com β = 0 a fórmula volta a β*/π, porque arccos(√(1 − x²)) = arcsin(x).</li>
+  <li>Quanto maior |β|, menor o eclipse: a órbita passa mais “por cima” do cilindro.</li>
+  <li>Se |β| &gt; β*, o argumento passa de 1 e a órbita não toca a sombra: f<sub>E</sub> = 0. É o caso das SSO
+  <em>dawn–dusk</em> (LTAN 6h ou 18h), escolhidas por missões que precisam de energia o tempo todo.</li>
+</ul>
+<p>No código, <code>np.where(arg &lt; 1, arccos(min(arg, 1))/π, 0)</code> implementa exatamente essas duas faixas.
+O <code>np.minimum</code> só evita o aviso de <code>arccos</code> fora do domínio nos elementos que a máscara
+descarta.</p>
+
+<h3>Os números da SSO de demonstração</h3>
+<table>
+  <tr><th>Grandeza</th><th>Valor</th></tr>
+  <tr><td>β ao longo de 24 h</td><td>23,41° … 23,43°</td></tr>
+  <tr><td>f<sub>E</sub> pela eq. 30 (β médio)</td><td>0,365 → 0,365 × 5 696 s ≈ 34,7 min por volta, arco de ≈ 15 800 km</td></tr>
+  <tr><td>f<sub>E</sub> medido no Cowell (24 h a 20 s, <code>in_shadow_cylindrical</code>)</td><td>0,360</td></tr>
+  <tr><td>Caso meia-noite (β ≈ −0,9°): eq. 30 e simulação</td><td>0,377 e 0,372</td></tr>
+</table>
+<p>A pequena diferença entre a fórmula e a simulação vem da excentricidade (o raio varia ≈ 15 km ao longo da
+volta) e da variação de β ao longo do dia. O “~35 minutos” do Sem4 §5.3 confere.</p>
+
+<h3>Simplificações assumidas</h3>
+<ul>
+  <li><strong>Sombra cilíndrica, sem penumbra:</strong> a entrada e a saída da sombra são instantâneas; na
+  realidade a transição dura da ordem de 8 s em LEO.</li>
+  <li><strong>Terra esférica</strong> de raio R⊕ (equatorial) para a sombra.</li>
+  <li><strong>A força tem um degrau</strong> de ≈ 6·10⁻⁸ m/s² na borda da sombra. O integrador DOP853 reduz o passo
+  em torno dele; o erro em posição é da ordem de 10⁻⁴ m (docstring de <code>srp.py</code>).</li>
+</ul>
 </section>
 
 </main>
