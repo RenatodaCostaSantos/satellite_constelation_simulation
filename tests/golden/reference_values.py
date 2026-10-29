@@ -922,3 +922,66 @@ class SrpEclipseA4:
 
 
 SRP_ECLIPSE_A4 = SrpEclipseA4()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.6 do prompt da Semana 4: conversão médio → osculador (card S4-04).
+#     Órbita de projeto (a 6888,089 km, e 1,074e-3, i 97,4396°, ω 90°, Ω 30°, ψ 0; 2026-10-23
+#     00:00 UTC), modelos J2–J4, médias por janela nodal com passo 10 s.
+#
+#     Discrepância (S4-04): o experimento do A.6 parece ter usado janelas do período KEPLERIANO
+#     (5 689,30 s), não do nodal (5 696,70 s) que o card pede. Com a janela kepleriana o satsim
+#     reproduz o A.6 (resíduos 9 495,97 / 74,48 / 0,2469 m; osculador a 6 878 667,3 m, e 7,2726e-4,
+#     i 97,444713°). Com a janela nodal (implementada): resíduos 9 483,6 / 74,30 / 0,2460 /
+#     2,26e-4 m; osculador a 6 878 679,4 m, e 7,2492e-4, i 97,444706°, ω 270,0°. A janela nodal é a
+#     correta: os termos de curto período dependem de cos 2u, e u completa 2π num período nodal;
+#     a kepleriana fica 7,4 s curta e enviesa ⟨a⟩ em ≈ A·δT/T ≈ 9,4 km × 7,4/5 697 ≈ 12 m. É
+#     também o que explica o "a − alvo −0,0 … +16,6 m" do A.6: com a janela nodal o semieixo
+#     médio do estado convertido fica constante (−0,0 m em 30 dias).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class MeanOscA6:
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    raan0_deg: float = 30.0
+    psi0_deg: float = 0.0
+    # Resíduos por iteração (A.6, janela kepleriana — ver discrepância acima)
+    residual_a_m: tuple[float, ...] = (9.495e3, 7.446e1, 2.468e-1, 2.252e-4, 1.985e-6)
+    residual_ex: tuple[float, ...] = (3.67e-6, 3.68e-6, 1.52e-8, 2.20e-11, 8.84e-14)
+    residual_ey: tuple[float, ...] = (1.81e-3, 5.25e-6, 1.57e-9, 5.72e-11, 2.77e-13)
+    residual_i_deg: tuple[float, ...] = (5.12e-3, 5.39e-6, 4.65e-9, 8.37e-11, 4.45e-13)
+    first_residual_a_tol_km: float = 0.1  # critério do card: Δa da 1ª iteração ≈ 9,5 km
+    # Osculador resultante (A.6, janela kepleriana)
+    osc_a_m: float = 6878668.405
+    osc_e: float = 7.270362e-4
+    osc_i_deg: float = 97.444712
+    osc_argp_deg: float = 270.0
+    # Medido no satsim com a janela nodal (S4-04)
+    nodal_osc_a_m: float = 6878679.4
+    nodal_first_residual_a_m: float = 9483.6
+    # Congelamento: estado convertido, Cowell J2–J4, médias por janela nodal (A.6)
+    frozen_10d_a_minus_target_m: tuple[float, float] = (-0.0, 16.6)
+    frozen_10d_e: tuple[float, float] = (1.0740e-3, 1.0781e-3)
+    frozen_10d_argp_deg: tuple[float, float] = (90.00, 90.16)
+    frozen_30d_e: tuple[float, float] = (1.0740e-3, 1.0837e-3)
+    frozen_30d_argp_deg: tuple[float, float] = (90.00, 90.29)
+    # Critérios do card (10 dias)
+    crit_argp_deg: tuple[float, float] = (89.5, 90.5)
+    crit_e: tuple[float, float] = (1.06e-3, 1.10e-3)
+    crit_a_minus_target_m: tuple[float, float] = (-50.0, 50.0)
+    # Contraste: médio usado como osculador (A.6)
+    naive_10d_a_minus_target_m: tuple[float, float] = (9417.0, 9511.0)
+    naive_10d_e: tuple[float, float] = (2.755e-3, 2.883e-3)
+    naive_10d_argp_deg: tuple[float, float] = (68.39, 89.93)
+    naive_10d_argp_range_deg: float = 21.5  # critério do card: > 15°
+    naive_30d_argp_deg: tuple[float, float] = (20.67, 89.93)
+    # Ω̇ (30 dias a 60 s) e deriva do LTAN (A.6)
+    naive_raan_dot_deg_day: float = 0.977169
+    naive_ltan_drift_min_year: float = -12.39
+    converted_raan_dot_deg_day: float = 0.982540
+    converted_ltan_drift_min_year: float = -4.54  # i = 97,4396° vem da teoria só J2 (S4-05)
+    theory_j2_j4_raan_dot_deg_day: float = 0.983318  # nos médios medidos (Cowell −0,079%)
+    theory_j2_raan_dot_deg_day: float = 0.985603  # (−0,31%)
+
+
+MEAN_OSC_A6 = MeanOscA6()
