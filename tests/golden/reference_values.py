@@ -985,3 +985,103 @@ class MeanOscA6:
 
 
 MEAN_OSC_A6 = MeanOscA6()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.5 do prompt da Semana 4: taxas médias de 1ª ordem com J2, J3 e J4
+#     (card S4-05). Órbita de projeto: a 6888,089 km, i 97,4396°, ω 90°, e 1,074e-3. Fórmulas
+#     conferidas pelo autor do prompt contra a dedução simbólica em 2000 pontos.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class MeanZonalA5:
+    a_km: float = 6888.089
+    i_deg: float = 97.4396
+    argp_deg: float = 90.0
+    e: float = 1.074e-3
+    # Ω̇ [°/d]
+    raan_dot_j2_deg_day: float = 0.985653
+    raan_dot_j2_j4_deg_day: float = 0.983375
+    raan_dot_j2_j3_j4_deg_day: float = 0.983369
+    # ω̇ [°/d]
+    argp_dot_j2_deg_day: float = -3.48711
+    argp_dot_j2_j4_deg_day: float = -3.47711
+    argp_dot_j2_j3_j4_deg_day: float = 0.01039  # 4 algarismos no A.5: comparar a 5e-6 °/d
+    # ψ̇ + ω̇ [°/d]
+    u_dot_j2_deg_day: float = 5459.9997
+    u_dot_j2_j4_deg_day: float = 5460.0070
+    u_dot_j2_j3_j4_deg_day: float = 5460.0071
+    # Excentricidade congelada (ω̇ = 0 em ω = 90°)
+    frozen_e_j2_j3: float = 1.074119e-3
+    frozen_e_eq33: float = 1.074113e-3  # Sem4 eq. 33: −(J3/2J2)(R⊕/a)·sin i
+    frozen_e_j2_j4: float = 1.077210e-3
+    # Medido no satsim (S4-05): Ω̇ 0,98565339 / 0,98337502 / 0,98336881 °/d; ω̇ J2–J4
+    # +0,0103926 °/d; econg J2+J3 1,0741194e-3, J2–J4 1,0772101e-3.
+
+
+MEAN_ZONAL_A5 = MeanZonalA5()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.7 do prompt da Semana 4: SSO calibrada, modelo médio × Cowell e o
+#     comparador real (card S4-05). Época 2026-10-23 00:00 UTC.
+#
+#     Diferença esperada no período nodal medido (S4-05): o A.7 mede Tnod = 5 696,6659 s no Cowell
+#     (+4,7 ppm da teoria); o satsim mede 5 696,6796 s (+2,3 ppm). É o mesmo viés da janela
+#     kepleriana do A.6 (ver MEAN_OSC_A6): com ela o estado convertido fica com o semieixo médio
+#     real ≈ 11 m abaixo do alvo, o que encurta o período em 1,5·11/6 888 089 ≈ 2,4 ppm e
+#     reproduz os 5 696,6659 s. Com a janela nodal (implementada) o equivalente ao longo da órbita
+#     é ≈ 45 km em 30 dias (A.7: ≈ 92 km). O Ω̇ (+0,085%) e a i calibrada (+0,00005°) quase não
+#     mudam.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SsoCalibratedA7:
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    # SSO de projeto calibrada no Cowell J2–J4 (e = econg J2–J4, ω 90°)
+    e_frozen: float = 1.07721e-3
+    i_first_order_deg: float = 97.4396
+    raan_dot_first_order_cowell_deg_day: float = 0.982540
+    i_calibrated_deg: float = 97.46325
+    i_calibrated_tol_deg: float = 0.0005  # critério do card
+    ltan_drift_tol_min_year: float = 0.1  # critério do card
+    # Medido no satsim (S4-05): i calibrada 97,463303°; Cowell 30 dias: Ω̇ 0,9856473 °/d, LTAN
+    # −6e-5 min/ano.
+    # SSO de demonstração: LTAN 22h30 → Ω
+    ltan_h: float = 22.5
+    ra_sun_deg: float = 207.5235
+    raan_demo_deg: float = 5.0235
+    # Modelo médio J2–J4 de 1ª ordem × Cowell (SSO calibrada, Ω 5°, 30 dias)
+    raan0_mean_vs_cowell_deg: float = 5.0
+    raan_dot_ratio_minus_1: float = 8.43e-4
+    raan_dot_ratio_tol: float = 1e-3  # critério do card: 0,1%
+    tnod_cowell_s: float = 5696.6659  # janela kepleriana: ver nota acima
+    tnod_theory_s: float = 5696.6926
+    tnod_theory_j2_s: float = 5696.7003
+    tnod_ppm_tol: float = 10.0  # critério do card
+    along_track_30d_km: float = 92.0
+    # Medido no satsim (S4-05): Ω̇ +0,0849%; Tnod Cowell 5 696,6796 s (+2,28 ppm); teoria
+    # 5 696,69257 s; ≈ 45 km ao longo da órbita em 30 dias.
+    tnod_cowell_satsim_s: float = 5696.6796
+    # Arrasto médio: C_D·A/m 0,011, sem co-rotação, 10 dias (ȧ [m/d])
+    cd_a_m: float = 0.011
+    a_dot_cowell_spherical_m_day: float = -27.76
+    a_dot_cowell_geodetic_m_day: float = -23.63
+    a_dot_eq14_spherical_m_day: float = -29.78
+    a_dot_eq14_geodetic_m_day: float = -25.42
+    a_dot_eq14_at_mean_altitude_m_day: float = -29.69
+    a_dot_ratio_tol: float = 0.10  # critério do card: modelo médio a 10% do Cowell
+    # Medido no satsim (S4-05): Cowell −27,85 (esférica) e −23,71 (geodésica) m/d; modelo médio
+    # −29,85 e −25,47 m/d (razão Cowell/médio 0,933 e 0,931).
+    # Sentinel-2A: médias do SGP4 do TLE do A.1
+    sentinel_a_m: float = 7164249.6
+    sentinel_e: float = 1.142e-3
+    sentinel_argp_deg: float = 90.5
+    sentinel_i_real_deg: float = 98.56361
+    sentinel_i_calibrated_deg: float = 98.56939
+    sentinel_i_first_order_j2_deg: float = 98.54454
+    sentinel_i_tol_deg: float = 0.01  # critério do card
+    # Medido no satsim (S4-05): i calibrada 98,569401° (+0,00579° do real).
+
+
+SSO_CALIBRATED_A7 = SsoCalibratedA7()

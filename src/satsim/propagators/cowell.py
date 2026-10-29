@@ -46,9 +46,9 @@ class CowellPropagator(Propagator):
     ``MeanJ2Propagator``); usados aqui como osculadores, o semieixo médio resultante fica alguns
     km fora do nominal (ex.: +9,5 km na SSO de projeto), o movimento médio muda em ~1e-3 e a
     posição se afasta da do ``MeanJ2Propagator`` nominal em até ~1 300 km em 24 h. Não é erro de
-    integração: é a diferença entre as duas descrições. A conversão média → osculador
-    (Brouwer/Kozai) não é implementada; ``satsim.analysis.mean_elements`` mede os elementos
-    médios de uma trajetória.
+    integração: é a diferença entre as duas descrições. ``satsim.mean_osc.mean_to_osculating``
+    (S4-04) faz a conversão médio → osculador numericamente; ``satsim.analysis.mean_elements``
+    mede os elementos médios de uma trajetória.
 
     Args:
         initial: elementos osculadores na época (``KeplerianElements`` com campos escalares) ou

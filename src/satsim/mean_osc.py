@@ -11,6 +11,17 @@ estado é a média dos elementos osculadores do Cowell ao longo de uma revoluç�
 conversão inversa é um ponto fixo sobre essa média. Teorias analíticas (Brouwer–Lyddane, Kozai)
 ficam fora do escopo; podem servir de chute inicial do ponto fixo no futuro.
 
+Quais forças entram na conversão (convenção do projeto, S4-05)
+--------------------------------------------------------------
+As funções aceitam qualquer conjunto de forças, mas a convenção é converter **só com a gravidade
+zonal** (``conversion_models``) e acrescentar arrasto, SRP e Sol/Lua apenas na propagação. É a
+mesma divisão do SGP4, em que a relação médio ↔ osculador só tem termos gravitacionais e o
+arrasto entra como deriva secular dos elementos médios. Motivos: (1) o J2 responde pelos ≈ 9,5 km
+da conversão, e as demais forças mudam o resultado em metros; (2) com forças conservativas e
+simétricas o elemento médio é constante (a, e, i) ou uma taxa constante (Ω, ω), o que o torna útil
+para projeto; com arrasto o semieixo cai dentro da janela (≈ 3,9 m por volta a 510 km) e a média
+passaria a depender de onde a janela começa.
+
 Por que a média do vetor excentricidade
 ---------------------------------------
 Numa órbita quase circular (e ≈ 1e-3), as oscilações de curto período de J2 no vetor
@@ -46,7 +57,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from satsim.analysis import osculating_elements
 from satsim.elements import KeplerianElements, mean_to_true, state_to_elements, true_to_mean
-from satsim.forces import AccelerationModel
+from satsim.forces import AccelerationModel, J2Acceleration, ZonalAcceleration
 from satsim.propagators.base import Propagator
 from satsim.propagators.cowell import CowellPropagator
 from satsim.secular import nodal_period
@@ -102,6 +113,15 @@ class MeanToOscResult:
     def iterations(self) -> int:
         """Número de propagações feitas (linhas de ``residuals``)."""
         return len(self.residuals)
+
+
+def conversion_models(models: Sequence[AccelerationModel]) -> tuple[AccelerationModel, ...]:
+    """Só a gravidade zonal de ``models`` (``J2Acceleration``, ``ZonalAcceleration``).
+
+    Convenção do projeto para a conversão médio ↔ osculador (docstring do módulo): arrasto, SRP e
+    Sol/Lua ficam de fora da conversão e entram só na propagação.
+    """
+    return tuple(m for m in models if isinstance(m, (J2Acceleration, ZonalAcceleration)))
 
 
 def _scalar_if_0d(x: NDArray[np.float64]) -> FloatOrArray:
@@ -168,7 +188,7 @@ def osculating_to_mean(
     Args:
         elements_or_state: elementos osculadores ou estado (r0, v0) ECI na época.
         epoch: época, ``datetime`` tz-aware.
-        models: forças do Cowell (ex.: ``(ZonalAcceleration(),)``).
+        models: forças do Cowell; por convenção só a gravidade zonal (``conversion_models``).
         step_s: passo da média [s].
         **cowell_kwargs: repassados ao ``CowellPropagator`` (``rtol``, ``atol``...).
     """
@@ -227,7 +247,7 @@ def mean_to_osculating(
     Args:
         mean: elementos médios-alvo (a, e, i, Ω, ω, ψ), ``KeplerianElements`` escalar.
         epoch: época, ``datetime`` tz-aware.
-        models: forças do Cowell (qualquer conjunto: J2, J2–J4, Sol/Lua, arrasto...).
+        models: forças do Cowell; por convenção só a gravidade zonal (``conversion_models``).
         iters: número máximo de propagações.
         tol: tolerâncias (|Δa| [m], |Δe_vet| [-], |Δi| [rad]).
         step_s: passo da média [s].
