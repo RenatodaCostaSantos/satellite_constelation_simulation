@@ -222,27 +222,60 @@ def sso_inclination_calibrated(
     Returns:
         i calibrada [rad]. Se ``max_iter`` se esgotar, devolve a última e registra um aviso.
     """
+    # Convenção do projeto: a conversão médio → osculador usa só a gravidade zonal (J2–J4) de
+    # `models`; arrasto, SRP e Sol/Lua ficam só na propagação (mean_osc.conversion_models).
     conv_models = conversion_models(models)
+    # Instantes de amostragem da medida de Ω̇: de 0 a `days` dias, a cada 60 s (o +1 s garante que
+    # o último instante, days·86400, entre no arange). 10 dias → 14 401 amostras.
     t = np.arange(0.0, days * SECONDS_PER_DAY + 1.0, 60.0)
+    # Tolerância em Ω̇ convertida de °/dia para rad/s, a unidade de fit_rate e de OMEGA_SUN.
     tol = math.radians(tol_deg_per_day) / SECONDS_PER_DAY
 
     def residual(i: float) -> float:
+        """f(i) = Ω̇ medido no Cowell com inclinação média i, menos a taxa do Sol [rad/s].
+
+        A SSO calibrada é a raiz f(i) = 0. Cada chamada é uma "medida": ≈ 1,2 s de conversão
+        mais ≈ 1,7 s de Cowell em 10 dias.
+        """
+        # 1. Elementos MÉDIOS candidatos: o projeto (a, e, ω, Ω) com a inclinação i em teste;
+        #    ψ = 0 (fase na órbita) é arbitrário, Ω̇ não depende dela.
         mean = KeplerianElements(a=a, e=e, i=i, raan=raan, argp=argp, psi=0.0)
+        # 2. Médio → osculador (S4-04): o estado instantâneo cuja média no Cowell é `mean`.
+        #    Sem isso, o semieixo médio ficaria ≈ 9,5 km alto e Ω̇ sairia errado.
         osc = mean_to_osculating(mean, epoch, conv_models).elements
+        # 3. Cowell com TODAS as forças pedidas, partindo do estado osculador.
         prop = CowellPropagator(osc, epoch, models)
+        # 4. Ω osculador nos instantes t (oscila a cada volta) e ajuste de uma reta Ω(t) por
+        #    mínimos quadrados: a inclinação da reta é o Ω̇ médio. As oscilações de curto período
+        #    se anulam no ajuste de 10 dias (≈ 150 voltas).
         raan_dot = fit_rate(t, osculating_elements(prop, t).raan)
         logger.debug("i = %.6f°: Ω̇ = %.7f °/d", math.degrees(i), math.degrees(raan_dot) * 86400)
+        # 5. Quanto falta (ou sobra) para a precessão acompanhar o Sol (0,985647 °/dia).
         return raan_dot - OMEGA_SUN
 
+    # Ponto de partida i0: a fórmula analítica de 1ª ordem só com J2 (Sem4 eq. 27). Na órbita de
+    # projeto dá 97,4396°, ≈ 0,024° abaixo da resposta com J2–J4.
     i0 = float(sso_inclination(a, e))
+    # 1ª medida: com J2–J4 o Cowell precessa ≈ 0,3% devagar demais em i0 (f0 < 0).
     f0 = residual(i0)
+    # Se por acaso i0 já satisfaz a tolerância (ex.: models só com J2), não há o que corrigir.
     if abs(f0) < tol:
         return i0
+    # 2º ponto, para a secante ter dois pontos: Ω̇ ∝ cos i (eq. 23), então escalar cos i pela
+    # razão (taxa desejada)/(taxa medida) corrige a maior parte do erro numa tacada.
+    # f0 + OMEGA_SUN é o próprio Ω̇ medido em i0.
     i1 = math.acos(math.cos(i0) * OMEGA_SUN / (f0 + OMEGA_SUN))
+    # Método da secante: até max_iter medidas no total (a 1ª já foi feita acima).
     for _ in range(max_iter - 1):
+        # Mede o resíduo no ponto atual.
         f1 = residual(i1)
+        # Convergiu: |Ω̇ − Ω☉| < tol (1e-6 °/d ≈ 0,0015 min/ano de deriva da LTAN).
         if abs(f1) < tol:
             return i1
+        # Secante: a reta pelos dois últimos pontos (i0, f0) e (i1, f1) cruza zero em
+        # i1 − f1·(i1 − i0)/(f1 − f0). Esse cruzamento vira o novo ponto; o atual vira o
+        # anterior. Como f(i) é quase linear perto da raiz, bastam 1 ou 2 passos.
         i0, f0, i1 = i1, f1, i1 - f1 * (i1 - i0) / (f1 - f0)
+    # Esgotou as medidas sem atingir a tolerância: avisa e devolve a melhor estimativa.
     logger.warning("sso_inclination_calibrated não convergiu em %d medidas", max_iter)
     return i1
