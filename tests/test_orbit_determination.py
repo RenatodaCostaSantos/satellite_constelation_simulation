@@ -34,7 +34,10 @@ def test_fit_recovers_synthetic_state() -> None:
     assert np.linalg.norm(fit.r0 - R0) <= A8.synthetic_pos_tol_m
     assert np.linalg.norm(fit.v0 - V0) <= A8.synthetic_vel_tol_m_s
     assert fit.rms_initial_km > 10.0  # o chute erra dezenas de km ao longo da janela
-    assert fit.rms_km < 1e-5  # ~0: a referência é o mesmo modelo
+    # ~0: a referência é o mesmo modelo. O piso é o ruído da integração (o DOP853 adaptativo muda
+    # a sequência de passos a cada estado testado): de 0,5 a 8 mm em 6 h conforme o chute e a
+    # máquina (CI: 1,4 cm). 10 cm fica acima do piso e 370 000× abaixo do RMS inicial (37 km).
+    assert fit.rms_km < 1e-4
     assert fit.success and fit.cd_a_m is None
     assert fit.nfev == len(fit.history_km) and fit.history_km[0] == fit.rms_initial_km
     r, _ = fit.propagator().propagate(3 * 3600.0)
