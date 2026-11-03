@@ -310,6 +310,36 @@ corrigida.
 Um indicador de manutenção da SSO no painel (deriva prevista, próxima correção e Δv/ano) está
 registrado como proposta para as próximas semanas.
 
+### A referência da validação é o SGP4
+
+A determinação de órbita (`satsim.orbit_determination.fit_initial_state`, S4-06) escolhe o
+estado inicial e o C_D·A/m do Cowell que deixam a trajetória **o mais perto possível das
+posições do SGP4** numa janela de 72 h. O SGP4 faz o papel das medidas de radar. Então, aqui,
+"órbita mais correta" quer dizer **a que mais concorda com o SGP4**, e não com a órbita real do
+satélite. Consequências:
+
+- **O erro medido é Cowell × SGP4, não Cowell × realidade.** O SGP4 erra ≈ 1 km na época e
+  alguns km por dia. Erros do Cowell abaixo disso não dão para distinguir.
+- **O C_D·A/m ajustado é efetivo em relação ao SGP4.** Ele reproduz o decaimento que o SGP4
+  aplica (densidade do próprio SGP4, escalada pelo B\* do TLE), não o coeficiente físico. No
+  Sentinel-2A sai ≈ 0,014 m²/kg ([relatório do S4-06](reports/s4_alta_fidelidade/relatorio.md)).
+- **Forças que o SGP4 não tem pioram o acordo.** Em LEO o SGP4 não tem Sol, Lua nem SRP.
+  Acrescentá-las ao Cowell aproxima a órbita real, mas afasta do SGP4: em 7 dias o erro sobe de
+  0,03 para 0,36 km no Sentinel-2A. O SGP4 não valida essas forças; elas foram validadas por
+  componentes no S4-02, contra as efemérides DE421.
+
+**Trocar por uma referência mais precisa não exige mudar `orbit_determination.py`.** O
+`fit_initial_state` aceita qualquer `Propagator` como `reference`. Basta uma nova classe que
+implemente `propagate(t) → (r, v)` a partir das efemérides melhores e passá-la no lugar do
+`SGP4Propagator`. Exemplos de efemérides: as órbitas precisas (POD/SP3, erro de centímetros)
+que o Copernicus publica para os Sentinel, ou dados de GNSS de bordo. A classe interpola essas
+efemérides e as converte para o ECI do projeto (TEME). Com essa referência:
+
+- o C_D·A/m ajustado passa a ter significado físico;
+- Sol, Lua e SRP passam a melhorar o acordo em vez de piorá-lo;
+- vale reavaliar o resto do ajuste: o espaçamento das amostras (`step_s`), o tamanho da janela
+  e ajustar também o C_R da SRP.
+
 ## Roadmap
 
 **Concluído:**
