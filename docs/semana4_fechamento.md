@@ -183,27 +183,38 @@ Todas compatíveis (nenhum teste antigo removido ou afrouxado):
 import math
 from satsim.astrotime import datetime_to_jd
 from satsim.elements import KeplerianElements
-from satsim.forces import (DragAcceleration, SolarRadiationPressure, ThirdBodyAcceleration,
-                           ZonalAcceleration)
+from satsim.forces import (
+    DragAcceleration,
+    SolarRadiationPressure,
+    ThirdBodyAcceleration,
+    ZonalAcceleration,
+)
 from satsim.mean_osc import conversion_models, mean_to_osculating
 from satsim.orbit_design import frozen_eccentricity, raan_for_ltan, sso_inclination_calibrated
 from satsim.propagators import CowellPropagator
 
-a = 6888.089e3                                   # 1. projeto médio (91 rev em 6 dias, Sem4 §7.5)
-i0 = math.radians(97.4396)                       #    1ª ordem só J2 (eq. 27), só para o e congelado
-e = frozen_eccentricity(a, i0)                   #    J2–J4: 1,07721e-3, ω = 90°
-models = (ZonalAcceleration(), ThirdBodyAcceleration("sun", epoch),
-          ThirdBodyAcceleration("moon", epoch),
-          SolarRadiationPressure(epoch, cr=1.3, area_over_mass=0.01),
-          DragAcceleration(cd=2.2, area_over_mass=0.005))
-i = sso_inclination_calibrated(a, e, epoch, conversion_models(models))   # 2. calibração J2–J4 (≈ 5 s)
-raan = raan_for_ltan(22.5, datetime_to_jd(epoch))                        #    LTAN 22h30
+# 1. Projeto médio (91 rev em 6 dias, Sem4 §7.5). A inclinação de 1ª ordem só J2 (eq. 27) serve
+#    só para a excentricidade congelada (J2–J4: 1,07721e-3, ω = 90°).
+a = 6888.089e3
+i0 = math.radians(97.4396)
+e = frozen_eccentricity(a, i0)
+models = (
+    ZonalAcceleration(),
+    ThirdBodyAcceleration("sun", epoch),
+    ThirdBodyAcceleration("moon", epoch),
+    SolarRadiationPressure(epoch, cr=1.3, area_over_mass=0.01),
+    DragAcceleration(cd=2.2, area_over_mass=0.005),
+)
+# 2. Calibração J2–J4 (≈ 5 s, uma vez para todos) e Ω para LTAN 22h30.
+i = sso_inclination_calibrated(a, e, epoch, conversion_models(models))
+raan = raan_for_ltan(22.5, datetime_to_jd(epoch))
 
+# 3. Conversão (só gravidade zonal) e 4. Cowell completo, um por fase do desenho da constelação.
 satellites = []
-for psi in phases:                               # fases (e/ou planos) do desenho da constelação
+for psi in phases:
     mean = KeplerianElements(a, e, i, raan, math.pi / 2, psi)
-    osc = mean_to_osculating(mean, epoch, conversion_models(models)).elements   # 3. conversão
-    satellites.append(CowellPropagator(osc, epoch, models))                    # 4. Cowell completo
+    osc = mean_to_osculating(mean, epoch, conversion_models(models)).elements
+    satellites.append(CowellPropagator(osc, epoch, models))
 ```
 
 - A inclinação calibrada é a mesma para os 6 satélites (mesmos a e e), então calibra-se uma vez.
