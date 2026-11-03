@@ -85,6 +85,7 @@
     <li><code>src/satsim/forces/third_body.py</code> — Sol e Lua: o atraso de 24 h, a deriva de inclinação da SSO e a analogia do peão (J2 inclina só de forma oscilatória)</li>
     <li><code>src/satsim/forces/srp.py</code> e o eclipse — a fração da órbita na sombra: corda × arco e a eq. 30 do Sem4</li>
     <li><code>src/satsim/mean_osc.py</code> — elementos médios × osculadores: de onde vêm, o método do tiro e quais forças entram na conversão (comparação com o SGP4)</li>
+    <li><code>scripts/build_demo.py</code> — SSO-1 (Cowell) e Sentinel-2A na demo: o que a comparação visual mostra e onde está a comparação entre propagadores</li>
   </ol>
 </nav>
 
@@ -2196,6 +2197,45 @@ condição inicial:</p>
 série, é mais exato e mais lento (4 integrações de uma volta). Atenção: os elementos de um TLE também são médios,
 mas na teoria do SGP4, que não é a mesma definição do satsim. Para partir de um TLE, usa-se o (r, v) que o SGP4
 calcula na época, nunca os elementos do TLE como se fossem osculadores.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="demo-sso-sentinel">
+<h2>16. build_demo.py — SSO-1 (Cowell) e Sentinel-2A lado a lado</h2>
+<div class="file">scripts/build_demo.py · reports/s4_alta_fidelidade/relatorio.md · card S4-06</div>
+
+<h3>Não é uma comparação entre propagadores</h3>
+<p>A demo mostra a SSO de projeto e o Sentinel-2A juntos, mas eles são <strong>duas órbitas diferentes</strong>,
+cada uma com o seu propagador:</p>
+<table>
+  <tr><th></th><th>SSO-1 (Cowell)</th><th>Sentinel-2A</th></tr>
+  <tr><td>O que é</td><td>a órbita <strong>de projeto</strong> da constelação</td><td>um satélite <strong>real</strong> em operação</td></tr>
+  <tr><td>Altitude</td><td>≈ 510 km</td><td>≈ 786 km</td></tr>
+  <tr><td>Período</td><td>≈ 95 min</td><td>≈ 101 min</td></tr>
+  <tr><td>Propagador</td><td>Cowell completo (J2–J4 + Sol/Lua + SRP + arrasto)</td><td>SGP4 a partir do TLE</td></tr>
+  <tr><td>LTAN</td><td>22h30 (escolhido no projeto)</td><td>≈ 22h46 (medido na cena)</td></tr>
+</table>
+<p>Como as altitudes e os períodos são diferentes, os dois se afastam ao longo do dia de qualquer maneira. A distância
+entre eles na tela não diz nada sobre a qualidade do propagador.</p>
+
+<h3>Para que serve o Sentinel-2A na tela</h3>
+<p>É uma <strong>referência visual de uma SSO real</strong> ao lado da SSO projetada: uma checagem qualitativa de que a
+órbita de projeto se comporta como uma de verdade.</p>
+<ul>
+  <li><strong>Traço:</strong> polar e retrógrado, quase paralelo ao do Sentinel-2A.</li>
+  <li><strong>LTAN:</strong> parado ao longo das 24 h nos dois (22h30 e ≈ 22h46). O da ISS, que não é SSO, muda o
+  tempo todo.</li>
+  <li><strong>β e eclipse:</strong> β parecido (≈ 23° e ≈ 20°) e fração de eclipse na mesma faixa (≈ 36% e ≈ 33% da volta).</li>
+</ul>
+
+<h3>Onde está a comparação Cowell × SGP4</h3>
+<p>No relatório <code>reports/s4_alta_fidelidade/relatorio.md</code>. Lá o <strong>mesmo satélite</strong> (Sentinel-2A ou
+ISS) é propagado pelo Cowell e pelo SGP4, e o erro de posição é medido em 24 h, 72 h e 7 dias: (A) partindo do estado do
+SGP4 em t = 0 e (B) com o estado ajustado em 72 h (<code>fit_initial_state</code>).</p>
+<p>Essa comparação quase não apareceria na GUI. Com o estado ajustado, a diferença em 24 h fica em ≈ 10 m. Vista a
+786 km de altitude, isso é muito menos que um pixel, e os dois marcadores ficariam sobrepostos. Se um dia ela for
+para a demo, a forma útil é numérica: um "Sentinel-2A (Cowell)" ajustado ao SGP4 e, no painel, a distância atual entre
+os dois, em metros.</p>
 </section>
 
 </main>
