@@ -10,6 +10,10 @@
  * passagens, círculo de visibilidade (``footprint_deg``) e o TLE da ISS real (``meta.tle``).
  * O círculo do footprint é desenhado com geometria de esfera (destino a uma distância angular
  * dada), não com equações orbitais: o raio vem pronto do Python.
+ *
+ * S4-06 (campos opcionais por satélite): ``ltan_h``, ``beta_deg`` e ``eclipse``. O painel
+ * Informações mostra LTAN, β e "iluminado / em eclipse" do satélite selecionado, e o marcador
+ * fica esmaecido em eclipse (no globo e no mapa). Tudo vem calculado do Python.
  */
 (function () {
   "use strict";
@@ -54,6 +58,9 @@
       color: s.color,
       lla: s.lla,
       footprint: s.footprint_deg || null, // S3-06 (opcional)
+      ltan: s.ltan_h || null, // S4-06 (opcional)
+      beta: s.beta_deg || null, // S4-06 (opcional)
+      eclipse: s.eclipse || null, // S4-06 (opcional)
       visible: true,
       now: null,
     };
@@ -140,6 +147,27 @@
     else if (d < -180) d += 360;
     var az = arr[k] + (f - k) * d;
     return az < 0 ? az + 360 : az >= 360 ? az - 360 : az;
+  }
+
+  // Idem para uma grandeza periódica (LTAN em [0, 24) h): interpola pelo caminho curto.
+  function sampleWrap(arr, t, period) {
+    var n = arr.length;
+    var f = t / STEP;
+    if (f <= 0) return arr[0];
+    if (f >= n - 1) return arr[n - 1];
+    var k = Math.floor(f);
+    var d = arr[k + 1] - arr[k];
+    if (d > period / 2) d -= period;
+    else if (d < -period / 2) d += period;
+    var v = arr[k] + (f - k) * d;
+    return v < 0 ? v + period : v >= period ? v - period : v;
+  }
+
+  // S4-06: em eclipse no instante t (amostra mais próxima; o booleano não se interpola).
+  function inEclipse(s, t) {
+    if (!s.eclipse) return false;
+    var k = Math.min(s.eclipse.length - 1, Math.max(0, Math.round(t / STEP)));
+    return s.eclipse[k] === true;
   }
 
   // O satélite visto da estação no instante t, e o estado de visibilidade.
@@ -341,6 +369,7 @@
       s.marker.lat = p[0];
       s.marker.lng = p[1];
       s.marker.alt = p[2] / EARTH_RADIUS_KM;
+      s.marker.el.classList.toggle("eclipse", inEclipse(s, t));
       markers.push(s.marker);
       // Cor única por caminho (gradiente por vértice custa caro a cada quadro no globe.gl).
       addPath({
@@ -610,14 +639,15 @@
 
       var x = mapX(s.now[1], w);
       var y = mapY(s.now[0], h);
+      var dark = inEclipse(s, t); // S4-06: marcador esmaecido na sombra da Terra
       var glow = ctx.createRadialGradient(x, y, 0, x, y, 14 * dpr);
-      glow.addColorStop(0, rgba(s.color, 0.9));
+      glow.addColorStop(0, rgba(s.color, dark ? 0.25 : 0.9));
       glow.addColorStop(1, rgba(s.color, 0));
       ctx.fillStyle = glow;
       ctx.beginPath();
       ctx.arc(x, y, 14 * dpr, 0, 2 * Math.PI);
       ctx.fill();
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = dark ? "#5d6a80" : "#ffffff";
       ctx.beginPath();
       ctx.arc(x, y, 3.5 * dpr, 0, 2 * Math.PI);
       ctx.fill();
@@ -667,6 +697,9 @@
     lat: document.getElementById("info-lat"),
     lon: document.getElementById("info-lon"),
     alt: document.getElementById("info-alt"),
+    ltan: document.getElementById("info-ltan"),
+    beta: document.getElementById("info-beta"),
+    light: document.getElementById("info-light"),
   };
   document.getElementById("info-note").textContent = GEODETIC
     ? "Coordenadas geodésicas WGS84: latitude da vertical local, altitude acima do elipsoide. " +
@@ -691,6 +724,26 @@
     info.lat.textContent = Math.abs(s.now[0]).toFixed(3) + "° " + (s.now[0] >= 0 ? "N" : "S");
     info.lon.textContent = Math.abs(s.now[1]).toFixed(3) + "° " + (s.now[1] >= 0 ? "L" : "O");
     info.alt.textContent = s.now[2].toFixed(2) + " km";
+    // S4-06: geometria solar (cenas antigas ou satélites sem os campos mostram "—")
+    var t = state.simTime;
+    info.ltan.textContent = s.ltan ? fmtHours(sampleWrap(s.ltan, t, 24)) : "—";
+    info.beta.textContent = s.beta ? sampleArr(s.beta, t).toFixed(2) + "°" : "—";
+    if (s.eclipse) {
+      var dark = inEclipse(s, t);
+      info.light.textContent = dark ? "em eclipse" : "iluminado";
+      info.light.className = dark ? "light-eclipse" : "light-sun";
+    } else {
+      info.light.textContent = "—";
+      info.light.className = "";
+    }
+  }
+
+  // Horas decimais → "22h30min" (hora local do nó ascendente).
+  function fmtHours(h) {
+    var total = Math.round(h * 60) % (24 * 60);
+    var hh = Math.floor(total / 60);
+    var mm = total % 60;
+    return hh + "h" + (mm < 10 ? "0" : "") + mm + "min";
   }
 
   // --- S3-06: painel "satélite × estação", lista de passagens e faixa do TLE ------------------

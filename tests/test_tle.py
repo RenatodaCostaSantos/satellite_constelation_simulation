@@ -18,7 +18,15 @@ import pytest
 from golden.reference_values import ISS_TLE_A1, TLE_AGING
 
 from satsim import tle as tle_mod
-from satsim.tle import Tle, TleError, fetch_celestrak, get_tle, load_bundled_tle, tle_checksum
+from satsim.tle import (
+    SENTINEL_2A_NORAD_ID,
+    Tle,
+    TleError,
+    fetch_celestrak,
+    get_tle,
+    load_bundled_tle,
+    tle_checksum,
+)
 
 SAMPLE_PATH = Path(__file__).parent / "data" / "iss_sample.tle"
 A1_TEXT = f"{ISS_TLE_A1.name}\n{ISS_TLE_A1.line1}\n{ISS_TLE_A1.line2}\n"
@@ -350,3 +358,18 @@ def test_bundled_tle_is_valid_iss():
     assert 51.0 < tle.inclination_deg < 52.0
     assert 15.0 < tle.mean_motion_rev_day < 16.0
     assert tle.epoch.year >= 2019
+
+
+def test_bundled_tle_sentinel_2a_matches_test_tle(tmp_path, no_network):
+    # S4-06: o fallback é um mapa catálogo → arquivo; o embarcado do Sentinel-2A é o do A.1
+    sample = SAMPLE_PATH.parent / "sentinel2a_sample.tle"
+    frozen = Tle.from_text(sample.read_text(encoding="utf-8"))
+    tle = load_bundled_tle(SENTINEL_2A_NORAD_ID)
+    assert tle == frozen
+    assert tle.norad_id == SENTINEL_2A_NORAD_ID
+    assert tle.inclination_deg == pytest.approx(98.5636)
+    result = get_tle(SENTINEL_2A_NORAD_ID, cache_dir=tmp_path, offline=True, now=NOW)
+    assert result.source == "bundled" and result.tle == frozen
+    assert no_network == []
+    with pytest.raises(TleError, match="sem TLE embarcado"):
+        load_bundled_tle(99999)

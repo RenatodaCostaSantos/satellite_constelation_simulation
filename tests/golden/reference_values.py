@@ -1085,3 +1085,57 @@ class SsoCalibratedA7:
 
 
 SSO_CALIBRATED_A7 = SsoCalibratedA7()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.8 do prompt da Semana 4: Cowell × SGP4 (card S4-06). Erro de posição 3D
+#     [km] em 24 h / 72 h / 7 dias. (A) partindo do estado do SGP4 em t = 0; (B) estado inicial
+#     (e C_D·A/m) ajustado por mínimos quadrados em 72 h, amostras a cada 600 s. DOP853 rtol
+#     1e-10, atol 1e-3. TLEs: tests/data/sentinel2a_sample.tle (A.1) e iss_sample.tle (Semana 3).
+#     A tabela completa está em scripts/compare_high_fidelity.py (A8_KM) e no relatório
+#     reports/s4_alta_fidelidade/relatorio.md, com os valores medidos no satsim.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class HighFidelityA8:
+    # (B) com forças completas (J2–J4 + Sol/Lua + SRP + arrasto): referência e critério do card
+    sentinel_full_b_km: tuple[float, float, float] = (0.06, 0.09, 1.11)
+    sentinel_full_b_crit_km: tuple[float, float, float] = (0.2, 0.3, 3.0)
+    iss_full_b_km: tuple[float, float, float] = (0.14, 0.29, 3.39)
+    iss_full_b_crit_km: tuple[float, float, float] = (0.5, 1.0, 8.0)
+    # C_D·A/m efetivo ajustado em (B) [m²/kg]
+    sentinel_cd_a_m_full: float = 0.00208
+    iss_cd_a_m_full: float = 0.00134
+    # Teste rápido do card: Sentinel-2A, J2–J4, sem arrasto, janela de 24 h a 600 s
+    quick_window_s: float = 24 * 3600.0
+    quick_rms_crit_km: float = 0.2
+    quick_err_24h_crit_km: float = 0.3
+    # Medido no satsim (S4-06), teste rápido: RMS 0,0071 km, erro em 24 h 0,0076 km (48
+    # avaliações, ≈ 5 s); RMS partindo do estado do SGP4 em t = 0: 0,923 km.
+    # Ajuste sintético (card): estado perturbado de 1 km e 1 m/s → recuperar ≤ 1 m e ≤ 1 mm/s
+    synthetic_pos_tol_m: float = 1.0
+    synthetic_vel_tol_m_s: float = 1e-3
+
+
+HIGH_FIDELITY_A8 = HighFidelityA8()
+
+
+@dataclass(frozen=True)
+class DemoSceneA7:
+    """SSO de demonstração do A.7 na cena (S4-06): LTAN 22h30 em 2026-10-23 00:00 UTC, 24 h a 20 s.
+
+    Medido no satsim (build_demo, Cowell completo): LTAN 22,4997 … 22,5026 h; β 23,407 … 23,431°;
+    fração de eclipse 0,3603 (idênticos ao A.7/A.4).
+    """
+
+    start_utc: str = "2026-10-23T00:00:00Z"
+    ltan_h: float = 22.5
+    ltan_tol_h: float = 0.01  # critério do card
+    ltan_range_h: tuple[float, float] = (22.4997, 22.5026)
+    eclipse_fraction: float = 0.36
+    eclipse_fraction_tol: float = 0.02  # critério do card
+    eclipse_fraction_a4: float = 0.3603
+    beta_range_deg: tuple[float, float] = (23.41, 23.43)
+
+
+DEMO_SCENE_A7 = DemoSceneA7()

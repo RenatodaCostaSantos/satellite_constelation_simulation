@@ -165,6 +165,8 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .info-note { margin-top: 4px; font-size: 11px; color: #5d6a80; }
+.info-grid dd.light-sun { color: #ffd166; }
+.info-grid dd.light-eclipse { color: #8a97ad; }
 
 /* --- faixa do TLE (S3-06) ----------------------------------------------------------------- */
 .tle-banner {
@@ -251,6 +253,12 @@ body {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 0 6px 2px currentColor, 0 0 18px 6px currentColor;
+}
+/* S4-06: na sombra da Terra o marcador fica esmaecido (sem o brilho) */
+.sat-marker.eclipse .dot {
+  background: #5d6a80;
+  box-shadow: 0 0 3px 1px currentColor;
+  opacity: 0.55;
 }
 .sat-marker .label {
   position: absolute;

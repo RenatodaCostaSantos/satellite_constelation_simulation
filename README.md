@@ -63,12 +63,13 @@ tests/                       testes (pytest)
 
 Globo 3D e mapa 2D na mesma tela e sincronizados, com a **ISS real** (TLE/SGP4) desde a
 Semana 3. Tudo é calculado em Python; o viewer só desenha. A demo cobre **24 h a partir de
-agora** (passo de 20 s) com dois satélites:
+agora** (passo de 20 s) com três satélites:
 
 | Satélite | Propagador | O que mostra |
 |---|---|---|
 | ISS | `SGP4Propagator` | a ISS real, a partir do TLE mais recente (CelesTrak → cache → TLE embarcado) |
-| SSO-1 (J2) | `MeanJ2Propagator` | a órbita heliossíncrona de projeto 91/6 |
+| SSO-1 (Cowell) | `CowellPropagator` completo (J2–J4 + Sol/Lua + SRP + arrasto) | a SSO de projeto 91/6 calibrada (i = 97,46325°, e congelada, ω = 90°), LTAN 22h30 no início da cena, a partir de `mean_to_osculating` dos elementos médios (S4-06) |
+| Sentinel-2A | `SGP4Propagator` | uma SSO real a ≈ 786 km (TLE da CelesTrak → cache → TLE embarcado), para comparar com a de projeto (S4-06) |
 
 E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
 
@@ -87,13 +88,18 @@ E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
 - **faixa do TLE** abaixo da barra superior: época, idade e fonte do TLE, em destaque quando a
   idade passa de 3 dias (a posição real pode diferir de dezenas de km).
 
+No painel **Informações** do satélite selecionado (S4-06): **LTAN** (hora local do nó
+ascendente; na SSO-1 fica em 22h30 o dia inteiro, na ISS muda continuamente), **β** (ângulo entre
+o plano da órbita e o Sol) e **Sol**: *iluminado* ou *em eclipse*. Na sombra da Terra o marcador
+do satélite fica esmaecido, no globo e no mapa; na SSO-1, cerca de 36% de cada volta (≈ 35 min).
+
 As passagens do viewer são as mesmas de `scripts/list_passes.py` (a mesma função,
 `satsim.passes.find_passes`).
 
 **Gerar** (na raiz do repositório, com o venv ativo):
 
 ```bash
-python scripts/build_demo.py              # ISS real, 24 h a partir de agora (~3 MB)
+python scripts/build_demo.py              # ISS e Sentinel-2A reais, 24 h a partir de agora (~4 MB)
 python scripts/build_demo.py --offline    # sem rede: cache local ou TLE embarcado
 python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-epoch   # reprodutível
 ```
@@ -103,14 +109,14 @@ python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-ep
 embutidas no arquivo. A rede só é usada ao **gerar** a demo, para baixar um TLE recente, e é
 opcional. A pasta `demo/` não é versionada; gere de novo para atualizar a ISS.
 
-**Adicionar um satélite:** acrescente uma linha à lista `SATELLITES` em
-[`scripts/build_demo.py`](scripts/build_demo.py), por exemplo
+**Adicionar um satélite:** acrescente-o à lista devolvida por `design_satellites` em
+[`scripts/build_demo.py`](scripts/build_demo.py): um `SceneSatellite(id, nome, cor,
+propagador)` com qualquer propagador (a SSO-1, em `sso_design`, mostra a receita "elementos
+médios → `mean_to_osculating` → Cowell completo"). Por exemplo, com elementos médios de J2:
 
 ```text
-sat("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator, a_km=7200.0, e=0.01, i_deg=30.0, raan_deg=200.0, argp_deg=0.0, psi_deg=90.0),
+SceneSatellite("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator(KeplerianElements(7200e3, 0.01, math.radians(30), math.radians(200), 0.0, math.radians(90)), start)),
 ```
-
-(o quarto argumento é o propagador: `MeanJ2Propagator` com J2, `KeplerPropagator` sem J2)
 
 e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado com 18); cada um
 ganha o seu footprint e as suas passagens. O painel da estação mostra o satélite selecionado na

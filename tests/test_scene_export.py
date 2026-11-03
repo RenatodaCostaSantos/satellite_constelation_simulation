@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from golden.reference_values import (
+    DEMO_SCENE_A7,
     DESIGN_ORBIT,
     FOOTPRINT_A6,
     PASSES_A2,
@@ -24,8 +25,10 @@ from satsim.app.scene_export import (
     SceneStation,
     build_scene,
 )
+from satsim.astrotime import datetime_to_jd
 from satsim.constants import R_EARTH
-from satsim.elements import KeplerianElements
+from satsim.elements import KeplerianElements, state_to_elements
+from satsim.ephemeris import beta_angle, ltan_hours
 from satsim.frames import eci_to_ecef
 from satsim.geodesy import ecef_to_geodetic, ecef_to_spherical
 from satsim.observer import SAO_BENTO_DO_SAPUCAI, footprint_half_angle, observe
@@ -372,6 +375,9 @@ def test_s3_new_fields_are_optional(scene: dict) -> None:
     assert all("footprint_deg" not in s for s in scene["satellites"])
     assert all("looks" not in st for st in scene["stations"])
     assert scene["passes"] == []
+    # S4-06: sem sun_geometry, nada de LTAN, β e eclipse
+    for field in ("ltan_h", "beta_deg", "eclipse"):
+        assert all(field not in s for s in scene["satellites"])
 
 
 def test_s3_multi_satellite_iss_sgp4_and_sso_j2(iss_tle) -> None:
@@ -428,14 +434,50 @@ def test_build_demo_offline_without_network(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(urllib.request, "urlopen", no_network)
     out = tmp_path / "index.html"
-    _load_build_demo().main(["--offline", "--cache-dir", str(tmp_path / "cache"), "-o", str(out)])
+    # Início fixo na data do A.7: os dois TLEs embarcados (ISS e Sentinel-2A) servem
+    _load_build_demo().main(["--offline", "--cache-dir", str(tmp_path / "cache"), "-o", str(out),
+                             "--start", DEMO_SCENE_A7.start_utc])  # fmt: skip
     html = out.read_text(encoding="utf-8")
     scene = _scene_from_html(html)
     assert scene["meta"]["tle"]["source"] == "bundled"
-    assert [s["id"] for s in scene["satellites"]] == ["iss", "sso1"]
+    assert [s["id"] for s in scene["satellites"]] == ["iss", "sso1", "s2a"]
     assert scene["meta"]["duration_s"] == 24 * 3600 and scene["meta"]["step_s"] == 20
     assert "looks" in scene["stations"][0] and "footprint_deg" in scene["satellites"][0]
     assert 'src="vendor' not in html and "<script src=" not in html  # tudo embutido
+    # S4-06: LTAN, β e eclipse em todos os satélites, N amostras cada
+    n = 24 * 3600 // 20 + 1
+    for sat in scene["satellites"]:
+        assert len(sat["ltan_h"]) == len(sat["beta_deg"]) == len(sat["eclipse"]) == n
+        assert all(isinstance(x, bool) for x in sat["eclipse"])
+    # SSO-1 calibrada no Cowell completo: LTAN constante em 22h30 e eclipse de ≈ 36% (A.7)
+    sso = scene["satellites"][1]
+    ltan = np.array(sso["ltan_h"])
+    assert np.all(np.abs(ltan - DEMO_SCENE_A7.ltan_h) <= DEMO_SCENE_A7.ltan_tol_h)
+    lo, hi = DEMO_SCENE_A7.ltan_range_h
+    assert lo - 2e-4 <= ltan.min() and ltan.max() <= hi + 2e-4
+    fraction = float(np.mean(sso["eclipse"]))
+    assert fraction == pytest.approx(DEMO_SCENE_A7.eclipse_fraction,
+                                     abs=DEMO_SCENE_A7.eclipse_fraction_tol)  # fmt: skip
+    assert fraction == pytest.approx(DEMO_SCENE_A7.eclipse_fraction_a4, abs=1e-3)
+    beta = np.array(sso["beta_deg"])
+    assert DEMO_SCENE_A7.beta_range_deg[0] - 0.01 <= beta.min()
+    assert beta.max() <= DEMO_SCENE_A7.beta_range_deg[1] + 0.01
+
+
+def test_s4_sun_geometry_fields_match_ephemeris() -> None:
+    sc = build_scene([_sso()], [STATION], EPOCH, 3 * 3600, 60, sun_geometry=True)
+    sat = sc["satellites"][0]
+    n = 3 * 3600 // 60 + 1
+    assert len(sat["ltan_h"]) == len(sat["beta_deg"]) == len(sat["eclipse"]) == n
+    t = np.arange(n) * 60.0
+    r, v = KeplerPropagator(SSO_ELEMENTS, EPOCH).propagate(t)
+    jd = datetime_to_jd(EPOCH) + t / 86400.0
+    ltan = ltan_hours(state_to_elements(r, v).raan, jd)
+    np.testing.assert_allclose(sat["ltan_h"], ltan, atol=1e-4)
+    np.testing.assert_allclose(sat["beta_deg"], np.degrees(beta_angle(r, v, jd)), atol=1e-4)
+    # numa volta de ~95 min o satélite entra e sai da sombra (β ≈ 0 em Ω = 30° nesta data)
+    assert any(sat["eclipse"]) and not all(sat["eclipse"])
+    assert json.loads(json.dumps(sc)) == sc
 
 
 def test_build_demo_network_failure_falls_back(tmp_path, monkeypatch) -> None:
@@ -454,6 +496,8 @@ def test_build_demo_deterministic_tle_epoch(tmp_path) -> None:
     tle_file = Path(__file__).parent / "data" / "iss_sample.tle"
     _load_build_demo().main(["--tle-file", str(tle_file), "--start", "tle-epoch", "-o", str(out)])
     scene = _scene_from_html(out.read_text(encoding="utf-8"))
+    # TLE da ISS de 2019: o do Sentinel-2A (2026) fica a anos da cena e é omitido
+    assert [s["id"] for s in scene["satellites"]] == ["iss", "sso1"]
     iss_passes = [p for p in scene["passes"] if p["sat_id"] == "iss"]
     # 24 h após a época: as passagens 1 e 2 do A.2 (AOS em 29 258,7 s e 64 638,7 s)
     assert len(iss_passes) == 2
