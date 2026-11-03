@@ -754,3 +754,388 @@ class PassesA2Meta:
 
 
 PASSES_A2_META = PassesA2Meta()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.2 do prompt da Semana 4: gravidade zonal J2–J4 (Sem4 eq. 6, card S4-01).
+#     Experimento de referência independente (23/10/2026): forças escritas do zero e integradas no
+#     CowellPropagator do projeto (DOP853). J2 1,08262668e-3, J3 −2,533e-6, J4 −1,620e-6; µ e R⊕
+#     do projeto. Acelerações em m/s², em r = 7000 km; o ponto de 45° N é 7000 km·(cos 45°, 0,
+#     sin 45°) (o prompt imprime (4949,7; 0; 4949,7) km).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class ZonalPointA2S4:
+    label: str
+    r_km: tuple[float, float, float]
+    a_j2: tuple[float, float, float]
+    a_j3: tuple[float, float, float]
+    a_j4: tuple[float, float, float]
+
+
+_C45_KM = 7000.0 * 0.5**0.5
+
+ZONAL_POINTS_A2_S4: tuple[ZonalPointA2S4, ...] = (
+    ZonalPointA2S4("equador", (7000.0, 0.0, 0.0),
+                   (-1.0967390000e-2, 0.0, 0.0),
+                   (0.0, 0.0, -2.3380594778e-5),
+                   (-1.7031041069e-5, 0.0, 0.0)),
+    ZonalPointA2S4("45N", (_C45_KM, 0.0, _C45_KM),
+                   (1.1632673762e-2, 0.0, -3.8775579205e-3),
+                   (-9.7419144910e-6, 0.0, 2.5328977677e-5),
+                   (9.0320734728e-6, 0.0, 1.7060583226e-5)),
+    ZonalPointA2S4("polo N", (0.0, 0.0, 7000.0),
+                   (0.0, 0.0, 2.1934780000e-2),
+                   (0.0, 0.0, -6.2348252742e-5),
+                   (0.0, 0.0, -4.5416109517e-5)),
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class ZonalA2S4:
+    # Medidas do experimento (A.2): parte J2 × j2_acceleration (rel máx, 200 pontos de LEO),
+    # gradiente numérico do potencial (h = 1 m) e energia no Cowell J2–J4 (10 dias, rtol 1e-11)
+    j2_consistency_rel: float = 1.3e-15  # critério do card: ≤ 1e-12
+    gradient_rel: float = 1.4e-9  # critério: ≤ 1e-7
+    energy_rel_10d: float = 3.4e-11  # critério: ≤ 1e-9
+    # Elementos de projeto tomados como osculadores (Ω0 = 30°, ψ0 = 0, 2026-10-23 00:00 UTC),
+    # 30 dias a 60 s, fit_rate de Ω [°/dia]
+    raan_dot_j2_deg_day: float = 0.979419
+    raan_dot_j2_j3_deg_day: float = 0.979418
+    raan_dot_j2_j4_deg_day: float = 0.977169
+    raan_dot_ratio_j2j4_j2: float = 0.997703  # tolerância do card: abs 2e-5
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    raan0_deg: float = 30.0
+    psi0_deg: float = 0.0
+
+
+ZONAL_A2_S4 = ZonalA2S4()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.3 do prompt da Semana 4: Sol, Lua e terceiro corpo (card S4-02).
+#     Quadro: equador verdadeiro e equinócio da data (= ECI/TEME do projeto). Posições do JPL
+#     DE421 via Skyfield 1.55 (experimento de referência, 23/10/2026), em km, 00:00 UTC.
+#     Erros em 2026 (a cada 6 h, 1460 instantes) × DE421: Sol (Astronomical Almanac) direção máx.
+#     0,0140°, |Δr|/r ≤ 8,5e-5; Lua (Montenbruck & Gill §3.3.2, da data) direção máx. 0,085°,
+#     |Δr| ≤ 445 km. Nota (S4-02): esses |Δr| são diferenças de DISTÂNCIA (|r| − |r_DE421|); a
+#     diferença vetorial inclui o erro de direção (Lua em 2026-10-23: distância 439 km, vetor
+#     494 km; Sol: o erro de direção sozinho já dá ~2,2e-4 relativo).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class EphemerisPointA3:
+    date_utc: str
+    sun_km: tuple[float, float, float]
+    moon_km: tuple[float, float, float]
+
+
+EPHEMERIS_A3: tuple[EphemerisPointA3, ...] = (
+    EphemerisPointA3("2026-03-20T00:00:00+00:00",
+                     (148953369.6, -1445437.0, -626444.2), (362066.5, 61667.2, 46759.2)),
+    EphemerisPointA3("2026-06-21T00:00:00+00:00",
+                     (872345.9, 139472241.3, 60464721.9), (-375552.0, 72784.2, 20825.8)),
+    EphemerisPointA3("2026-10-23T00:00:00+00:00",
+                     (-129426274.1, -67475521.4, -29252187.5), (376788.1, -72295.8, -18052.9)),
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class ThirdBodyA3:
+    # Tolerâncias do card S4-02 e erros máximos medidos em 2026 (A.3)
+    sun_dir_tol_deg: float = 0.02
+    sun_dist_rel_tol: float = 1e-4
+    moon_dir_tol_deg: float = 0.1
+    moon_dist_tol_km: float = 500.0
+    sun_dir_max_2026_deg: float = 0.0140
+    sun_dist_rel_max_2026: float = 8.5e-5
+    moon_dir_max_2026_deg: float = 0.085
+    moon_dist_max_2026_km: float = 445.0
+    sun_mg_rejected_deg: float = 0.094  # Sol de M&G §3.3.2 (periélio fixo)
+    no_precession_sun_deg: float = 0.47  # sem a correção para o equinócio da data
+    no_precession_moon_deg: float = 0.46
+    # 2026-10-23 00:00 UTC
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    sun_ra_aa_deg: float = 207.5235  # fórmula do AA (tolerância do card: abs 0,001°)
+    sun_ra_de421_deg: float = 207.5350
+    sun_distance_au: float = 0.995080
+    ltan_raan_deg: float = 5.0235  # Ω que dá LTAN 22h30 nessa data
+    ltan_h: float = 22.500  # tolerância: abs 0,005 h
+    # Terceiro corpo em r = (R⊕ + 500 km, 0, 0), m/s² (tolerância do card: rel 1%)
+    mu_sun_m3_s2: float = 1.32712440018e20  # IERS Conventions 2010
+    mu_moon_m3_s2: float = 4.9028000661e12  # DE421
+    au_m: float = 149597870700.0  # IAU 2012
+    r_alt_km: float = 500.0
+    a_sun_m_s2: float = 5.002320e-7
+    a_moon_m_s2: float = 1.200458e-6
+    # SSO calibrada (A.7), Cowell J2–J4, 30 dias: efeito de Sol/Lua em Ω̇. Discrepância com o
+    # Sem4 §10, que estima a precessão nodal lunissolar em "~1e-3 grau/dia em LEO" (~40× maior).
+    lunisolar_raan_dot_deg_day: float = -2.45e-5
+    lunisolar_ltan_drift_min_year: float = -0.035
+    sem4_s10_estimate_deg_day: float = 1e-3
+    i_calibrated_with_sun_moon_deg: float = 97.46344  # +0,0002° sobre a calibrada só J2–J4
+    # Medido no S4-02 (não substitui o A.3; a conversão médio → osculador só chega no S4-04):
+    # elementos do A.7 tomados como osculadores (Ω0 = 5,0235°, LTAN 22h30), Cowell J2–J4 ± Sol/Lua,
+    # 30 dias a 60 s. O ajuste linear de Ω dá −3,52e-4 °/dia (Sol sozinho −2,17e-4), porque o Sol
+    # produz di/dt ≈ −9,8e-5 °/dia (deriva de inclinação da SSO) e, via J2, ΔΩ ∝ t²
+    # (−0,0058° previsto, −0,0065° medido em 30 dias com o Sol). Nos primeiros 5 dias
+    # ΔΩ ≈ −1e-4° (≈ −2e-5 °/dia), coerente com o A.3. Reavaliar com o estado convertido no S4-05.
+
+
+THIRD_BODY_A3 = ThirdBodyA3()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.4 do prompt da Semana 4: pressão de radiação solar e eclipse (card S4-03).
+#     P☉ = 4,56e-6 N/m² a 1 UA (Montenbruck & Gill §3.4). Sombra cilíndrica (Sem4 §5.3), fração de
+#     eclipse de órbita circular (Sem4 eq. 30). SSO de demonstração do A.7: a 6888,089 km,
+#     i 97,46325°, e 1,07721e-3, ω 90°, ψ0 = 0, Ω = 5,0235° (LTAN 22h30 em 2026-10-23 00:00 UTC).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SrpEclipseA4:
+    p_sun_n_m2: float = 4.56e-6
+    cr: float = 1.3
+    area_over_mass_m2_kg: float = 0.01
+    a_1au_m_s2: float = 5.928e-8  # P☉·C_R·A/m a 1 UA
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    sun_distance_au: float = 0.995080
+    a_epoch_m_s2: float = 5.986762e-8  # tolerância do card: rel 1e-4
+    # SSO de demonstração (LTAN 22h30), Cowell completo no A.4 (J2–J4 no teste; diferença
+    # desprezível), 24 h a 20 s, sombra cilíndrica
+    demo_a_km: float = 6888.089
+    demo_i_deg: float = 97.46325
+    demo_e: float = 1.07721e-3
+    demo_argp_deg: float = 90.0
+    demo_raan_deg: float = 5.0235
+    demo_beta_min_deg: float = 23.41
+    demo_beta_max_deg: float = 23.43
+    demo_eclipse_fraction: float = 0.3603  # tolerância do card: abs 0,01
+    demo_eclipse_fraction_eq30: float = 0.3650  # Sem4 eq. 30 com β médio
+    demo_eclipse_min_per_rev: float = 34.7  # por volta de 5 696 s (Sem4 §5.3: "~35 min")
+    demo_period_s: float = 5696.0
+    # Caso meio-dia/meia-noite (Ω = 30°, LTAN ≈ 0h10), 24 h a 5 s
+    midnight_raan_deg: float = 30.0
+    midnight_beta_deg: float = -0.94
+    midnight_eclipse_fraction: float = 0.3720
+    midnight_eclipse_fraction_eq30: float = 0.3767
+
+
+SRP_ECLIPSE_A4 = SrpEclipseA4()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.6 do prompt da Semana 4: conversão médio → osculador (card S4-04).
+#     Órbita de projeto (a 6888,089 km, e 1,074e-3, i 97,4396°, ω 90°, Ω 30°, ψ 0; 2026-10-23
+#     00:00 UTC), modelos J2–J4, médias por janela nodal com passo 10 s.
+#
+#     Discrepância (S4-04): o experimento do A.6 parece ter usado janelas do período KEPLERIANO
+#     (5 689,30 s), não do nodal (5 696,70 s) que o card pede. Com a janela kepleriana o satsim
+#     reproduz o A.6 (resíduos 9 495,97 / 74,48 / 0,2469 m; osculador a 6 878 667,3 m, e 7,2726e-4,
+#     i 97,444713°). Com a janela nodal (implementada): resíduos 9 483,6 / 74,30 / 0,2460 /
+#     2,26e-4 m; osculador a 6 878 679,4 m, e 7,2492e-4, i 97,444706°, ω 270,0°. A janela nodal é a
+#     correta: os termos de curto período dependem de cos 2u, e u completa 2π num período nodal;
+#     a kepleriana fica 7,4 s curta e enviesa ⟨a⟩ em ≈ A·δT/T ≈ 9,4 km × 7,4/5 697 ≈ 12 m. É
+#     também o que explica o "a − alvo −0,0 … +16,6 m" do A.6: com a janela nodal o semieixo
+#     médio do estado convertido fica constante (−0,0 m em 30 dias).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class MeanOscA6:
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    raan0_deg: float = 30.0
+    psi0_deg: float = 0.0
+    # Resíduos por iteração (A.6, janela kepleriana — ver discrepância acima)
+    residual_a_m: tuple[float, ...] = (9.495e3, 7.446e1, 2.468e-1, 2.252e-4, 1.985e-6)
+    residual_ex: tuple[float, ...] = (3.67e-6, 3.68e-6, 1.52e-8, 2.20e-11, 8.84e-14)
+    residual_ey: tuple[float, ...] = (1.81e-3, 5.25e-6, 1.57e-9, 5.72e-11, 2.77e-13)
+    residual_i_deg: tuple[float, ...] = (5.12e-3, 5.39e-6, 4.65e-9, 8.37e-11, 4.45e-13)
+    first_residual_a_tol_km: float = 0.1  # critério do card: Δa da 1ª iteração ≈ 9,5 km
+    # Osculador resultante (A.6, janela kepleriana)
+    osc_a_m: float = 6878668.405
+    osc_e: float = 7.270362e-4
+    osc_i_deg: float = 97.444712
+    osc_argp_deg: float = 270.0
+    # Medido no satsim com a janela nodal (S4-04)
+    nodal_osc_a_m: float = 6878679.4
+    nodal_first_residual_a_m: float = 9483.6
+    # Congelamento: estado convertido, Cowell J2–J4, médias por janela nodal (A.6)
+    frozen_10d_a_minus_target_m: tuple[float, float] = (-0.0, 16.6)
+    frozen_10d_e: tuple[float, float] = (1.0740e-3, 1.0781e-3)
+    frozen_10d_argp_deg: tuple[float, float] = (90.00, 90.16)
+    frozen_30d_e: tuple[float, float] = (1.0740e-3, 1.0837e-3)
+    frozen_30d_argp_deg: tuple[float, float] = (90.00, 90.29)
+    # Critérios do card (10 dias)
+    crit_argp_deg: tuple[float, float] = (89.5, 90.5)
+    crit_e: tuple[float, float] = (1.06e-3, 1.10e-3)
+    crit_a_minus_target_m: tuple[float, float] = (-50.0, 50.0)
+    # Contraste: médio usado como osculador (A.6)
+    naive_10d_a_minus_target_m: tuple[float, float] = (9417.0, 9511.0)
+    naive_10d_e: tuple[float, float] = (2.755e-3, 2.883e-3)
+    naive_10d_argp_deg: tuple[float, float] = (68.39, 89.93)
+    naive_10d_argp_range_deg: float = 21.5  # critério do card: > 15°
+    naive_30d_argp_deg: tuple[float, float] = (20.67, 89.93)
+    # Ω̇ (30 dias a 60 s) e deriva do LTAN (A.6)
+    naive_raan_dot_deg_day: float = 0.977169
+    naive_ltan_drift_min_year: float = -12.39
+    converted_raan_dot_deg_day: float = 0.982540
+    converted_ltan_drift_min_year: float = -4.54  # i = 97,4396° vem da teoria só J2 (S4-05)
+    theory_j2_j4_raan_dot_deg_day: float = 0.983318  # nos médios medidos (Cowell −0,079%)
+    theory_j2_raan_dot_deg_day: float = 0.985603  # (−0,31%)
+
+
+MEAN_OSC_A6 = MeanOscA6()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.5 do prompt da Semana 4: taxas médias de 1ª ordem com J2, J3 e J4
+#     (card S4-05). Órbita de projeto: a 6888,089 km, i 97,4396°, ω 90°, e 1,074e-3. Fórmulas
+#     conferidas pelo autor do prompt contra a dedução simbólica em 2000 pontos.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class MeanZonalA5:
+    a_km: float = 6888.089
+    i_deg: float = 97.4396
+    argp_deg: float = 90.0
+    e: float = 1.074e-3
+    # Ω̇ [°/d]
+    raan_dot_j2_deg_day: float = 0.985653
+    raan_dot_j2_j4_deg_day: float = 0.983375
+    raan_dot_j2_j3_j4_deg_day: float = 0.983369
+    # ω̇ [°/d]
+    argp_dot_j2_deg_day: float = -3.48711
+    argp_dot_j2_j4_deg_day: float = -3.47711
+    argp_dot_j2_j3_j4_deg_day: float = 0.01039  # 4 algarismos no A.5: comparar a 5e-6 °/d
+    # ψ̇ + ω̇ [°/d]
+    u_dot_j2_deg_day: float = 5459.9997
+    u_dot_j2_j4_deg_day: float = 5460.0070
+    u_dot_j2_j3_j4_deg_day: float = 5460.0071
+    # Excentricidade congelada (ω̇ = 0 em ω = 90°)
+    frozen_e_j2_j3: float = 1.074119e-3
+    frozen_e_eq33: float = 1.074113e-3  # Sem4 eq. 33: −(J3/2J2)(R⊕/a)·sin i
+    frozen_e_j2_j4: float = 1.077210e-3
+    # Medido no satsim (S4-05): Ω̇ 0,98565339 / 0,98337502 / 0,98336881 °/d; ω̇ J2–J4
+    # +0,0103926 °/d; econg J2+J3 1,0741194e-3, J2–J4 1,0772101e-3.
+
+
+MEAN_ZONAL_A5 = MeanZonalA5()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.7 do prompt da Semana 4: SSO calibrada, modelo médio × Cowell e o
+#     comparador real (card S4-05). Época 2026-10-23 00:00 UTC.
+#
+#     Diferença esperada no período nodal medido (S4-05): o A.7 mede Tnod = 5 696,6659 s no Cowell
+#     (+4,7 ppm da teoria); o satsim mede 5 696,6796 s (+2,3 ppm). É o mesmo viés da janela
+#     kepleriana do A.6 (ver MEAN_OSC_A6): com ela o estado convertido fica com o semieixo médio
+#     real ≈ 11 m abaixo do alvo, o que encurta o período em 1,5·11/6 888 089 ≈ 2,4 ppm e
+#     reproduz os 5 696,6659 s. Com a janela nodal (implementada) o equivalente ao longo da órbita
+#     é ≈ 45 km em 30 dias (A.7: ≈ 92 km). O Ω̇ (+0,085%) e a i calibrada (+0,00005°) quase não
+#     mudam.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class SsoCalibratedA7:
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    # SSO de projeto calibrada no Cowell J2–J4 (e = econg J2–J4, ω 90°)
+    e_frozen: float = 1.07721e-3
+    i_first_order_deg: float = 97.4396
+    raan_dot_first_order_cowell_deg_day: float = 0.982540
+    i_calibrated_deg: float = 97.46325
+    i_calibrated_tol_deg: float = 0.0005  # critério do card
+    ltan_drift_tol_min_year: float = 0.1  # critério do card
+    # Medido no satsim (S4-05): i calibrada 97,463303°; Cowell 30 dias: Ω̇ 0,9856473 °/d, LTAN
+    # −6e-5 min/ano.
+    # SSO de demonstração: LTAN 22h30 → Ω
+    ltan_h: float = 22.5
+    ra_sun_deg: float = 207.5235
+    raan_demo_deg: float = 5.0235
+    # Modelo médio J2–J4 de 1ª ordem × Cowell (SSO calibrada, Ω 5°, 30 dias)
+    raan0_mean_vs_cowell_deg: float = 5.0
+    raan_dot_ratio_minus_1: float = 8.43e-4
+    raan_dot_ratio_tol: float = 1e-3  # critério do card: 0,1%
+    tnod_cowell_s: float = 5696.6659  # janela kepleriana: ver nota acima
+    tnod_theory_s: float = 5696.6926
+    tnod_theory_j2_s: float = 5696.7003
+    tnod_ppm_tol: float = 10.0  # critério do card
+    along_track_30d_km: float = 92.0
+    # Medido no satsim (S4-05): Ω̇ +0,0849%; Tnod Cowell 5 696,6796 s (+2,28 ppm); teoria
+    # 5 696,69257 s; ≈ 45 km ao longo da órbita em 30 dias.
+    tnod_cowell_satsim_s: float = 5696.6796
+    # Arrasto médio: C_D·A/m 0,011, sem co-rotação, 10 dias (ȧ [m/d])
+    cd_a_m: float = 0.011
+    a_dot_cowell_spherical_m_day: float = -27.76
+    a_dot_cowell_geodetic_m_day: float = -23.63
+    a_dot_eq14_spherical_m_day: float = -29.78
+    a_dot_eq14_geodetic_m_day: float = -25.42
+    a_dot_eq14_at_mean_altitude_m_day: float = -29.69
+    a_dot_ratio_tol: float = 0.10  # critério do card: modelo médio a 10% do Cowell
+    # Medido no satsim (S4-05): Cowell −27,85 (esférica) e −23,71 (geodésica) m/d; modelo médio
+    # −29,85 e −25,47 m/d (razão Cowell/médio 0,933 e 0,931).
+    # Sentinel-2A: médias do SGP4 do TLE do A.1
+    sentinel_a_m: float = 7164249.6
+    sentinel_e: float = 1.142e-3
+    sentinel_argp_deg: float = 90.5
+    sentinel_i_real_deg: float = 98.56361
+    sentinel_i_calibrated_deg: float = 98.56939
+    sentinel_i_first_order_j2_deg: float = 98.54454
+    sentinel_i_tol_deg: float = 0.01  # critério do card
+    # Medido no satsim (S4-05): i calibrada 98,569401° (+0,00579° do real).
+
+
+SSO_CALIBRATED_A7 = SsoCalibratedA7()
+
+# ===============================================================================================
+# Semana 4 — Apêndice A.8 do prompt da Semana 4: Cowell × SGP4 (card S4-06). Erro de posição 3D
+#     [km] em 24 h / 72 h / 7 dias. (A) partindo do estado do SGP4 em t = 0; (B) estado inicial
+#     (e C_D·A/m) ajustado por mínimos quadrados em 72 h, amostras a cada 600 s. DOP853 rtol
+#     1e-10, atol 1e-3. TLEs: tests/data/sentinel2a_sample.tle (A.1) e iss_sample.tle (Semana 3).
+#     A tabela completa está em scripts/compare_high_fidelity.py (A8_KM) e no relatório
+#     reports/s4_alta_fidelidade/relatorio.md, com os valores medidos no satsim.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class HighFidelityA8:
+    # (B) com forças completas (J2–J4 + Sol/Lua + SRP + arrasto): referência e critério do card
+    sentinel_full_b_km: tuple[float, float, float] = (0.06, 0.09, 1.11)
+    sentinel_full_b_crit_km: tuple[float, float, float] = (0.2, 0.3, 3.0)
+    iss_full_b_km: tuple[float, float, float] = (0.14, 0.29, 3.39)
+    iss_full_b_crit_km: tuple[float, float, float] = (0.5, 1.0, 8.0)
+    # C_D·A/m efetivo ajustado em (B) [m²/kg]
+    sentinel_cd_a_m_full: float = 0.00208
+    iss_cd_a_m_full: float = 0.00134
+    # Teste rápido do card: Sentinel-2A, J2–J4, sem arrasto, janela de 24 h a 600 s
+    quick_window_s: float = 24 * 3600.0
+    quick_rms_crit_km: float = 0.2
+    quick_err_24h_crit_km: float = 0.3
+    # Medido no satsim (S4-06), teste rápido: RMS 0,0071 km, erro em 24 h 0,0076 km (48
+    # avaliações, ≈ 5 s); RMS partindo do estado do SGP4 em t = 0: 0,923 km.
+    # Ajuste sintético (card): estado perturbado de 1 km e 1 m/s → recuperar ≤ 1 m e ≤ 1 mm/s
+    synthetic_pos_tol_m: float = 1.0
+    synthetic_vel_tol_m_s: float = 1e-3
+
+
+HIGH_FIDELITY_A8 = HighFidelityA8()
+
+
+@dataclass(frozen=True)
+class DemoSceneA7:
+    """SSO de demonstração do A.7 na cena (S4-06): LTAN 22h30 em 2026-10-23 00:00 UTC, 24 h a 20 s.
+
+    Medido no satsim (build_demo, Cowell completo): LTAN 22,4997 … 22,5026 h; β 23,407 … 23,431°;
+    fração de eclipse 0,3603 (idênticos ao A.7/A.4).
+    """
+
+    start_utc: str = "2026-10-23T00:00:00Z"
+    ltan_h: float = 22.5
+    ltan_tol_h: float = 0.01  # critério do card
+    ltan_range_h: tuple[float, float] = (22.4997, 22.5026)
+    eclipse_fraction: float = 0.36
+    eclipse_fraction_tol: float = 0.02  # critério do card
+    eclipse_fraction_a4: float = 0.3603
+    beta_range_deg: tuple[float, float] = (23.41, 23.43)
+
+
+DEMO_SCENE_A7 = DemoSceneA7()

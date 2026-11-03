@@ -1,0 +1,399 @@
+<!doctype html>
+<!--
+  Fonte do PDF docs/codigo_explicado/visao_geral.pdf (versão linear e resumida do
+  codigo_explicado.pdf, para apresentar o projeto). Para regenerar o PDF (a partir da raiz do
+  repositório):
+    google-chrome --headless --no-pdf-header-footer --allow-file-access-from-files \
+      --print-to-pdf=docs/codigo_explicado/visao_geral.pdf \
+      docs/codigo_explicado/visao_geral.html
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>satsim — visão geral, do simples ao completo</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm 20mm 18mm; }
+  :root { --ink: #1d2330; --muted: #5b6475; --accent: #0b6e8a; --rule: #d5dae3; --code-bg: #f4f6f9;
+          --fix: #b5530b; --fix-bg: #fdf6ee; --next: #3d7a2a; --next-bg: #f2f8ef; }
+  body { font-family: "DejaVu Serif", Georgia, serif; font-size: 10.5pt; line-height: 1.5;
+         color: var(--ink); background: #fff; margin: 0; }
+  h1, h2, h3 { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--ink);
+               line-height: 1.25; }
+  h2, h3 { break-after: avoid; page-break-after: avoid; }
+  h1 { font-size: 22pt; margin: 0 0 4pt; }
+  h2 { font-size: 15pt; margin: 22pt 0 6pt; padding-bottom: 3pt; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 11.5pt; margin: 14pt 0 4pt; color: var(--accent); }
+  p { margin: 0 0 7pt; text-align: justify; hyphens: auto; }
+  .subtitle { color: var(--muted); font-size: 11pt; margin-bottom: 14pt; }
+  .meta { font-family: "DejaVu Sans", sans-serif; font-size: 9pt; color: var(--muted); }
+  code, pre { font-family: "DejaVu Sans Mono", Menlo, monospace; font-size: 8.8pt; }
+  code { background: var(--code-bg); padding: 0 2px; border-radius: 2px; }
+  pre { background: var(--code-bg); border-left: 3px solid var(--accent); padding: 7pt 9pt;
+        white-space: pre-wrap; margin: 6pt 0 10pt; page-break-inside: avoid; line-height: 1.35; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 6pt 0 10pt; font-size: 9.5pt;
+          page-break-inside: avoid; }
+  th, td { border: 1px solid var(--rule); padding: 3pt 6pt; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-family: "DejaVu Sans", sans-serif; }
+  ul, ol { margin: 0 0 7pt 16pt; padding: 0; }
+  li { margin-bottom: 3pt; }
+  .intro { border: 1px solid var(--rule); background: #fafbfc; padding: 10pt 12pt; margin: 8pt 0 14pt; }
+  .file { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; color: var(--muted); margin-top: -2pt; }
+
+  /* trilha: as etapas do documento em linha */
+  .trail { display: flex; gap: 0; margin: 10pt 0 6pt; font-family: "DejaVu Sans", sans-serif;
+           page-break-inside: avoid; }
+  .trail .st { flex: 1; border: 1px solid var(--rule); border-top: 3px solid var(--accent);
+               padding: 5pt 5pt 6pt; font-size: 8pt; line-height: 1.3; background: #fafbfc; }
+  .trail .st b { display: block; font-size: 8.6pt; margin-bottom: 2pt; }
+  .trail .st .n { color: var(--accent); font-weight: bold; font-size: 9pt; }
+  .trail .ar { align-self: center; color: var(--muted); padding: 0 2pt; font-size: 10pt; }
+  .trail .st.s1 { border-top-color: #8a93a5; }
+  .trail .st.s3 { border-top-color: #d08a12; }
+  .legend { font-family: "DejaVu Sans", sans-serif; font-size: 8pt; color: var(--muted); margin-bottom: 10pt; }
+  .legend i { display: inline-block; width: 9pt; height: 3pt; vertical-align: middle; margin: 0 3pt 0 8pt; }
+
+  /* onde está no código: cada frase leva o arquivo */
+  .where { font-family: "DejaVu Sans Mono", monospace; font-size: 8.3pt; color: var(--accent);
+           white-space: nowrap; }
+  ol.steps { margin-left: 18pt; }
+  ol.steps li { margin-bottom: 5pt; }
+
+  .fix { border-left: 3px solid var(--fix); background: var(--fix-bg); padding: 7pt 10pt;
+         margin: 8pt 0 10pt; page-break-inside: avoid; }
+  .fix p:last-child { margin-bottom: 0; }
+  .fix .tag { font-family: "DejaVu Sans", sans-serif; font-weight: bold; color: var(--fix);
+              font-size: 9pt; }
+  .next { border-left: 3px solid var(--next); background: var(--next-bg); padding: 7pt 10pt;
+          margin: 8pt 0 10pt; page-break-inside: avoid; }
+  .next .tag { font-family: "DejaVu Sans", sans-serif; font-weight: bold; color: var(--next);
+               font-size: 9pt; }
+  .break { page-break-before: always; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>satsim — visão geral, do simples ao completo</h1>
+  <div class="subtitle">O que o simulador faz hoje (Semanas 1–3) e o que vem na Semana 4</div>
+  <div class="meta">26/10/2026 · branch <code>semana-3</code> · versão resumida do
+  <code>docs/codigo_explicado/codigo_explicado.pdf</code></div>
+</header>
+
+<div class="intro">
+  <p><strong>Sobre este documento.</strong> Uma leitura linear do projeto, do caso mais simples
+  (dois corpos, Kepler) ao mais completo (Cowell com J2 e arrasto, validado contra o SGP4 da ISS
+  real). Cada passo traz, em <span class="where">azul</span>, o arquivo em que ele está
+  implementado. O detalhe de cada script (equações, decisões, testes) fica no
+  <code>codigo_explicado.pdf</code>.</p>
+  <p style="margin:0"><strong>A pergunta que o código responde:</strong> <em>onde está o satélite
+  agora e quando ele passa sobre um ponto da Terra</em> (no nosso caso, São Bento do Sapucaí, SP),
+  mostrado num globo 3D e num mapa 2D sincronizados.</p>
+</div>
+
+<div class="trail">
+  <div class="st s1"><span class="n">1</span><b>Kepler no ECI</b>elementos → r(t), v(t)</div>
+  <div class="ar">→</div>
+  <div class="st"><span class="n">2</span><b>ECI → ECEF</b>Terra girando, lat/lon/alt</div>
+  <div class="ar">→</div>
+  <div class="st s3"><span class="n">3</span><b>ENU e passagens</b>elevação, AOS/TCA/LOS</div>
+  <div class="ar">→</div>
+  <div class="st s3"><span class="n">4</span><b>Cowell</b>J2 + arrasto, osculador</div>
+  <div class="ar">→</div>
+  <div class="st"><span class="n">5</span><b>J2 médio</b>como Kepler, ângulos derivando</div>
+  <div class="ar">→</div>
+  <div class="st s3"><span class="n">6</span><b>TLE + SGP4</b>ISS real, ponte para o Cowell</div>
+  <div class="ar">→</div>
+  <div class="st"><span class="n">7</span><b>Cena e viewer</b>globo 3D + mapa 2D</div>
+</div>
+<div class="legend">Semana em que a peça entrou:<i style="background:#8a93a5"></i>1<i style="background:#0b6e8a"></i>2<i style="background:#d08a12"></i>3
+· a ordem aqui é a lógica (do simples ao completo), não a cronológica.</div>
+
+<p>Uma regra de arquitetura atravessa todas as etapas: <strong>todo propagador tem a mesma
+interface</strong>, <code>propagate(t) → (r, v)</code>, que devolve posição e velocidade no ECI
+em metros e m/s <span class="where">propagators/base.py</span>. Por isso as etapas 2, 3 e 7 não
+sabem (nem precisam saber) qual propagador está por trás: trocar Kepler por Cowell ou SGP4 não
+muda nada a jusante.</p>
+
+<table>
+  <tr><th>Propagador</th><th>O que modela</th><th>Entrada</th><th>Arquivo</th></tr>
+  <tr><td>Kepler</td><td>só a gravidade de uma Terra esférica (dois corpos)</td><td>6 elementos clássicos</td><td><code>propagators/kepler.py</code></td></tr>
+  <tr><td>J2 médio</td><td>efeito <em>médio</em> do achatamento (J2) ao longo das voltas</td><td>6 elementos <em>médios</em></td><td><code>propagators/mean_j2.py</code></td></tr>
+  <tr><td>Cowell</td><td>integra as forças: gravidade + J2 + arrasto</td><td>estado (r, v) ou elementos <em>osculadores</em></td><td><code>propagators/cowell.py</code></td></tr>
+  <tr><td>SGP4</td><td>teoria analítica padrão dos TLEs (J2–J4, arrasto, Sol/Lua)</td><td>TLE</td><td><code>propagators/sgp4_ref.py</code></td></tr>
+</table>
+
+<!-- ============================================================================== -->
+<h2 class="break">1. O caso mais simples: Kepler no referencial inercial (ECI)</h2>
+<div class="file">Semana 1 · elements.py · propagators/kepler.py</div>
+
+<p>O ponto de partida é o problema de dois corpos: a Terra como uma esfera perfeita e nenhuma
+outra força. Nesse caso a órbita é uma elipse fixa no espaço e pode ser descrita por seis números,
+os <strong>elementos keplerianos</strong>: semieixo <em>a</em>, excentricidade <em>e</em>,
+inclinação <em>i</em>, longitude do nó ascendente Ω, argumento do perigeu ω e anomalia média ψ.</p>
+
+<ol class="steps">
+  <li>Os elementos são guardados numa estrutura de dados única
+  <span class="where">elements.py · KeplerianElements</span>.</li>
+  <li>Cinco elementos ficam constantes; só a anomalia média avança, ψ(t) = ψ₀ + n·t, com
+  n = √(µ/a³) <span class="where">propagators/kepler.py · KeplerPropagator</span>.</li>
+  <li>A cada instante resolve-se a equação de Kepler (ψ → anomalia excêntrica → anomalia verdadeira)
+  <span class="where">elements.py · solve_kepler, mean_to_true</span>.</li>
+  <li>Os elementos viram posição e velocidade cartesianas no <strong>ECI</strong>, o referencial
+  inercial com origem no centro da Terra, x apontando para o equinócio e z para o polo norte
+  <span class="where">elements.py · elements_to_state</span>.</li>
+</ol>
+
+<div class="fix">
+  <p><span class="tag">CORREÇÃO · o TLE não entra no Kepler.</span> No nosso código o Kepler
+  recebe elementos clássicos escritos à mão, por exemplo a órbita de projeto SSO
+  <span class="where">scripts/build_demo.py</span>, <span class="where">orbit_design.py</span>. O
+  TLE entra só no SGP4 (etapa 6). O motivo: os números de um TLE não são elementos keplerianos
+  comuns. São elementos <em>médios</em> de uma teoria específica (a do SGP4), ajustados para
+  funcionar com ela. Lidos como elementos de Kepler, dão erros de quilômetros já no primeiro dia.</p>
+</div>
+
+<p>O Kepler é exato para uma Terra esférica, mas a Terra real é achatada. Ignorar isso leva a erros
+de ~10 000 km em 10 dias (relatório da Semana 2, <code>reports/s2_comparacao/</code>). Ele serve
+como base e como teste: os propagadores mais completos têm de reproduzi-lo quando as perturbações
+são desligadas.</p>
+
+<!-- ============================================================================== -->
+<h2>2. Do espaço para a Terra: ECI → ECEF → latitude, longitude, altitude</h2>
+<div class="file">Semana 2 · astrotime.py · frames.py · geodesy.py · groundtrack.py</div>
+
+<p>No ECI a Terra gira por baixo da órbita. Para saber <em>sobre qual ponto da Terra</em> o
+satélite está, é preciso passar ao <strong>ECEF</strong>, o referencial que gira junto com a
+Terra.</p>
+
+<ol class="steps">
+  <li>Converte-se o instante UTC em Data Juliana e calcula-se o ângulo de rotação da Terra, o
+  GMST θ<sub>G</sub> <span class="where">astrotime.py · datetime_to_jd, gmst</span>.</li>
+  <li>ECEF = rotação em torno de z pelo ângulo θ<sub>G</sub>:
+  r<sub>ECEF</sub> = R<sub>z</sub>(θ<sub>G</sub>)·r<sub>ECI</sub>
+  <span class="where">frames.py · gmst_at, eci_to_ecef</span>.</li>
+  <li>Do ECEF saem latitude, longitude e altitude sobre o elipsoide WGS84 (a Terra achatada)
+  <span class="where">geodesy.py · ecef_to_geodetic</span>.</li>
+  <li>A sequência de pontos (lat, lon) ao longo do tempo é o <strong>traço no solo</strong>,
+  cortado na linha de data para o mapa 2D
+  <span class="where">groundtrack.py · subpoint, split_at_antimeridian</span>.</li>
+</ol>
+
+<!-- ============================================================================== -->
+<h2>3. Quando o satélite passa sobre um ponto: ENU, elevação e passagens</h2>
+<div class="file">Semana 3 · observer.py · passes.py · scripts/list_passes.py</div>
+
+<p>Para saber <em>quando</em> o satélite é visível de uma estação no solo, o código olha o céu
+a partir da estação:</p>
+
+<ol class="steps">
+  <li>A estação é um ponto fixo no ECEF (lat, lon, altitude WGS84)
+  <span class="where">observer.py · GroundStation, SAO_BENTO_DO_SAPUCAI</span>.</li>
+  <li>O vetor estação → satélite é escrito no <strong>ENU</strong> da estação (Leste, Norte,
+  Zênite): o “céu local” de quem está ali <span class="where">observer.py · GroundStation.enu</span>.</li>
+  <li>Do ENU saem <strong>azimute</strong>, <strong>elevação</strong> (ângulo acima do horizonte) e
+  <strong>distância</strong> <span class="where">observer.py · look_angles, observe</span>.</li>
+  <li>O satélite conta como visível quando a elevação ≥ ε (usamos ε = 10°). Uma
+  <strong>passagem</strong> é o intervalo em que isso vale: <strong>AOS</strong> (elevação sobe e
+  cruza 10°), <strong>TCA</strong> (elevação máxima) e <strong>LOS</strong> (elevação desce e cruza
+  10°). Esses instantes são achados por busca de raízes de el(t) − ε
+  <span class="where">passes.py · find_passes</span>.</li>
+  <li>Uma tabela em UTC e horário de Brasília é impressa por
+  <span class="where">scripts/list_passes.py</span>.</li>
+</ol>
+
+<div class="fix">
+  <p><span class="tag">CORREÇÃO · não é preciso calcular a área.</span> A ideia de “área onde o
+  satélite é visível” está certa e é equivalente: o subponto do satélite tem de estar dentro de um
+  círculo em torno da estação (o <em>footprint</em>, de ~1 400 km de raio para a ISS a 10°). Mas o
+  código não constrói esse círculo nem compara posições com ele. Ele faz o caminho mais direto e
+  exato: põe o satélite no ENU da estação e testa a elevação. O círculo só é calculado para
+  <em>desenhar</em> no mapa <span class="where">observer.py · footprint_half_angle</span>.</p>
+</div>
+
+<p>Com as etapas 1–3, o caso mais simples está completo: Kepler → ECEF → ENU → passagens. Daqui em
+diante o que muda é só o propagador, que fica cada vez mais realista. As etapas 2 e 3 continuam
+iguais.</p>
+
+<!-- ============================================================================== -->
+<h2>4. Generalizando o Kepler: Cowell com J2 e arrasto</h2>
+<div class="file">Semanas 2–3 · forces/j2.py · forces/atmosphere.py · forces/drag.py · propagators/cowell.py</div>
+
+<p>Em vez de uma fórmula fechada, o <strong>Cowell</strong> integra numericamente a 2ª lei de
+Newton com todas as forças somadas:</p>
+
+<pre><code>r̈ = −µ·r/r³  +  a_J2(r)  +  a_arrasto(r, v)
+    (Kepler)    (achatamento) (atmosfera)</code></pre>
+
+<ol class="steps">
+  <li><strong>J2</strong>: a Terra é achatada nos polos (equador ~21 km mais largo). O excesso de
+  massa no equador puxa o satélite e faz o plano da órbita girar (precessão)
+  <span class="where">forces/j2.py · J2Acceleration</span>.</li>
+  <li><strong>Atmosfera</strong>: densidade do ar em função da altitude, modelo exponencial por
+  partes (tabela de Vallado) <span class="where">forces/atmosphere.py · ExponentialAtmosphere</span>.</li>
+  <li><strong>Arrasto</strong>: a = −½·ρ·(C<sub>D</sub>·A/m)·|v<sub>rel</sub>|·v<sub>rel</sub>, com a
+  velocidade relativa ao ar que gira com a Terra <span class="where">forces/drag.py · DragAcceleration</span>.</li>
+  <li>O integrador (Runge-Kutta DOP853, passo adaptativo) soma as forças e para se o satélite
+  reentra abaixo de 100 km <span class="where">propagators/cowell.py · CowellPropagator</span>.</li>
+  <li>Taxa de decaimento e tempo de vida em forma fechada (ex.: 4,6 anos a partir de 500 km)
+  <span class="where">decay.py</span>.</li>
+</ol>
+
+<p>Cada força é um objeto independente e o Cowell não precisa mudar para receber uma nova: basta
+acrescentá-la à lista. É assim que J3, J4, Sol, Lua e pressão de radiação entram na Semana 4.</p>
+
+<p>O Cowell <strong>não toma média</strong>: o que ele devolve é o movimento real, chamado
+<strong>osculador</strong>, com as oscilações de curto período (~10 km em LEO) que o J2 provoca a
+cada volta. É o propagador mais fiel do projeto e serve para qualquer órbita.</p>
+
+<!-- ============================================================================== -->
+<h2>5. Tomando a média: o propagador J2 médio</h2>
+<div class="file">Semana 2 · secular.py · propagators/mean_j2.py · orbit_design.py · analysis.py</div>
+
+<p>Se calcularmos a <strong>média</strong> do efeito do J2 ao longo de uma volta, as oscilações
+somem e sobra só a deriva lenta (secular) de três ângulos. O resultado se comporta
+<strong>como o Kepler</strong>: elementos constantes e ângulos que avançam linearmente, só que agora
+três em vez de um:</p>
+
+<pre><code>Ω(t) = Ω₀ + Ω̇·t     ω(t) = ω₀ + ω̇·t     ψ(t) = ψ₀ + ψ̇·t</code></pre>
+
+<ol class="steps">
+  <li>As taxas Ω̇, ω̇, ψ̇ do J2 <span class="where">secular.py · secular_rates</span>.</li>
+  <li>O propagador aplica as taxas e reaproveita a conversão do Kepler
+  <span class="where">propagators/mean_j2.py · MeanJ2Propagator</span>.</li>
+  <li>É a ferramenta de <strong>projeto</strong>: a órbita heliossíncrona (SSO) é a que tem
+  Ω̇ = 0,9856°/dia, o mesmo passo do Sol. Daí sai a inclinação de 97,44° da SSO de 510 km
+  <span class="where">orbit_design.py · sso_inclination</span>.</li>
+  <li>Os elementos médios de uma trajetória do Cowell são medidos por média numérica, para
+  comparar os dois <span class="where">analysis.py · mean_elements</span>,
+  <span class="where">scripts/compare_propagators.py</span>.</li>
+</ol>
+
+<div class="fix">
+  <p><span class="tag">AJUSTE · “poderia usar o TLE como entrada”.</span> Em espírito, sim: o TLE
+  também traz elementos médios. Mas são médios de <em>outra</em> teoria (a do SGP4, com mais
+  termos), e o nosso <code>MeanJ2Propagator</code> não lê TLE. A forma correta de usar um TLE é o
+  SGP4 (etapa 6).</p>
+</div>
+
+<p><strong>Médio ≠ osculador.</strong> Esta é a principal lição da Semana 2. Na SSO, o semieixo
+médio fica 9,5 km acima do osculador. Passar elementos osculadores a um propagador médio, ou o
+contrário, dá 1 345 km de erro em 24 h, contra 6,6 km com os elementos certos
+(<code>reports/s2_comparacao/</code>).</p>
+
+<!-- ============================================================================== -->
+<h2>6. O satélite real: TLE, SGP4 e a ponte para o Cowell</h2>
+<div class="file">Semana 3 · tle.py · propagators/sgp4_ref.py · analysis.py · scripts/compare_sgp4_cowell.py</div>
+
+<p>Para a ISS real a entrada é o <strong>TLE</strong> (<em>Two-Line Element set</em>), publicado
+diariamente pela Força Espacial dos EUA e distribuído pela CelesTrak.</p>
+
+<ol class="steps">
+  <li>Baixa o TLE com fallback: cache com menos de 2 h → CelesTrak → cache antigo → TLE embarcado
+  (funciona offline). Também valida checksum e avisa se o TLE estiver velho
+  <span class="where">tle.py · get_tle</span>, <span class="where">scripts/fetch_tle.py</span>.</li>
+  <li>O <strong>SGP4</strong> lê o TLE e devolve r(t), v(t) já no nosso ECI
+  <span class="where">propagators/sgp4_ref.py · SGP4Propagator</span>.</li>
+  <li><strong>Ponte para o Cowell</strong>: o estado do SGP4 em t = 0 já é osculador (é uma posição e
+  velocidade de verdade, não uma média). Ele vira a condição inicial do Cowell
+  <span class="where">propagators/cowell.py · from_state</span>,
+  <span class="where">analysis.py · cowell_j2_drag</span>.</li>
+  <li>Compara-se então Cowell × SGP4 ao longo de 7 dias, e o coeficiente de arrasto C<sub>D</sub>·A/m
+  é ajustado para minimizar o erro <span class="where">analysis.py · fit_ballistic_coefficient</span>,
+  <span class="where">scripts/compare_sgp4_cowell.py</span>.</li>
+</ol>
+
+<div class="fix">
+  <p><span class="tag">AJUSTE · o que é o SGP4.</span> A ideia está certa: os elementos do TLE são
+  médios e o SGP4 é quem os transforma em posição e velocidade osculadoras para o Cowell. Dois
+  detalhes:</p>
+  <ul>
+    <li>O SGP4 não é exclusivo da ISS. É o modelo padrão de <em>todos</em> os TLEs: cada TLE é
+    gerado por um ajuste feito com o SGP4, e por isso só o SGP4 os interpreta corretamente.</li>
+    <li>O SGP4 também é uma aproximação (erra ~1 km na época, crescendo alguns km por dia). Aqui ele
+    tem dois papéis: entregar a posição da ISS real na demo e servir de <strong>comparador</strong>
+    (“oráculo”) para medir o quanto o nosso Cowell se aproxima de um simulador real.</li>
+  </ul>
+  <p>Para a órbita de projeto SSO (que não tem TLE) essa ponte ainda <strong>não existe</strong>: falta
+  converter elementos médios de projeto em osculadores. É o card S4-04.</p>
+</div>
+
+<table>
+  <tr><th>Cowell × SGP4 (ISS, partindo do estado do SGP4)</th><th>24 h</th><th>72 h</th><th>7 dias</th></tr>
+  <tr><td>só J2</td><td>1,0 km</td><td>8,7 km</td><td>47 km</td></tr>
+  <tr><td>J2 + arrasto padrão (C<sub>D</sub> = 2,2, A/m = 0,004)</td><td>5,8 km</td><td>52 km</td><td>286 km</td></tr>
+  <tr><td>J2 + arrasto ajustado (C<sub>D</sub>·A/m = 0,00163 m²/kg)</td><td><strong>0,3 km</strong></td><td><strong>2,7 km</strong></td><td><strong>14,5 km</strong></td></tr>
+</table>
+<p>O arrasto “de livro” piora o resultado porque a tabela de atmosfera assume atividade solar
+moderada, enquanto a época do TLE (dez/2019) foi de mínimo solar, com ~5× menos ar. O valor ajustado
+também absorve os termos que o SGP4 tem e o Cowell ainda não (J3, J4, Sol, Lua).</p>
+
+<!-- ============================================================================== -->
+<h2 class="break">7. Juntando tudo: a cena e o viewer</h2>
+<div class="file">Semanas 1–3 · app/scene_export.py · scripts/build_demo.py · app/static/</div>
+
+<ol class="steps">
+  <li>Python propaga cada satélite por 24 h a cada 20 s e grava num JSON: trajetória (ECI e lat/lon),
+  estação, azimute/elevação, footprint e passagens <span class="where">app/scene_export.py</span>.</li>
+  <li>A demo usa a ISS real (TLE + SGP4) e a SSO de projeto (J2 médio)
+  <span class="where">scripts/build_demo.py</span>.</li>
+  <li>O viewer (JavaScript + globe.gl) só desenha: globo 3D, mapa 2D, painel da estação, lista de
+  passagens e contagem regressiva. Nenhuma equação orbital roda no navegador
+  <span class="where">app/static/</span> → <code>demo/index.html</code>.</li>
+</ol>
+
+<pre><code>source .venv/bin/activate &amp;&amp; python scripts/build_demo.py &amp;&amp; xdg-open demo/index.html</code></pre>
+
+<p><strong>Validação.</strong> 389 testes, 99% de cobertura, com valores de referência dos documentos
+teóricos (<code>tests/golden/</code>) e comparação com a biblioteca Skyfield: SGP4 → Terra a 86 m em
+3 dias; azimute/elevação a 0,03° e distância a 74 m; instantes de passagem a 0,2 s.</p>
+
+<!-- ============================================================================== -->
+<h2 class="break">8. Próxima semana: o propagador de alta fidelidade (Semana 4)</h2>
+<div class="file">docs/PROMPT_SEMANA4_claude_code.pdf · docs/semana3_fechamento.md §6</div>
+
+<p>O objetivo do projeto é uma <strong>simulação próxima da real de um satélite em SSO</strong>, com um
+propagador completo que sirva para qualquer órbita. A ISS e satélites reais em SSO são os
+comparadores. A Semana 4 completa o Cowell com as forças que faltam e constrói a ponte
+médio ↔ osculador:</p>
+
+<table>
+  <tr><th>Card</th><th>O que entra</th><th>Por quê</th><th>Arquivo (novo)</th></tr>
+  <tr><td>S4-01</td><td><strong>J3 e J4</strong> (gravidade zonal J2–J4 numa só fórmula)</td>
+      <td>J3 (assimetria norte–sul) cria a órbita congelada; J4 muda Ω̇ em −0,23%, o bastante para tirar a SSO do sincronismo com o Sol</td><td><code>forces/zonal.py</code></td></tr>
+  <tr><td>S4-02</td><td><strong>Sol e Lua</strong> (terceiro corpo) e efemérides analíticas</td>
+      <td>perturbação de longo prazo na inclinação; posição do Sol para LTAN e ângulo β</td><td><code>ephemeris.py</code>, <code>forces/third_body.py</code></td></tr>
+  <tr><td>S4-03</td><td><strong>Pressão de radiação solar</strong> e eclipse (sombra da Terra)</td>
+      <td>força dos fótons do Sol, desligada na sombra; eclipse também para o balanço de energia</td><td><code>forces/srp.py</code></td></tr>
+  <tr><td>S4-04</td><td><strong>Conversão médio ↔ osculador</strong></td>
+      <td>a ponte da etapa 6 para a SSO de projeto: sem ela, semieixo 9,5 km fora e o horário local do nó (LTAN) deriva ~12 min/ano</td><td><code>mean_osc.py</code></td></tr>
+  <tr><td>S4-05</td><td><strong>Modelo médio J2–J4 + arrasto médio</strong>, órbita congelada e SSO calibrada</td>
+      <td>ferramenta rápida de projeto; perigeu travado em ω = 90°; inclinação SSO calibrada no Cowell (97,463° em vez de 97,440°)</td><td><code>propagators/mean_zonal.py</code></td></tr>
+  <tr><td>S4-06</td><td><strong>Validação contra uma SSO real</strong> (Sentinel-2A) e GUI</td>
+      <td>ajuste do estado inicial às posições do SGP4 numa janela (determinação de órbita, como fazem os operadores); LTAN, β e eclipse no viewer</td><td><code>orbit_determination.py</code>, <code>scripts/compare_high_fidelity.py</code></td></tr>
+</table>
+
+<div class="next">
+  <p><span class="tag">OUTROS TERMOS A LEMBRAR (fora da Semana 4, por ordem de relevância para a SSO)</span></p>
+  <ul>
+    <li><strong>Atmosfera com atividade solar</strong> (índices F10.7 e Ap; modelos NRLMSISE-00 ou
+    Jacchia). É a maior fonte de erro do arrasto hoje (o “V” da etapa 6) e está no roadmap como
+    fidelidade de longo prazo.</li>
+    <li><strong>Harmônicos tesserais e setoriais</strong> (J2,2 etc., modelo EGM2008): dependem da
+    longitude. Importam para órbitas com traço repetido e para a precisão de posição em dias.</li>
+    <li><strong>Precessão, nutação, UT1 e movimento polar</strong> nos referenciais: hoje
+    simplificados, custam ~86 m contra o Skyfield. Aceitável para visibilidade.</li>
+    <li><strong>Refração atmosférica e máscara de horizonte</strong> (relevo da Mantiqueira) nas
+    passagens: até ~0,5° perto do horizonte.</li>
+    <li>Desprezíveis no nosso nível de precisão: marés terrestres, relatividade, albedo e
+    radiação infravermelha da Terra.</li>
+  </ul>
+</div>
+
+<p><strong>Depois da Semana 4:</strong> Semana 5, constelação de 6 satélites em SSO (91/6) com o
+propagador completo, cobertura e visibilidade; Semana 6, 18 satélites e publicação web.</p>
+
+</main>
+</body>
+</html>

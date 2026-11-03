@@ -13,7 +13,7 @@ do SGP4 (S3-02). Formato de colunas (1-indexadas) usado aqui:
     1. cache em disco mais novo que ``max_cache_age`` (padrão 2 h) → sem rede;
     2. rede (CelesTrak) → grava o cache;
     3. falha de rede ou TLE inválido → cache de qualquer idade, com aviso;
-    4. sem cache → TLE embarcado no pacote (``satsim/data/iss_fallback.tle``), com aviso.
+    4. sem cache → TLE embarcado no pacote (``BUNDLED_TLES``: ISS e Sentinel-2A), com aviso.
 
 A CelesTrak pede no máximo 1 consulta a cada 2 h por conjunto de dados, daí o padrão de
 ``max_cache_age``. A precisão do SGP4 cai com a idade do TLE (reboosts, arrasto): acima de
@@ -48,10 +48,17 @@ logger = logging.getLogger(__name__)
 
 TLE_LINE_LENGTH = 69
 ISS_NORAD_ID = 25544
+SENTINEL_2A_NORAD_ID = 40697
 CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php?CATNR={id}&FORMAT=TLE"
 DEFAULT_CACHE_DIR = Path("data") / "cache" / "tle"
 CACHE_DIR_ENV = "SATSIM_CACHE_DIR"
 BUNDLED_TLE = "data/iss_fallback.tle"
+BUNDLED_TLES: dict[int, str] = {
+    ISS_NORAD_ID: BUNDLED_TLE,
+    SENTINEL_2A_NORAD_ID: "data/sentinel2a_fallback.tle",  # S4-06
+}
+"""TLEs embarcados no pacote (catálogo NORAD → arquivo em ``satsim/``); fonte e data de cada um
+em ``docs/creditos.md``."""
 AGE_WARNING = timedelta(days=3)
 AGE_STRONG_WARNING = timedelta(days=14)
 
@@ -280,9 +287,15 @@ def _write_cache(path: Path, tle: Tle, fetched_at: datetime) -> None:
             Path(tmp_name).unlink(missing_ok=True)
 
 
-def load_bundled_tle() -> Tle:
-    """TLE da ISS embarcado no pacote (``satsim/data/iss_fallback.tle``)."""
-    text = resources.files("satsim").joinpath(BUNDLED_TLE).read_text(encoding="utf-8")
+def load_bundled_tle(norad_id: int = ISS_NORAD_ID) -> Tle:
+    """TLE embarcado no pacote para ``norad_id`` (``BUNDLED_TLES``; padrão: ISS).
+
+    Raises:
+        TleError: catálogo sem TLE embarcado.
+    """
+    if norad_id not in BUNDLED_TLES:
+        raise TleError(f"sem TLE embarcado para o catálogo {norad_id}")
+    text = resources.files("satsim").joinpath(BUNDLED_TLES[norad_id]).read_text(encoding="utf-8")
     return Tle.from_text(text)
 
 
@@ -323,7 +336,7 @@ def get_tle(
         now: instante de referência (UTC tz-aware) para idade do cache e do TLE; padrão agora.
 
     Raises:
-        TleError: sem rede, sem cache e sem TLE embarcado para ``norad_id`` (só há o da ISS).
+        TleError: sem rede, sem cache e sem TLE embarcado para ``norad_id`` (``BUNDLED_TLES``).
     """
     if now is None:
         now = datetime.now(UTC)
@@ -354,9 +367,9 @@ def get_tle(
         result = TleResult(tle, "cache", fetched_at, tle.age(now))
 
     if result is None:
-        if norad_id != ISS_NORAD_ID:
+        if norad_id not in BUNDLED_TLES:
             raise TleError(f"sem rede, sem cache e sem TLE embarcado para o catálogo {norad_id}")
-        tle = load_bundled_tle()
+        tle = load_bundled_tle(norad_id)
         logger.warning("sem cache de TLE: usando o TLE embarcado no pacote (época %s)", tle.epoch)
         result = TleResult(tle, "bundled", None, tle.age(now))
 

@@ -13,16 +13,36 @@ semieixo, atingido em i = 180°:
     a_max = (3·√µ·J2·R⊕² / (2·Ω☉))^(2/7) ≈ 12 352 km    (h_max ≈ 5 974 km)
 
 Teoria secular de primeira ordem só em J2 (ver ``satsim.secular``).
+
+Órbita congelada e SSO calibrada (card S4-05)
+---------------------------------------------
+``frozen_eccentricity`` acha a excentricidade em que ω̇ = 0 com ω = 90° (Sem4 §6.3), agora com
+J4 além de J2 e J3 (taxas do Apêndice A.5). ``sso_inclination_calibrated`` resolve a condição
+heliossíncrona **no próprio Cowell**: a fórmula de 1ª ordem só em J2 (eq. 27) erra Ω̇ em ≈ −0,3%
+com J2–J4 (LTAN −4,5 min/ano na órbita de projeto), e mesmo a teoria J2–J4 de 1ª ordem deixa
+−0,08% (termos de J2²). A calibração numérica vale para qualquer conjunto de forças.
 """
 
+import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy.optimize import brentq
 
-from satsim.constants import J2, MU, OMEGA_EARTH, OMEGA_SUN, R_EARTH, SECONDS_PER_DAY
-from satsim.secular import nodal_period, secular_rates
+from satsim.analysis import fit_rate, osculating_elements
+from satsim.constants import J2, J3, J4, MU, OMEGA_EARTH, OMEGA_SUN, R_EARTH, SECONDS_PER_DAY
+from satsim.elements import KeplerianElements
+from satsim.ephemeris import sun_ra_dec
+from satsim.forces import AccelerationModel
+from satsim.mean_osc import conversion_models, mean_to_osculating
+from satsim.propagators.cowell import CowellPropagator
+from satsim.secular import nodal_period, secular_rates, zonal_mean_rates
+
+logger = logging.getLogger(__name__)
 
 FloatOrArray = float | NDArray[np.float64]
 
@@ -118,3 +138,144 @@ def ltan_drift_min_per_year(raan_dot: ArrayLike) -> FloatOrArray:
         365.2422 * SECONDS_PER_DAY
     )
     return _as_scalar_if_0d(deg_per_year / 15.0 * 60.0)
+
+
+def frozen_eccentricity(a: float, i: float, j4: bool = True) -> float:
+    """Excentricidade congelada: raiz de ω̇(e) = 0 em ω = 90° (Sem4 §6.3, taxas do Apêndice A.5).
+
+    Com ``j4=False`` usa só J2 e J3 e reproduz a Sem4 eq. 33, e = −(J3/2J2)(R⊕/a)·sin i, a menos
+    dos termos em e² e do p = a(1 − e²) das taxas completas (≈ 6e-6 relativo na órbita de
+    projeto). Com J4 (padrão) o termo de J4 em ω̇ desloca a raiz em ≈ +0,3%.
+
+    Args:
+        a: semieixo maior médio [m].
+        i: inclinação média [rad].
+        j4: incluir J4 nas taxas.
+
+    Returns:
+        e congelada [-].
+
+    Raises:
+        ValueError: se não houver raiz no intervalo de busca (ex.: i perto do equador).
+    """
+    j4_value = J4 if j4 else 0.0
+
+    def argp_dot(e: float) -> float:
+        return float(zonal_mean_rates(a, e, i, math.pi / 2.0, j4=j4_value).argp_dot)
+
+    e_eq33 = abs(-J3 / (2.0 * J2) * (R_EARTH / a) * math.sin(i))
+    lo, hi = 1e-3 * e_eq33, min(10.0 * e_eq33, 0.5)
+    if not argp_dot(lo) * argp_dot(hi) < 0.0:
+        raise ValueError("ω̇(e) = 0 sem raiz no intervalo de busca: não há órbita congelada")
+    return float(brentq(argp_dot, lo, hi, xtol=1e-15, rtol=1e-14))
+
+
+def raan_for_ltan(ltan_h: ArrayLike, jd: ArrayLike) -> FloatOrArray:
+    """Ω [rad] em [0, 2π) que dá o LTAN pedido na data ``jd`` (inverso da Sem4 eq. 28).
+
+    Ω = α☉ + 15°·(LTAN − 12h), com α☉ a ascensão reta do Sol (``ephemeris.sun_ra_dec``, equador e
+    equinócio da data). Ex.: LTAN 22h30 em 2026-10-23 00:00 UTC → Ω = 207,5235° + 157,5° =
+    5,0235° (Apêndice A.7).
+
+    Args:
+        ltan_h: hora local do nó ascendente [h].
+        jd: Data Juliana (UTC usado como TT).
+    """
+    ra_sun, _ = sun_ra_dec(jd)
+    raan = ra_sun + np.radians(15.0 * (np.asarray(ltan_h, dtype=float) - 12.0))
+    return _as_scalar_if_0d(np.mod(raan, 2.0 * np.pi))
+
+
+def sso_inclination_calibrated(
+    a: float,
+    e: float,
+    epoch: datetime,
+    models: Sequence[AccelerationModel],
+    days: float = 10.0,
+    argp: float = math.pi / 2.0,
+    raan: float = 0.0,
+    tol_deg_per_day: float = 1e-6,
+    max_iter: int = 8,
+) -> float:
+    """Inclinação média heliossíncrona calibrada no Cowell(models) por secante em i.
+
+    Para cada i candidata: elementos médios (a, e, i, Ω, ω, ψ = 0) → ``mean_to_osculating`` →
+    Cowell(models) por ``days`` dias → Ω̇ = ``fit_rate`` do Ω osculador (amostras a cada 60 s).
+    A secante zera Ω̇ − OMEGA_SUN partindo da fórmula de 1ª ordem só J2 (``sso_inclination``,
+    eq. 27); o 2º ponto escala cos i pela razão OMEGA_SUN/Ω̇ medido (Ω̇ ∝ cos i).
+
+    A conversão médio → osculador usa só a gravidade zonal de ``models``
+    (``mean_osc.conversion_models``); arrasto, SRP e Sol/Lua entram só na propagação.
+
+    Args:
+        a: semieixo maior médio [m].
+        e: excentricidade média (em geral a congelada, ``frozen_eccentricity``).
+        epoch: época, ``datetime`` tz-aware.
+        models: forças do Cowell (ex.: ``(ZonalAcceleration(),)``).
+        days: duração da medida de Ω̇ [dias].
+        argp: ω médio [rad] (90° na órbita congelada).
+        raan: Ω médio na época [rad]; só importa com Sol/Lua.
+        tol_deg_per_day: tolerância em |Ω̇ − OMEGA_SUN| [°/dia] (1e-6 °/d ≈ 0,0015 min/ano de
+            LTAN).
+        max_iter: número máximo de medidas no Cowell.
+
+    Returns:
+        i calibrada [rad]. Se ``max_iter`` se esgotar, devolve a última e registra um aviso.
+    """
+    # Convenção do projeto: a conversão médio → osculador usa só a gravidade zonal (J2–J4) de
+    # `models`; arrasto, SRP e Sol/Lua ficam só na propagação (mean_osc.conversion_models).
+    conv_models = conversion_models(models)
+    # Instantes de amostragem da medida de Ω̇: de 0 a `days` dias, a cada 60 s (o +1 s garante que
+    # o último instante, days·86400, entre no arange). 10 dias → 14 401 amostras.
+    t = np.arange(0.0, days * SECONDS_PER_DAY + 1.0, 60.0)
+    # Tolerância em Ω̇ convertida de °/dia para rad/s, a unidade de fit_rate e de OMEGA_SUN.
+    tol = math.radians(tol_deg_per_day) / SECONDS_PER_DAY
+
+    def residual(i: float) -> float:
+        """f(i) = Ω̇ medido no Cowell com inclinação média i, menos a taxa do Sol [rad/s].
+
+        A SSO calibrada é a raiz f(i) = 0. Cada chamada é uma "medida": ≈ 1,2 s de conversão
+        mais ≈ 1,7 s de Cowell em 10 dias.
+        """
+        # 1. Elementos MÉDIOS candidatos: o projeto (a, e, ω, Ω) com a inclinação i em teste;
+        #    ψ = 0 (fase na órbita) é arbitrário, Ω̇ não depende dela.
+        mean = KeplerianElements(a=a, e=e, i=i, raan=raan, argp=argp, psi=0.0)
+        # 2. Médio → osculador (S4-04): o estado instantâneo cuja média no Cowell é `mean`.
+        #    Sem isso, o semieixo médio ficaria ≈ 9,5 km alto e Ω̇ sairia errado.
+        osc = mean_to_osculating(mean, epoch, conv_models).elements
+        # 3. Cowell com TODAS as forças pedidas, partindo do estado osculador.
+        prop = CowellPropagator(osc, epoch, models)
+        # 4. Ω osculador nos instantes t (oscila a cada volta) e ajuste de uma reta Ω(t) por
+        #    mínimos quadrados: a inclinação da reta é o Ω̇ médio. As oscilações de curto período
+        #    se anulam no ajuste de 10 dias (≈ 150 voltas).
+        raan_dot = fit_rate(t, osculating_elements(prop, t).raan)
+        logger.debug("i = %.6f°: Ω̇ = %.7f °/d", math.degrees(i), math.degrees(raan_dot) * 86400)
+        # 5. Quanto falta (ou sobra) para a precessão acompanhar o Sol (0,985647 °/dia).
+        return raan_dot - OMEGA_SUN
+
+    # Ponto de partida i0: a fórmula analítica de 1ª ordem só com J2 (Sem4 eq. 27). Na órbita de
+    # projeto dá 97,4396°, ≈ 0,024° abaixo da resposta com J2–J4.
+    i0 = float(sso_inclination(a, e))
+    # 1ª medida: com J2–J4 o Cowell precessa ≈ 0,3% devagar demais em i0 (f0 < 0).
+    f0 = residual(i0)
+    # Se por acaso i0 já satisfaz a tolerância (ex.: models só com J2), não há o que corrigir.
+    if abs(f0) < tol:
+        return i0
+    # 2º ponto, para a secante ter dois pontos: Ω̇ ∝ cos i (eq. 23), então escalar cos i pela
+    # razão (taxa desejada)/(taxa medida) corrige a maior parte do erro numa tacada.
+    # f0 + OMEGA_SUN é o próprio Ω̇ medido em i0.
+    i1 = math.acos(math.cos(i0) * OMEGA_SUN / (f0 + OMEGA_SUN))
+    # Método da secante: até max_iter medidas no total (a 1ª já foi feita acima).
+    for _ in range(max_iter - 1):
+        # Mede o resíduo no ponto atual.
+        f1 = residual(i1)
+        # Convergiu: |Ω̇ − Ω☉| < tol (1e-6 °/d ≈ 0,0015 min/ano de deriva da LTAN).
+        if abs(f1) < tol:
+            return i1
+        # Secante: a reta pelos dois últimos pontos (i0, f0) e (i1, f1) cruza zero em
+        # i1 − f1·(i1 − i0)/(f1 − f0). Esse cruzamento vira o novo ponto; o atual vira o
+        # anterior. Como f(i) é quase linear perto da raiz, bastam 1 ou 2 passos.
+        i0, f0, i1 = i1, f1, i1 - f1 * (i1 - i0) / (f1 - f0)
+    # Esgotou as medidas sem atingir a tolerância: avisa e devolve a melhor estimativa.
+    logger.warning("sso_inclination_calibrated não convergiu em %d medidas", max_iter)
+    return i1

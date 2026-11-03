@@ -23,6 +23,17 @@ opcionais; o viewer funciona sem eles):
   em UTC ISO 8601;
 - ``meta.el_min_deg`` e, se um TLE for dado, ``meta.tle = {name, norad_id, epoch_utc,
   age_days_at_start, source}``.
+
+Geometria solar (S4-06, campos opcionais)
+-----------------------------------------
+Com ``sun_geometry=True``, cada satélite ganha, por amostra (também sem mudar
+``schema_version``):
+
+- ``ltan_h[]``: hora local do nó ascendente [h] em [0, 24), do Ω osculador e da ascensão reta do
+  Sol (``ephemeris.ltan_hours``, Sem4 eq. 28);
+- ``beta_deg[]``: ângulo β entre o plano da órbita e a direção do Sol (``ephemeris.beta_angle``,
+  Sem4 eq. 29);
+- ``eclipse[]``: ``true`` na sombra cilíndrica da Terra (``ephemeris.in_shadow_cylindrical``).
 """
 
 import math
@@ -34,7 +45,9 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from satsim.astrotime import datetime_to_jd, gmst, gmst_rate
+from satsim.astrotime import datetime_to_jd, gmst, gmst_rate, jd_from_epoch
+from satsim.elements import state_to_elements
+from satsim.ephemeris import beta_angle, in_shadow_cylindrical, ltan_hours, sun_direction
 from satsim.frames import eci_to_ecef
 from satsim.geodesy import ecef_to_geodetic
 from satsim.observer import GroundStation, footprint_half_angle
@@ -64,6 +77,12 @@ RANGE_DECIMALS = 3
 
 FOOTPRINT_DECIMALS = 6
 """Casas decimais de ``footprint_deg`` (1e-6°, ≈ 0,1 m na superfície)."""
+
+LTAN_DECIMALS = 4
+"""Casas decimais de ``ltan_h`` (1e-4 h = 0,36 s de hora local)."""
+
+BETA_DECIMALS = 4
+"""Casas decimais de ``beta_deg`` [°]."""
 
 _FRAME = "ECI simplificado (x -> equinócio vernal)"
 _GEODESY = "WGS84"
@@ -105,7 +124,7 @@ class SceneStation:
         return GroundStation.from_degrees(self.name, self.lat_deg, self.lon_deg, self.alt_m)
 
 
-def _round_ms(dt: datetime) -> datetime:
+def round_ms(dt: datetime) -> datetime:
     """``datetime`` em UTC arredondado ao milissegundo mais próximo."""
     dt = dt.astimezone(UTC)
     return (
@@ -117,7 +136,7 @@ def _round_ms(dt: datetime) -> datetime:
 
 def _iso_utc(dt: datetime) -> str:
     """``datetime`` → ISO 8601 em UTC, arredondado ao milissegundo: 2019-12-10T00:46:08.063Z."""
-    return _round_ms(dt).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return round_ms(dt).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _pass_json(p: Pass, station_id: str) -> dict[str, Any]:
@@ -151,6 +170,7 @@ def build_scene(
     el_min_deg: float | None = None,
     tle: Tle | None = None,
     tle_source: str | None = None,
+    sun_geometry: bool = False,
 ) -> dict[str, Any]:
     """Monta a cena (contrato JSON do ADR 0001) amostrando todos os satélites no tempo.
 
@@ -165,6 +185,7 @@ def build_scene(
             cada estação e as passagens; se ``None``, esses campos ficam de fora (cenas antigas).
         tle: TLE do satélite real, para ``meta.tle`` (época e idade no início da cena).
         tle_source: origem do TLE (``"network"``, ``"cache"``, ``"bundled"`` ou um arquivo).
+        sun_geometry: acrescenta ``ltan_h``, ``beta_deg`` e ``eclipse`` a cada satélite (S4-06).
 
     Returns:
         ``dict`` serializável com ``meta``, ``earth``, ``satellites``, ``stations`` e
@@ -182,7 +203,7 @@ def build_scene(
         raise ValueError("duration_s deve ser múltiplo de step_s")
     # A época da cena é arredondada ao milissegundo, a resolução de meta.epoch_utc: amostras,
     # passagens e o relógio do viewer partem exatamente do mesmo instante (ex.: época de um TLE).
-    epoch = _round_ms(epoch)
+    epoch = round_ms(epoch)
 
     t = np.arange(n_steps + 1) * float(step_s)
     epoch_jd = datetime_to_jd(epoch)
@@ -193,13 +214,16 @@ def build_scene(
     rate = float(gmst_rate(epoch_jd))
     theta = gmst0 + rate * t
 
+    if sun_geometry:
+        jd = jd_from_epoch(epoch_jd, t)
+        sun_dir = sun_direction(jd)
     ground = [st.ground_station() for st in stations]
     looks: list[dict[str, Any]] = [{} for _ in stations]
     passes_out: list[dict[str, Any]] = []
     sats_out = []
     for sat in satellites:
         # cada propagador tem a sua época; a cena tem a sua (S3-02)
-        r_eci, _ = sat.propagator.propagate_utc(epoch, t)
+        r_eci, v_eci = sat.propagator.propagate_utc(epoch, t)
         r_ecef = eci_to_ecef(r_eci, theta)
         lla = subpoint_geodetic(r_ecef)
         lla_rounded = np.column_stack(
@@ -216,6 +240,12 @@ def build_scene(
             "eci_km": np.round(r_eci / 1e3, ECI_DECIMALS).tolist(),
             "lla": lla_rounded.tolist(),
         }
+        if sun_geometry:
+            raan = state_to_elements(r_eci, v_eci).raan
+            sat_out["ltan_h"] = np.round(ltan_hours(raan, jd), LTAN_DECIMALS).tolist()
+            beta = np.degrees(beta_angle(r_eci, v_eci, jd))
+            sat_out["beta_deg"] = np.round(beta, BETA_DECIMALS).tolist()
+            sat_out["eclipse"] = in_shadow_cylindrical(r_eci, sun_dir).tolist()
         if el_min_deg is not None:
             el_min = math.radians(el_min_deg)
             # a partir da altitude publicada em lla: o JSON é verificável por quem o lê

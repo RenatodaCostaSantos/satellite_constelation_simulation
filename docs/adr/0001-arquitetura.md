@@ -193,7 +193,8 @@ todas as etapas sem laços explícitos.
 ### Contrato de dados da cena (JSON)
 
 Python calcula; o viewer só desenha. Gerado por `satsim.app.scene_export.build_scene` (S1-08;
-subponto geodésico WGS84 desde a S2-07; estação, footprint, passagens e TLE desde a S3-06).
+subponto geodésico WGS84 desde a S2-07; estação, footprint, passagens e TLE desde a S3-06; LTAN,
+β e eclipse desde a S4-06).
 Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua época.
 
 ```jsonc
@@ -211,7 +212,10 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
     {"id": "sso1", "name": "SSO-1", "color": "#00e5ff",
      "eci_km": [[x, y, z], ...],                  // N pontos, um por passo
      "lla":    [[lat_deg, lon_deg, alt_km], ...], // subponto geodésico WGS84 (S2-07)
-     "footprint_deg": [12.5, ...]}                // S3-06 (opcional): raio do footprint
+     "footprint_deg": [12.5, ...],                // S3-06 (opcional): raio do footprint
+     "ltan_h": [22.5, ...],                       // S4-06 (opcional): LTAN [h] em [0, 24)
+     "beta_deg": [23.42, ...],                    // S4-06 (opcional): ângulo β [°]
+     "eclipse": [false, ...]}                     // S4-06 (opcional): na sombra da Terra
   ],
   "stations": [{"id": "sbs", "name": "São Bento do Sapucaí",
                 "lat_deg": -22.69, "lon_deg": -45.73, "alt_m": 900,
@@ -248,6 +252,16 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
   - `meta.epoch_utc` ganha milissegundos quando a época não é um segundo inteiro (ex.: a época
     de um TLE); a época da cena é arredondada ao milissegundo antes da amostragem, para que
     amostras, passagens e o relógio do viewer partam do mesmo instante.
+- **S4-06 (compatível, `schema_version` continua 1; campos opcionais que só aparecem quando
+  `build_scene` recebe `sun_geometry=True`), por satélite e amostra:**
+  - `ltan_h[]`: hora local do nó ascendente [h] em [0, 24), do Ω osculador e da ascensão reta do
+    Sol (`ephemeris.ltan_hours`, Sem4 eq. 28). O viewer interpola pelo caminho curto (23,9 h →
+    0,1 h passa por 24 h);
+  - `beta_deg[]`: ângulo entre o plano da órbita e a direção do Sol (`ephemeris.beta_angle`,
+    Sem4 eq. 29);
+  - `eclipse[]`: booleano, na sombra cilíndrica da Terra (`ephemeris.in_shadow_cylindrical`).
+    O viewer usa a amostra mais próxima (não interpola) e esmaece o marcador do satélite.
+  - Sem os campos (cenas antigas) o painel Informações mostra "—" nas três linhas.
 
 ### Decisão de stack
 

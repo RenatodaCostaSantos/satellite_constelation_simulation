@@ -57,6 +57,19 @@ Não há arquivo de imagem nem licença de terceiros.
 - TLE congelado da ISS com época 2019-12-09 16:38:29 UTC (Apêndice A.1 do prompt da Semana 3),
   usado só nos testes. Mesma fonte (CelesTrak/NORAD).
 
+### TLE do Sentinel-2A — `tests/data/sentinel2a_sample.tle` e `src/satsim/data/sentinel2a_fallback.tle`
+
+- TLE do Sentinel-2A (catálogo NORAD 40697), congelado para os testes e embarcado no pacote como
+  fallback de `get_tle(40697)` (S4-06). Os dois arquivos têm o mesmo conteúdo.
+- Fonte: CelesTrak, GP data, <https://celestrak.org/NORAD/elements/gp.php?CATNR=40697&FORMAT=TLE>,
+  baixado em 23/10/2026 19:04 UTC (Apêndice A.1 do prompt da Semana 4). Época do TLE:
+  2026-10-23 06:09:26,7 UTC.
+- O embarcado envelhece como o da ISS: atualize com `python scripts/fetch_tle.py --norad 40697`
+  quando a idade passar de alguns dias. O de teste não muda (os valores de referência dependem
+  dele).
+- Dados do NORAD/U.S. Space Force redistribuídos pela CelesTrak (T.S. Kelso); uso livre, com
+  crédito à CelesTrak.
+
 ## Verificação de uso offline
 
 `grep -n "http"` nos assets do viewer (S1-08):

@@ -63,12 +63,13 @@ tests/                       testes (pytest)
 
 Globo 3D e mapa 2D na mesma tela e sincronizados, com a **ISS real** (TLE/SGP4) desde a
 Semana 3. Tudo é calculado em Python; o viewer só desenha. A demo cobre **24 h a partir de
-agora** (passo de 20 s) com dois satélites:
+agora** (passo de 20 s) com três satélites:
 
 | Satélite | Propagador | O que mostra |
 |---|---|---|
 | ISS | `SGP4Propagator` | a ISS real, a partir do TLE mais recente (CelesTrak → cache → TLE embarcado) |
-| SSO-1 (J2) | `MeanJ2Propagator` | a órbita heliossíncrona de projeto 91/6 |
+| SSO-1 (Cowell) | `CowellPropagator` completo (J2–J4 + Sol/Lua + SRP + arrasto) | a SSO de projeto 91/6 calibrada (i = 97,46325°, e congelada, ω = 90°), LTAN 22h30 no início da cena, a partir de `mean_to_osculating` dos elementos médios (S4-06) |
+| Sentinel-2A | `SGP4Propagator` | uma SSO real a ≈ 786 km (TLE da CelesTrak → cache → TLE embarcado), para comparar com a de projeto (S4-06) |
 
 E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
 
@@ -87,13 +88,18 @@ E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
 - **faixa do TLE** abaixo da barra superior: época, idade e fonte do TLE, em destaque quando a
   idade passa de 3 dias (a posição real pode diferir de dezenas de km).
 
+No painel **Informações** do satélite selecionado (S4-06): **LTAN** (hora local do nó
+ascendente; na SSO-1 fica em 22h30 o dia inteiro, na ISS muda continuamente), **β** (ângulo entre
+o plano da órbita e o Sol) e **Sol**: *iluminado* ou *em eclipse*. Na sombra da Terra o marcador
+do satélite fica esmaecido, no globo e no mapa; na SSO-1, cerca de 36% de cada volta (≈ 35 min).
+
 As passagens do viewer são as mesmas de `scripts/list_passes.py` (a mesma função,
 `satsim.passes.find_passes`).
 
 **Gerar** (na raiz do repositório, com o venv ativo):
 
 ```bash
-python scripts/build_demo.py              # ISS real, 24 h a partir de agora (~3 MB)
+python scripts/build_demo.py              # ISS e Sentinel-2A reais, 24 h a partir de agora (~4 MB)
 python scripts/build_demo.py --offline    # sem rede: cache local ou TLE embarcado
 python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-epoch   # reprodutível
 ```
@@ -103,14 +109,14 @@ python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-ep
 embutidas no arquivo. A rede só é usada ao **gerar** a demo, para baixar um TLE recente, e é
 opcional. A pasta `demo/` não é versionada; gere de novo para atualizar a ISS.
 
-**Adicionar um satélite:** acrescente uma linha à lista `SATELLITES` em
-[`scripts/build_demo.py`](scripts/build_demo.py), por exemplo
+**Adicionar um satélite:** acrescente-o à lista devolvida por `design_satellites` em
+[`scripts/build_demo.py`](scripts/build_demo.py): um `SceneSatellite(id, nome, cor,
+propagador)` com qualquer propagador (a SSO-1, em `sso_design`, mostra a receita "elementos
+médios → `mean_to_osculating` → Cowell completo"). Por exemplo, com elementos médios de J2:
 
 ```text
-sat("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator, a_km=7200.0, e=0.01, i_deg=30.0, raan_deg=200.0, argp_deg=0.0, psi_deg=90.0),
+SceneSatellite("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator(KeplerianElements(7200e3, 0.01, math.radians(30), math.radians(200), 0.0, math.radians(90)), start)),
 ```
-
-(o quarto argumento é o propagador: `MeanJ2Propagator` com J2, `KeplerPropagator` sem J2)
 
 e gere a demo de novo. O viewer lê quantos satélites houver na cena (testado com 18); cada um
 ganha o seu footprint e as suas passagens. O painel da estação mostra o satélite selecionado na
@@ -273,6 +279,66 @@ Para adicionar um valor:
    como aparece no documento, com o sufixo da unidade no nome (`h_km`, `i_deg`, `tnod_s`);
 2. cite a fonte num comentário (documento, seção, tabela ou equação);
 3. se o número puder ser deduzido de outros, acrescente um teste de consistência.
+
+## Limitações
+
+### Manutenção da SSO em intervalos longos (correção de trajetória)
+
+A física do propagador é completa o bastante para mostrar que **nenhuma órbita heliossíncrona
+mantém o LTAN constante para sempre sem manobras**. Só com a gravidade da Terra (J2–J4), a
+precessão do nó é linear e uma inclinação calibrada mantém o LTAN fixo. Com o Sol, o efeito muda:
+
+- numa SSO a geometria entre o plano da órbita e o Sol fica congelada (é a definição de LTAN
+  constante), então a maré solar empurra a inclinação sempre no mesmo sentido. Para a SSO de
+  projeto com LTAN 22h30, di/dt ≈ −1e-4 °/dia ≈ **−0,036°/ano** (medido no Cowell no S4-02);
+- como Ω̇ depende de i (via J2), o nó e o LTAN passam a derivar de forma ~quadrática no tempo:
+  em poucos anos são dezenas de minutos de LTAN;
+- a Lua soma termos periódicos de ~14 dias, e o Sol um termo semestral.
+
+Missões reais corrigem isso com **manobras periódicas de inclinação**, espaçadas de meses a anos.
+A ordem de grandeza do custo é Δv ≈ v·Δi ≈ 7 607 m/s × 6,3e-4 rad ≈ **4,8 m/s por ano** de deriva
+corrigida.
+
+**O simulador não cobre isso:**
+
+- não há modelo de manobras nem de manutenção de órbita (faixa de tolerância de LTAN ou de
+  inclinação, data prevista da próxima correção, Δv);
+- a demo visual cobre só **24 h**. Nesse intervalo a deriva causada pelo Sol é de milésimos de
+  minuto de LTAN, invisível na tela. O efeito só aparece em escalas de meses a anos, que exigem
+  um propagador médio rápido (e não o Cowell da cena) com o termo solar em di/dt.
+
+Um indicador de manutenção da SSO no painel (deriva prevista, próxima correção e Δv/ano) está
+registrado como proposta para as próximas semanas.
+
+### A referência da validação é o SGP4
+
+A determinação de órbita (`satsim.orbit_determination.fit_initial_state`, S4-06) escolhe o
+estado inicial e o C_D·A/m do Cowell que deixam a trajetória **o mais perto possível das
+posições do SGP4** numa janela de 72 h. O SGP4 faz o papel das medidas de radar. Então, aqui,
+"órbita mais correta" quer dizer **a que mais concorda com o SGP4**, e não com a órbita real do
+satélite. Consequências:
+
+- **O erro medido é Cowell × SGP4, não Cowell × realidade.** O SGP4 erra ≈ 1 km na época e
+  alguns km por dia. Erros do Cowell abaixo disso não dão para distinguir.
+- **O C_D·A/m ajustado é efetivo em relação ao SGP4.** Ele reproduz o decaimento que o SGP4
+  aplica (densidade do próprio SGP4, escalada pelo B\* do TLE), não o coeficiente físico. No
+  Sentinel-2A sai ≈ 0,014 m²/kg ([relatório do S4-06](reports/s4_alta_fidelidade/relatorio.md)).
+- **Forças que o SGP4 não tem pioram o acordo.** Em LEO o SGP4 não tem Sol, Lua nem SRP.
+  Acrescentá-las ao Cowell aproxima a órbita real, mas afasta do SGP4: em 7 dias o erro sobe de
+  0,03 para 0,36 km no Sentinel-2A. O SGP4 não valida essas forças; elas foram validadas por
+  componentes no S4-02, contra as efemérides DE421.
+
+**Trocar por uma referência mais precisa não exige mudar `orbit_determination.py`.** O
+`fit_initial_state` aceita qualquer `Propagator` como `reference`. Basta uma nova classe que
+implemente `propagate(t) → (r, v)` a partir das efemérides melhores e passá-la no lugar do
+`SGP4Propagator`. Exemplos de efemérides: as órbitas precisas (POD/SP3, erro de centímetros)
+que o Copernicus publica para os Sentinel, ou dados de GNSS de bordo. A classe interpola essas
+efemérides e as converte para o ECI do projeto (TEME). Com essa referência:
+
+- o C_D·A/m ajustado passa a ter significado físico;
+- Sol, Lua e SRP passam a melhorar o acordo em vez de piorá-lo;
+- vale reavaliar o resto do ajuste: o espaçamento das amostras (`step_s`), o tamanho da janela
+  e ajustar também o C_R da SRP.
 
 ## Roadmap
 
