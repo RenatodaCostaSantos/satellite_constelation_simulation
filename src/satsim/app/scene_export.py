@@ -34,6 +34,12 @@ Com ``sun_geometry=True``, cada satélite ganha, por amostra (também sem mudar
 - ``beta_deg[]``: ângulo β entre o plano da órbita e a direção do Sol (``ephemeris.beta_angle``,
   Sem4 eq. 29);
 - ``eclipse[]``: ``true`` na sombra cilíndrica da Terra (``ephemeris.in_shadow_cylindrical``).
+
+Satellite e Constellation (S5-01)
+---------------------------------
+``build_scene`` aceita ``satsim.satellite.Satellite`` (a classe do ADR), o ``SceneSatellite``
+provisório (mantido por compatibilidade) ou uma ``satsim.constellation.Constellation`` inteira.
+O contrato JSON não muda: só id, nome, cor e propagador de cada satélite são usados.
 """
 
 import math
@@ -46,6 +52,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from satsim.astrotime import datetime_to_jd, gmst, gmst_rate, jd_from_epoch
+from satsim.constellation import Constellation
 from satsim.elements import state_to_elements
 from satsim.ephemeris import beta_angle, in_shadow_cylindrical, ltan_hours, sun_direction
 from satsim.frames import eci_to_ecef
@@ -53,6 +60,7 @@ from satsim.geodesy import ecef_to_geodetic
 from satsim.observer import GroundStation, footprint_half_angle
 from satsim.passes import Pass, find_passes
 from satsim.propagators import Propagator
+from satsim.satellite import Satellite
 from satsim.tle import Tle
 
 SCHEMA_VERSION = 1
@@ -92,7 +100,9 @@ _GEODESY = "WGS84"
 class SceneSatellite:
     """Satélite da cena: dados de exibição + propagador.
 
-    Provisório: será substituído pela classe ``Satellite`` do ADR na S5-01.
+    Provisório (Semanas 1–4), mantido por compatibilidade: desde a S5-01 a classe do ADR é
+    ``satsim.satellite.Satellite``, que ``build_scene`` também aceita. Não é um alias dela porque a
+    ordem posicional dos campos difere (aqui ``color`` vem antes de ``propagator``).
     """
 
     id: str
@@ -162,7 +172,7 @@ def subpoint_geodetic(r_ecef: NDArray[np.float64]) -> NDArray[np.float64]:
 
 
 def build_scene(
-    satellites: Sequence[SceneSatellite],
+    satellites: Sequence[SceneSatellite | Satellite] | Constellation,
     stations: Sequence[SceneStation],
     epoch: datetime,
     duration_s: float,
@@ -175,7 +185,8 @@ def build_scene(
     """Monta a cena (contrato JSON do ADR 0001) amostrando todos os satélites no tempo.
 
     Args:
-        satellites: satélites a exportar (qualquer quantidade, R7).
+        satellites: satélites a exportar (qualquer quantidade, R7): ``Satellite``,
+            ``SceneSatellite`` ou uma ``Constellation`` (S5-01).
         stations: estações de solo.
         epoch: instante inicial da cena (tz-aware). Cada propagador pode ter época própria; o
             tempo é convertido para cada um.
@@ -204,6 +215,8 @@ def build_scene(
     # A época da cena é arredondada ao milissegundo, a resolução de meta.epoch_utc: amostras,
     # passagens e o relógio do viewer partem exatamente do mesmo instante (ex.: época de um TLE).
     epoch = round_ms(epoch)
+    if isinstance(satellites, Constellation):
+        satellites = satellites.satellites
 
     t = np.arange(n_steps + 1) * float(step_s)
     epoch_jd = datetime_to_jd(epoch)

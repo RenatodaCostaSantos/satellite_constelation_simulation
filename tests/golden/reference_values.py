@@ -1139,3 +1139,92 @@ class DemoSceneA7:
 
 
 DEMO_SCENE_A7 = DemoSceneA7()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.1 do prompt da Semana 5: constelação de referência Epic of Sun (Sem4
+#     Tabela 4, com a calibração da Semana 4). Época 2026-10-23 00:00 UTC. Experimento de
+#     referência (03/11/2026, satsim no commit 779a6d4): valores de regressão, não independentes.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class ConstellationA1:
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    a_design_m: float = 6888089.0  # Sem4 §7.5
+    a_repeat_calibrated_m: float = 6888108.4  # experimento (A.4)
+    e_frozen: float = 1.07721e-3  # A.5 da Semana 4; ω = 90°
+    argp_deg: float = 90.0
+    i_calibrated_deg: float = 97.46325  # A.7 da Semana 4 (Cowell J2–J4)
+    raan_deg: float = 5.0235  # A.7 da Semana 4 (LTAN 22h30)
+    ltan_h: float = 22.5
+    psi0_deg: tuple[float, ...] = (0.0, 300.0, 240.0, 180.0, 120.0, 60.0)  # Sem4 Tabela 4 / eq. 42
+    node_delay_s: tuple[float, ...] = (0.0, 949.5, 1898.9, 2848.4, 3797.8, 4747.3)  # Tabela 4
+    node_delay_tol_s: float = 2.0  # critério do card S5-01
+    # Forças do Cowell completo (A.7 da Semana 4): J2–J4 + Sol/Lua + SRP + arrasto geodésico
+    srp_cr: float = 1.3
+    srp_area_over_mass: float = 0.01
+    drag_cd_a_m: float = 0.011
+    # Experimento: 6 conversões médio → osculador com i dada
+    build_time_s: float = 0.33
+    build_time_limit_s: float = 3.0  # critério do card S5-01
+    # Primeiros nós ascendentes (Cowell completo, a de projeto) [s desde a época], S1 … S6
+    first_node_s: tuple[float, ...] = (4274.46, 5223.99, 476.60, 1426.12, 2375.65, 3324.93)
+    delay_s2_s1_s: float = 949.53
+    # Medido no satsim (S5-01, nós por interpolação linear de z_ECI com passo 10 s): 4 274,463;
+    # 5 223,988; 476,596; 1 426,122; 2 375,648; 3 324,934 s; construção dos 6 satélites 0,33 s.
+
+
+CONSTELLATION_A1 = ConstellationA1()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.2 do prompt da Semana 5: órbitas de repetição só J2 (Sem4 Tabela 3,
+#     e = 0, eqs. 27 + 37) e grade no modelo médio (Sem4 §9.2). Teoria (independente).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class RepeatOrbitA2:
+    n_revs: int
+    d_days: int
+    h_km: float
+    i_deg: float
+    tnod_s: float
+    grid_deg: float
+    grid_km: float  # no equador
+
+
+REPEAT_ORBITS_A2: tuple[RepeatOrbitA2, ...] = (
+    RepeatOrbitA2(91, 6, 509.95, 97.4396, 5696.70, 3.956, 440.4),
+    RepeatOrbitA2(106, 7, 517.19, 97.4671, 5705.66, 3.396, 378.1),
+    RepeatOrbitA2(121, 8, 522.62, 97.4879, 5712.40, 2.975, 331.2),
+    RepeatOrbitA2(89, 6, 612.99, 97.8388, 5824.72, 4.045, 450.3),
+    RepeatOrbitA2(143, 10, 786.12, 98.5446, 6041.96, 2.517, 280.2),
+    RepeatOrbitA2(233, 16, 699.59, 98.1863, 5933.05, 1.545, 172.0),
+)
+"""Medido no satsim (S5-01, ``repeat_orbit``): h 509,9523 / 517,1863 / 522,6243 / 612,9856 /
+786,1213 / 699,5852 km; i 97,43957 / 97,46711 / 97,48786 / 97,83883 / 98,54460 / 98,18629°."""
+
+
+@dataclass(frozen=True)
+class RepeatOrbitTolA2:
+    h_km: float = 0.01  # critério do card S5-01
+    i_deg: float = 0.001  # critério do card S5-01
+    tnod_s: float = 0.01  # arredondamento do A.2 (2 casas)
+
+
+REPEAT_ORBIT_TOL_A2 = RepeatOrbitTolA2()
+
+
+@dataclass(frozen=True)
+class MeanGridA2:
+    """Grade no modelo médio (Sem4 §9.2): nós a cada Tnod, longitude −(ω⊕ − Ω̇)·t."""
+
+    grid_ideal_deg: float = 3.9560
+    nodes_p1_6days: int = 91
+    nodes_p6_1day: int = 91
+    nodes_p7_1day: int = 107  # depende de onde a janela corta (Cowell, [0, 24 h): 106)
+    step_p7_min_deg: float = 0.5651
+    step_p7_max_deg: float = 3.3909
+
+
+MEAN_GRID_A2 = MeanGridA2()

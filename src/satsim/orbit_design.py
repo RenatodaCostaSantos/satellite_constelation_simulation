@@ -21,6 +21,13 @@ J4 além de J2 e J3 (taxas do Apêndice A.5). ``sso_inclination_calibrated`` res
 heliossíncrona **no próprio Cowell**: a fórmula de 1ª ordem só em J2 (eq. 27) erra Ω̇ em ≈ −0,3%
 com J2–J4 (LTAN −4,5 min/ano na órbita de projeto), e mesmo a teoria J2–J4 de 1ª ordem deixa
 −0,08% (termos de J2²). A calibração numérica vale para qualquer conjunto de forças.
+
+Órbita de repetição e faseamento da constelação (card S5-01)
+------------------------------------------------------------
+``repeat_orbit`` resolve juntas a condição heliossíncrona (eq. 27) e a de repetição
+N·Tnod = D·Tdia,nod (eq. 37) para (a, i), só com J2 de 1ª ordem, como o solver do Sem4 §9.1:
+reproduz a Tabela 3 do Sem4. ``constellation_phases`` dá as fases ψ0 dos P satélites num único
+plano (Sem4 eq. 42, Tabela 4).
 """
 
 import logging
@@ -138,6 +145,66 @@ def ltan_drift_min_per_year(raan_dot: ArrayLike) -> FloatOrArray:
         365.2422 * SECONDS_PER_DAY
     )
     return _as_scalar_if_0d(deg_per_year / 15.0 * 60.0)
+
+
+def repeat_orbit(n_revs: int, n_days: int, e: float = 0.0) -> tuple[float, float]:
+    """SSO de repetição: (a, i) com N revoluções nodais em D dias nodais (Sem4 eqs. 27 e 37).
+
+    Resolve em a, por ``brentq`` (solver do Sem4 §9.1), a condição de repetição
+
+        N/D = (ψ̇ + ω̇)/(ω⊕ − Ω̇)        (Sem4 eq. 37)
+
+    com i = ``sso_inclination(a, e)`` (eq. 27) e as taxas seculares de 1ª ordem só em J2
+    (``secular_rates``, eqs. 23–25). Numa SSO, Ω̇ = Ω☉ e o dia nodal é o dia solar médio (§7.2).
+    Teoria só J2: o semieixo que fecha o traço no Cowell J2–J4 é ≈ 19 m maior (calibrado no
+    S5-02). Com e = 0 (padrão) a correção da excentricidade congelada é de 1,4 cm em a (§7.3).
+
+    Args:
+        n_revs: N, revoluções nodais no ciclo.
+        n_days: D, dias do ciclo. Se gcd(N, D) > 1 a órbita existe, mas repete em D/gcd dias
+            (degenerada, Sem4 §7.4); a função não recusa, quem chama decide.
+        e: excentricidade média.
+
+    Returns:
+        (a [m], i [rad]).
+
+    Raises:
+        ValueError: se N, D não forem positivos ou se não houver solução entre 150 e 2 500 km
+            de altitude (faixa do Sem4 §9.1).
+    """
+    if n_revs <= 0 or n_days <= 0:
+        raise ValueError("n_revs e n_days devem ser positivos")
+    target = n_revs / n_days
+
+    def revs_per_day_minus_target(a: float) -> float:
+        i = sso_inclination(a, e)
+        rates = secular_rates(a, e, i)
+        return (rates.psi_dot + rates.argp_dot) / (OMEGA_EARTH - rates.raan_dot) - target
+
+    lo, hi = R_EARTH + 150e3, R_EARTH + 2500e3
+    if not revs_per_day_minus_target(lo) * revs_per_day_minus_target(hi) < 0.0:
+        raise ValueError(f"sem órbita de repetição {n_revs}/{n_days} entre 150 e 2 500 km")
+    a = float(brentq(revs_per_day_minus_target, lo, hi, xtol=1e-6))
+    return a, float(sso_inclination(a, e))
+
+
+def constellation_phases(n_sats: int) -> NDArray[np.float64]:
+    """Fases iniciais ψ0 [rad] de P satélites igualmente faseados num plano (Sem4 eq. 42).
+
+    ψ0_j = −j·2π/P (mod 2π), j = 0, …, P − 1: S1 em 0 e cada satélite seguinte 360°/P atrás
+    (P = 6: 0°, 300°, 240°, 180°, 120°, 60°, Tabela 4). O satélite j cruza o nó ascendente
+    j·Tnod/P depois de S1, e o seu nó cai j·D/P passos de grade a oeste (eq. 43). Em órbita
+    quase circular, fasear por ψ ou por u = ω + ν dá o mesmo resultado a menos de ~e.
+
+    Args:
+        n_sats: P ≥ 1.
+
+    Returns:
+        ψ0 [rad] em [0, 2π), shape (P,).
+    """
+    if n_sats < 1:
+        raise ValueError("n_sats deve ser ≥ 1")
+    return np.mod(-2.0 * np.pi * np.arange(n_sats) / n_sats, 2.0 * np.pi)
 
 
 def frozen_eccentricity(a: float, i: float, j4: bool = True) -> float:

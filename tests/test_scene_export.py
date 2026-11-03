@@ -1,4 +1,4 @@
-"""Testes da exportação da cena para o viewer (S1-08; geodésico na S2-07; ISS real na S3-06)."""
+"""Testes da cena (S1-08; geodésico na S2-07; ISS real na S3-06; Satellite na S5-01)."""
 
 import importlib.util
 import json
@@ -27,6 +27,7 @@ from satsim.app.scene_export import (
 )
 from satsim.astrotime import datetime_to_jd
 from satsim.constants import R_EARTH
+from satsim.constellation import Constellation
 from satsim.elements import KeplerianElements, state_to_elements
 from satsim.ephemeris import beta_angle, ltan_hours
 from satsim.frames import eci_to_ecef
@@ -39,6 +40,7 @@ from satsim.propagators import (
     MeanJ2Propagator,
     SGP4Propagator,
 )
+from satsim.satellite import Satellite
 from satsim.tle import Tle
 
 EPOCH = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
@@ -502,3 +504,30 @@ def test_build_demo_deterministic_tle_epoch(tmp_path) -> None:
     # 24 h após a época: as passagens 1 e 2 do A.2 (AOS em 29 258,7 s e 64 638,7 s)
     assert len(iss_passes) == 2
     assert iss_passes[0]["max_el_deg"] == pytest.approx(PASSES_A2[0].max_el_deg, abs=0.05)
+
+
+# --- S5-01: Satellite e Constellation na cena ---------------------------------------------------
+
+
+def _as_satellite(sat: SceneSatellite) -> Satellite:
+    return Satellite(sat.id, sat.name, sat.propagator, color=sat.color)
+
+
+def test_s5_scene_accepts_satellite_same_contract(scene: dict) -> None:
+    # A mesma cena do fixture, montada com a classe Satellite do ADR: JSON idêntico
+    sats = [_as_satellite(s) for s in (_sso(), _example())]
+    got = build_scene(sats, [STATION], EPOCH, DURATION_S, STEP_S)
+    assert got == scene
+
+
+def test_s5_scene_accepts_constellation_and_mixed_list() -> None:
+    # Constellation (época própria, diferente da cena) e lista mista Satellite + SceneSatellite
+    sso, example = _sso(), _example()
+    constellation = Constellation(EPOCH - timedelta(hours=2), [_as_satellite(sso)])
+    from_constellation = build_scene(constellation, [STATION], EPOCH, 3600, 60)
+    from_scene_sat = build_scene([sso], [STATION], EPOCH, 3600, 60)
+    assert from_constellation == from_scene_sat
+    mixed = build_scene([_as_satellite(sso), example], [STATION], EPOCH, 3600, 60)
+    assert [s["id"] for s in mixed["satellites"]] == ["sso1", "kep1"]
+    assert [s["color"] for s in mixed["satellites"]] == ["#00e5ff", "#ffb020"]
+    assert mixed["meta"]["schema_version"] == SCHEMA_VERSION

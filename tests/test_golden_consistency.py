@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from golden.reference_values import (
     CONSTANTS,
+    CONSTELLATION_A1,
     CONSTELLATION_ORBIT,
     CONSTELLATION_TABLE4,
     DESIGN_ORBIT,
@@ -17,6 +18,7 @@ from golden.reference_values import (
     ISS_TLE_A1,
     J2_SECULAR_RATES,
     PASSES_A2,
+    REPEAT_ORBITS_A2,
     SSO_CIRCULAR_TABLE1,
     SSO_REPEAT_TABLE3,
 )
@@ -193,3 +195,26 @@ def test_passes_a2_internal_consistency() -> None:
             assert abs((epoch + timedelta(seconds=t_s) - printed).total_seconds()) < 1.0
         assert row.los_s - row.aos_s == pytest.approx(row.duration_s, abs=1.0)
         assert row.aos_s < row.tca_s < row.los_s
+
+
+# --- Semana 5: A.1 e A.2 × Tabelas 3 e 4 já transcritas (S5-01) --------------------------------
+
+
+def test_s5_a2_matches_table3() -> None:
+    table3 = {(r.n_revs, r.d_days): r for r in SSO_REPEAT_TABLE3}
+    for row in REPEAT_ORBITS_A2:
+        t3 = table3[(row.n_revs, row.d_days)]
+        assert row.h_km == t3.h_km
+        assert row.i_deg == pytest.approx(t3.i_deg, abs=5e-4)  # Tabela 3 com 3 casas
+        assert row.grid_deg == t3.grid_deg
+        assert row.grid_km == t3.grid_km
+
+
+def test_s5_a1_matches_table4() -> None:
+    assert CONSTELLATION_A1.psi0_deg == tuple(s.psi0_deg for s in CONSTELLATION_TABLE4)
+    assert CONSTELLATION_A1.node_delay_s == tuple(s.node_delay_s for s in CONSTELLATION_TABLE4)
+    assert CONSTELLATION_A1.a_design_m == CONSTELLATION_ORBIT.a_km * 1e3
+    # atraso j·Tnod/6, com Tnod = 5 696,70 s (Sem4 §7.5). A Tabela 4 tem 1 casa e o Tnod 2:
+    # 5 696,70/6 = 949,450 (com o Tnod de repeat_orbit, 5 696,704 s: 949,451 → 949,5).
+    for j, delay in enumerate(CONSTELLATION_A1.node_delay_s):
+        assert delay == pytest.approx(j * D.tnod_s / 6.0, abs=0.05 + 0.01)
