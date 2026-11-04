@@ -1322,3 +1322,68 @@ class RepeatClosureA4:
 
 
 REPEAT_CLOSURE_A4 = RepeatClosureA4()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.5 do prompt da Semana 5: cobertura (Sem4 eq. 45 e experimento: Cowell
+#     completo, a de projeto, η = 23,2°, alvos em |lat| ≤ 80°, grade 1°, passo 10 s; acessos a
+#     menos de 30 min contam como uma passagem; o intervalo inclui as bordas da janela).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class CoverageA5:
+    a_m: float = 6888089.0
+    # Sem4 eq. 45: rolagem η [°] → λ [°] e alcance transversal [km]
+    roll_deg: tuple[float, ...] = (10.0, 20.0, 23.2, 30.0)
+    swath_half_angle_deg: tuple[float, ...] = (0.8088, 1.6765, 1.9784, 2.6820)
+    swath_km: tuple[float, ...] = (90.0, 186.6, 220.2, 298.6)
+    swath_km_sem4: tuple[float, ...] = (90.0, 187.0, 220.0, 299.0)  # Sem4 §8.6
+    swath_km_tol: float = 1.0  # critério do card S5-03
+    roll_half_grid_deg: float = 23.1957
+    roll_half_grid_tol_deg: float = 0.01  # critério do card S5-03
+    # Experimento (grade 1°)
+    roll_coverage_deg: float = 23.2
+    fraction_p6_1d: float = 1.0
+    fraction_p1_1d: float = 0.4848
+    fraction_p1_1d_tol: float = 0.02  # critério do card S5-03
+    fraction_p1_6d: float = 1.0
+    revisit_p6_3d_lat60_h: float = 13.97
+    revisit_p6_3d_lat60_limit_h: float = 15.0  # critério do card S5-03
+    revisit_p6_3d_lat80_h: float = 19.04
+    fraction_p6_3d_sun10: float = 0.9255
+    revisit_p6_3d_sun10_lat60_h: float = 24.26
+    revisit_p6_3d_sun10_lat60_limit_h: float = 25.0  # critério do card S5-03
+    min_sun_elevation_deg: float = 10.0
+    gap_merge_s: float = 1800.0
+    # Medido no satsim (S5-03), grade 1°: λ 0,808783 / 1,676505 / 1,978441 / 2,682043°; meia
+    # grade 23,195673°; P = 1 em 1 dia 48,82% (A.5: 48,48%); P = 6 3 dias: revisita 13,97 h
+    # (|lat| ≤ 60°) e 19,04 h (≤ 80°); com Sol ≥ 10°: 92,55% e 24,26 h. O A.5 se reproduz
+    # medindo o intervalo entre os INÍCIOS de passagens sucessivas (coverage_stats(...,
+    # interval="revisit")); do fim de uma ao início da seguinte (interval="blackout") dá 13,69 h /
+    # 16,68 h / 24,00 h: a diferença é a duração da passagem, que em latitude alta junta vários
+    # satélites do trem (15,8 min entre eles).
+
+
+COVERAGE_A5 = CoverageA5()
+
+
+@dataclass(frozen=True)
+class CoverageTestS5:
+    """Referência própria dos testes de cobertura (S5-03): janelas de 3 e 6 dias com o Cowell
+    só J2–J4 (≈ 7× mais rápido que o completo) e grade de 2°.
+
+    Medido no satsim (S5-03): em 3 dias a cobertura no Cowell J2–J4 é idêntica à do completo a
+    menos de 0,01 h (grade 1°: 13,97 / 19,04 / 24,26 h e 92,55% nos dois).
+    """
+
+    grid_deg: float = 2.0
+    revisit_p6_3d_lat60_h: float = 13.967
+    revisit_p6_3d_lat80_h: float = 19.039
+    blackout_p6_3d_lat60_h: float = 13.694
+    fraction_p6_3d_sun10: float = 0.9259
+    revisit_p6_3d_sun10_lat60_h: float = 24.258
+    regression_tol_h: float = 0.02  # ≈ 7 amostras de 10 s
+    fraction_p1_1d_full_2deg: float = 0.4922
+
+
+COVERAGE_TEST_S5 = CoverageTestS5()

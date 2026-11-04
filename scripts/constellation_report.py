@@ -2,8 +2,9 @@
 
 Uso (na raiz do repositório, com o pacote instalado com o extra dev):
 
-    python scripts/constellation_report.py               # calcula tudo (~1 min) e gera o relatório
-    python scripts/constellation_report.py --from-json   # só refaz gráficos e relatório
+    python scripts/constellation_report.py                  # tudo (~2 min) e o relatório
+    python scripts/constellation_report.py --from-json      # só refaz gráficos e relatório
+    python scripts/constellation_report.py --only coverage  # recalcula uma seção, mantém as outras
 
 Seções (uma por card; os próximos cards acrescentam as suas):
 
@@ -12,9 +13,14 @@ Seções (uma por card; os próximos cards acrescentam as suas):
   Sem4), a mesma grade no modelo médio (Sem4 §9.2), a precisão do nó por interpolação linear, o
   fechamento do ciclo de 6 dias com o a de projeto e com o a calibrado
   (``repeat_semi_major_axis_calibrated``), com e sem arrasto, e o efeito de Δa no LTAN.
+- **S5-03 · Cobertura e revisita.** Rolagem de ±23,2° (meia grade, Sem4 §8.6), alvos em
+  |lat| ≤ 80° numa grade de 1°, passo de 10 s, Cowell completo: fração coberta por latitude em
+  1 dia (P = 1 e P = 6, com e sem a restrição de luz), P = 1 em 6 dias e o mapa do intervalo
+  máximo de revisita da constelação em 3 dias (sem e com luz).
 
 Toda constelação é criada por ``satsim.constellation.sso_constellation`` (também a de 1 satélite).
-Gera grade_nos.png, relatorio.md e resultados.json (números brutos, para --from-json).
+Gera grade_nos.png, cobertura_latitude.png, revisita_mapa.png, relatorio.md e resultados.json
+(números brutos, para --from-json).
 """
 
 import argparse
@@ -36,8 +42,21 @@ import numpy as np  # noqa: E402
 from satsim.analysis import fit_rate, osculating_elements  # noqa: E402
 from satsim.astrotime import datetime_to_jd, gmst_rate  # noqa: E402
 from satsim.constants import OMEGA_EARTH, OMEGA_SUN, R_EARTH, SECONDS_PER_DAY  # noqa: E402
-from satsim.constellation import CONSTELLATION_PALETTE, sso_constellation  # noqa: E402
+from satsim.constellation import (  # noqa: E402
+    CONSTELLATION_PALETTE,
+    Constellation,
+    sso_constellation,
+)
+from satsim.coverage import (  # noqa: E402
+    TargetGrid,
+    access_times,
+    coverage_stats,
+    latitude_profile,
+    roll_for_half_grid,
+    swath_half_angle,
+)
 from satsim.elements import KeplerianElements  # noqa: E402
+from satsim.ephemeris import sun_ra_dec  # noqa: E402
 from satsim.forces import ZonalAcceleration  # noqa: E402
 from satsim.groundtrack import grid_metrics, node_crossings, repeat_closure  # noqa: E402
 from satsim.orbit_design import (  # noqa: E402
@@ -150,6 +169,179 @@ def repeat_section() -> dict:
     d_raan = out["j2j4_calibrated"]["raan_dot_deg_day"] - out["j2j4_design"]["raan_dot_deg_day"]
     out["ltan_drift_measured_min_year"] = d_raan * 365.2422 / 15.0 * 60.0
     return out
+
+
+# --- S5-03: cobertura e revisita ----------------------------------------------------------------
+
+ROLL_DEG = 23.2
+SUN_MIN_DEG = 10.0
+
+
+def coverage_section() -> dict:
+    """Cobertura em 1 dia (P = 1, 6), P = 1 em 6 dias e revisita de P = 6 em 3 dias (grade 1°)."""
+    roll = math.radians(ROLL_DEG)
+    grid = TargetGrid(1.0, 1.0)
+    c = sso_constellation(EPOCH, full_force_models(EPOCH), a=A_DESIGN, i=I_CAL)
+    s1 = Constellation(EPOCH, [c[0]])
+    lat60 = np.abs(grid.lat_deg) <= 60.0
+    out: dict = {
+        "roll_deg": ROLL_DEG,
+        "swath_half_angle_deg": _deg(swath_half_angle(A_DESIGN, roll)),
+        "roll_half_grid_deg": _deg(roll_for_half_grid(A_DESIGN, N_REVS)),
+        "band_lat_deg": grid.band_lat_deg.tolist(),
+        "n_lon": int(grid.band_lon_deg.size),
+        "profile_1d": {},
+    }
+    for label, const in (("p1", s1), ("p6", c)):
+        for light, sun in (("dark", None), ("sun", SUN_MIN_DEG)):
+            acc = access_times(const, grid, EPOCH, DAY, roll, min_sun_elevation_deg=sun)
+            frac, revisit = coverage_stats(acc, DAY)
+            _, prof = latitude_profile(grid, revisit < DAY)
+            out["profile_1d"][f"{label}_{light}"] = {"fraction": frac, "by_lat": prof.tolist()}
+    frac6, _ = coverage_stats(access_times(s1, grid, EPOCH, 6 * DAY, roll), 6 * DAY)
+    out["fraction_p1_6d"] = frac6
+    for light, sun in (("dark", None), ("sun", SUN_MIN_DEG)):
+        acc = access_times(c, grid, EPOCH, 3 * DAY, roll, min_sun_elevation_deg=sun)
+        frac, revisit = coverage_stats(acc, 3 * DAY)
+        _, blackout = coverage_stats(acc, 3 * DAY, interval="blackout")
+        seen = revisit < 3 * DAY
+        out[f"revisit_3d_{light}"] = {
+            "fraction": frac,
+            "lat60_h": float(revisit[lat60].max() / 3600),
+            "lat80_h": float(revisit[seen].max() / 3600) if seen.any() else None,
+            "blackout_lat60_h": float(blackout[lat60].max() / 3600),
+            "blackout_lat80_h": float(blackout[seen].max() / 3600) if seen.any() else None,
+            "unseen_min_lat_deg": float(grid.lat_deg[~seen].min()) if (~seen).any() else None,
+            # mapa em minutos inteiros (−1 = nunca visto), para o JSON ficar pequeno
+            "map_min": np.where(seen, np.round(revisit / 60), -1).astype(int).tolist(),
+        }
+    _, dec = sun_ra_dec(datetime_to_jd(EPOCH + timedelta(days=1.5)))
+    out["sun_dec_deg"] = _deg(float(dec))
+    return out
+
+
+def plot_coverage(data: dict, out_lat: Path, out_map: Path) -> None:
+    """Fração coberta por latitude (1 dia) e mapa da revisita de P = 6 em 3 dias."""
+    cov = data["coverage"]
+    lat = np.array(cov["band_lat_deg"])
+    fig, ax = plt.subplots(figsize=(8, 4.2))
+    styles = {
+        "p6_dark": ("P = 6", "#0b6e8a", "-"),
+        "p6_sun": ("P = 6, só com luz", "#0b6e8a", "--"),
+        "p1_dark": ("P = 1", "#ff8a3d", "-"),
+        "p1_sun": ("P = 1, só com luz", "#ff8a3d", "--"),
+    }
+    for key, (label, color, ls) in styles.items():
+        p = cov["profile_1d"][key]
+        ax.plot(lat, 100 * np.array(p["by_lat"]), color=color, ls=ls, lw=1.8,
+                label=f"{label} ({_f(100 * p['fraction'], 1)}%)")  # fmt: skip
+    ax.set_xlabel("latitude do alvo [°]")
+    ax.set_ylabel("alvos vistos em 1 dia [%]")
+    ax.set_xlim(-80, 80)
+    ax.set_ylim(-3, 103)
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8.5, loc="lower center")
+    ax.set_title(f"Cobertura em 1 dia, rolagem ±{_f(ROLL_DEG, 1)}° (2026-10-23, Cowell completo)",
+                 fontsize=10)  # fmt: skip
+    fig.tight_layout()
+    fig.savefig(out_lat, dpi=130)
+    plt.close(fig)
+
+    n_lon = cov["n_lon"]
+    lon_edges = np.arange(-180.0, 180.0 + 1e-9, 360.0 / n_lon) - 0.5 * 360.0 / n_lon
+    lat_edges = np.r_[lat - 0.5, lat[-1] + 0.5]
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.4), sharey=True)
+    # Escala própria por painel: sem luz a revisita vai de ≈ 12 h (equador) a ≈ 19 h (±80°); com
+    # luz fica em ≈ 24 h quase em toda parte (uma visita por dia), mais longa só na borda da
+    # noite polar.
+    panels = (
+        (axes[0], "revisit_3d_dark", "sem restrição de luz", (12.0, 19.0)),
+        (axes[1], "revisit_3d_sun", f"só com Sol ≥ {SUN_MIN_DEG:g}° no alvo", (23.5, 26.0)),
+    )
+    for ax, key, title, (vmin, vmax) in panels:
+        m = np.array(cov[key]["map_min"], dtype=float).reshape(lat.size, n_lon) / 60.0
+        masked = np.ma.masked_less(m, 0.0)
+        cmap = plt.get_cmap("viridis").copy()
+        cmap.set_bad("0.75")
+        mesh = ax.pcolormesh(lon_edges, lat_edges, masked, cmap=cmap, vmin=vmin, vmax=vmax,
+                             shading="flat")  # fmt: skip
+        r = cov[key]
+        ax.set_title(f"P = 6, 3 dias, {title}\nmáx. {_f(r['lat60_h'], 2)} h em |lat| ≤ 60°",
+                     fontsize=9.5)  # fmt: skip
+        ax.set_xlabel("longitude [°]")
+        ax.set_aspect("equal")
+        fig.colorbar(mesh, ax=ax, orientation="horizontal", pad=0.2, shrink=0.8, extend="max",
+                     label="intervalo máximo entre visitas [h] (cinza: nunca visto)")  # fmt: skip
+    axes[0].set_ylabel("latitude [°]")
+    fig.savefig(out_map, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
+def coverage_report_lines(data: dict) -> list[str]:
+    cov = data["coverage"]
+    prof = cov["profile_1d"]
+    dark, sun = cov["revisit_3d_dark"], cov["revisit_3d_sun"]
+    lat_lim = 90.0 - SUN_MIN_DEG + cov["sun_dec_deg"]
+    swath_km = math.radians(cov["swath_half_angle_deg"]) * R_EARTH / 1e3
+    return [
+        "## S5-03 · Cobertura diária e revisita",
+        "",
+        f"Rolagem η = ±{_f(ROLL_DEG, 1)}°: alcance transversal λ = "
+        f"{_f(cov['swath_half_angle_deg'], 4)}° = {_f(swath_km, 1)} km "
+        f"(Sem4 eq. 45; A.5: 1,9784° = 220,2 km). A rolagem de meia grade (λ = π/91) é "
+        f"{_f(cov['roll_half_grid_deg'], 4)}° (A.5: 23,1957°). Alvos em |lat| ≤ 80° numa grade de "
+        "1° × 1°, passo de 10 s, constelação de referência no Cowell completo (`access_times`, "
+        "`coverage_stats`); acessos a menos de 30 min contam como uma passagem.",
+        "",
+        "![Cobertura por latitude](cobertura_latitude.png)",
+        "",
+        "| Caso | Alvos vistos |",
+        "|---|---:|",
+        f"| P = 6, 1 dia | {_f(100 * prof['p6_dark']['fraction'], 2)}% (100%) |",
+        f"| P = 1, 1 dia | {_f(100 * prof['p1_dark']['fraction'], 2)}% (48,48%) |",
+        f"| P = 1, 6 dias | {_f(100 * cov['fraction_p1_6d'], 2)}% (100%) |",
+        f"| P = 6, 1 dia, só com luz | {_f(100 * prof['p6_sun']['fraction'], 2)}% |",
+        f"| P = 1, 1 dia, só com luz | {_f(100 * prof['p1_sun']['fraction'], 2)}% |",
+        f"| P = 6, 3 dias, só com luz | {_f(100 * sun['fraction'], 2)}% (92,55%) |",
+        "",
+        "- **A promessa da constelação:** com seis satélites e ±23,2° de rolagem, todo ponto entre "
+        "±80° é alcançado no mesmo dia; um satélite sozinho vê metade da Terra por dia e precisa "
+        "do ciclo inteiro de 6 dias. A curva de P = 1 sobe perto de ±80°, onde as trilhas "
+        "convergem e as faixas se sobrepõem.",
+        "",
+        "### Revisita em 3 dias",
+        "",
+        "![Mapa do intervalo máximo de revisita](revisita_mapa.png)",
+        "",
+        "| P = 6, 3 dias | Revisita máx. \\|lat\\| ≤ 60° | Revisita máx. \\|lat\\| ≤ 80° "
+        "| Tempo sem acesso máx. \\|lat\\| ≤ 60° |",
+        "|---|---:|---:|---:|",
+        f"| sem restrição de luz | {_f(dark['lat60_h'], 2)} h (13,97 h) | "
+        f"{_f(dark['lat80_h'], 2)} h (19,04 h) | {_f(dark['blackout_lat60_h'], 2)} h |",
+        f"| só com Sol ≥ {SUN_MIN_DEG:g}° | {_f(sun['lat60_h'], 2)} h (24,26 h) | "
+        f"{_f(sun['lat80_h'], 2)} h (dos vistos) | {_f(sun['blackout_lat60_h'], 2)} h |",
+        "",
+        '- **Revisita × tempo sem acesso:** a revisita (`interval="revisit"`, a do A.5) vai do '
+        'início de uma passagem ao início da seguinte; o tempo sem acesso (`"blackout"`) vai do '
+        "fim de uma ao início da outra. A diferença é a duração da passagem: perto do equador, "
+        "dois satélites vizinhos do trem (15,8 min) podem ver o mesmo alvo; em latitude alta, as "
+        "faixas convergem e vários satélites, em voltas seguidas, o veem em sequência.",
+        "- **Sem luz: ≈ 12 a 14 h.** Cada alvo é visto duas vezes por dia, numa passagem "
+        "ascendente (nó às 22h30 local) e numa descendente (10h30), a ≈ 12 h uma da outra. No "
+        "equador a revisita máxima é ≈ 12,1 h; ela cresce com a latitude (≈ 14 h a ±60°, ≈ 19 h a "
+        "±80°) porque fora do equador as duas passagens deixam de ser simétricas: a hora local "
+        "do sobrevoo se afasta de 10h30 e 22h30 em sentidos opostos, e o intervalo entre elas "
+        "fica alternadamente mais curto e mais longo que 12 h.",
+        "- **Com luz: ≈ 24 h.** Uma câmera óptica só usa a passagem descendente, de manhã (10h30): "
+        "a ascendente é noturna. Resta uma visita por dia, e a revisita dobra. Em outubro a "
+        f"declinação do Sol é {_f(cov['sun_dec_deg'], 1)}°: ao meio-dia solar, ele fica abaixo "
+        f"de {SUN_MIN_DEG:g}° de elevação para latitudes acima de 90° − {SUN_MIN_DEG:g}° + δ ≈ "
+        f"{_f(lat_lim, 1)}° N. Nenhum alvo acima de ≈ {_f(sun['unseen_min_lat_deg'], 0)}° N é "
+        f"visto com luz: a fração cai para {_f(100 * sun['fraction'], 2)}% (A.5: 92,55%). No "
+        "hemisfério sul é o contrário: a primavera austral deixa o Sol alto, e com P = 1 a "
+        "fração com luz sobe para perto de −80° (gráfico por latitude).",
+        "",
+    ]
 
 
 # --- Gráficos e relatório ------------------------------------------------------------------------
@@ -292,28 +484,40 @@ def write_report(data: dict, out: Path, elapsed_s: float | None) -> None:
         "±5 min.",
         "",
     ]
+    if "coverage" in data:
+        lines += coverage_report_lines(data)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+SECTIONS = {
+    "grid": ("S5-02: grade", grid_section),
+    "repeat": ("S5-02: repetição", repeat_section),
+    "coverage": ("S5-03: cobertura", coverage_section),
+}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--from-json", action="store_true", help="refaz só gráficos e relatório")
+    parser.add_argument("--only", action="append", choices=sorted(SECTIONS),
+                        help="recalcula só esta seção; as outras vêm do JSON")  # fmt: skip
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     json_path = OUT_DIR / "resultados.json"
     elapsed = None
-    if args.from_json:
-        data = json.loads(json_path.read_text(encoding="utf-8"))
-    else:
+    data = json.loads(json_path.read_text(encoding="utf-8")) if json_path.exists() else {}
+    if not args.from_json:
         t0 = time.perf_counter()
-        logger.info("S5-02: grade …")
-        data = {"grid": grid_section()}
-        logger.info("S5-02: repetição …")
-        data["repeat"] = repeat_section()
-        elapsed = time.perf_counter() - t0
+        for key in args.only or SECTIONS:
+            label, compute = SECTIONS[key]
+            logger.info("%s …", label)
+            data[key] = compute()
+        elapsed = time.perf_counter() - t0 if not args.only else None
         json_path.write_text(json.dumps(data), encoding="utf-8")
     plot_grid(data, OUT_DIR / "grade_nos.png")
+    if "coverage" in data:
+        plot_coverage(data, OUT_DIR / "cobertura_latitude.png", OUT_DIR / "revisita_mapa.png")
     write_report(data, OUT_DIR / "relatorio.md", elapsed)
     logger.info("relatório em %s", OUT_DIR)
 
