@@ -391,6 +391,17 @@ def repeat_semi_major_axis_calibrated(
 ) -> float:
     """Semieixo médio que fecha o ciclo N/D no Cowell(models): N·Tnod = D·Tdia,nod (eq. 37).
 
+    Por que calibrar: o traço só se repete se a razão entre duas frequências independentes, a do
+    satélite (uma volta nodal em Tnod, que depende de a: T ∝ a^1,5) e a da Terra girando sob o
+    plano (Tdia,nod), for exatamente N/D. Para um a qualquer a razão não é uma fração e o traço
+    nunca fecha; só semieixos isolados a satisfazem (Sem4 Tabela 3). A fase inicial, a data e o
+    LTAN não importam; o semieixo, sim. ``repeat_orbit`` acha esse a pela teoria de 1ª ordem só
+    J2, que no Cowell J2–J4 deixa Tnod 0,024 s curto por volta: −2,2 s por ciclo, ≈ 1 km de
+    fechamento a cada 6 dias. Nada na física corrige o erro (não há força que "puxe" a órbita
+    para a repetição): ele se acumula linearmente, ≈ 60 km por ano. A calibração mede o período
+    no próprio modelo de forças e corrige a (+19,4 m na órbita 91/6, Apêndice A.4 do prompt da
+    Semana 5), como ``sso_inclination_calibrated`` faz com a inclinação para o LTAN.
+
     Para cada a candidato: elementos médios (a, e, i, Ω, ω = 90°, ψ = 0) → ``mean_to_osculating``
     (só a gravidade zonal de ``models``) → Cowell(models) por um ciclo (D dias + 1 volta) e:
 
@@ -401,8 +412,9 @@ def repeat_semi_major_axis_calibrated(
     A secante zera f(a) = N·Tnod − D·Tdia,nod [s], partindo de ``a0`` (padrão: o a de projeto,
     ``repeat_orbit(n_revs, n_days, e)``). O 2º ponto usa dT/da = 1,5·T/a (Sem4 §7.6), isto é,
     df/da ≈ 1,5·N·Tnod/a. A dependência de Tdia,nod em a (via Ω̇ ∝ a^(−7/2)) entra só pela
-    secante. Como na inclinação, a calibração deve ser feita sem arrasto: com arrasto a ciclo não
-    fecha (é a deriva que a manutenção corrige, S5-05).
+    secante. Como na inclinação, a calibração deve ser feita sem arrasto: o arrasto também abre o
+    ciclo, mas é uma deriva que cresce com o tempo e que a manutenção corrige (S5-05); a
+    calibração remove só o viés constante do a nominal.
 
     Args:
         n_revs: N.
@@ -420,37 +432,79 @@ def repeat_semi_major_axis_calibrated(
     Returns:
         a calibrado [m]. Se ``max_iter`` se esgotar, devolve o último e registra um aviso.
     """
+    # Convenção do projeto: a conversão médio → osculador usa só a gravidade zonal (J2–J4) de
+    # `models`; arrasto, SRP e Sol/Lua ficam só na propagação (mean_osc.conversion_models).
     conv_models = conversion_models(models)
+    # Ponto de partida: o semieixo da teoria de 1ª ordem só J2 (Sem4 §9.1). Na 91/6 dá
+    # 6 888 089,25 m, ≈ 19 m abaixo da resposta no Cowell J2–J4.
     if a0 is None:
         a0, _ = repeat_orbit(n_revs, n_days, e)
+    # Duração do ciclo de repetição: D dias (6 dias = 518 400 s).
     cycle_s = n_days * SECONDS_PER_DAY
+    # Instantes da medida de Ω̇: o ciclo inteiro a cada 60 s (o +1 s garante que o último instante,
+    # D·86 400 s, entre no arange). 6 dias → 8 641 amostras.
     t_raan = np.arange(0.0, cycle_s + 1.0, 60.0)
 
     def residual(a: float) -> tuple[float, float]:
-        """(f(a) = N·Tnod − D·Tdia,nod [s], Tnod [s]) medidos no Cowell com semieixo médio a."""
+        """(f(a) = N·Tnod − D·Tdia,nod [s], Tnod [s]) medidos no Cowell com semieixo médio a.
+
+        A órbita de repetição é a raiz f(a) = 0. f < 0: as N voltas terminam antes dos D dias e o
+        nó N cai a leste do nó 0. Cada chamada é uma "medida": ≈ 0,05 s de conversão mais ≈ 1 s
+        de Cowell J2–J4 em 6 dias.
+        """
+        # 1. Elementos MÉDIOS candidatos: o projeto (e, i, Ω, ω = 90°) com o semieixo a em teste;
+        #    ψ = 0 (fase na órbita) é arbitrário: o fechamento não depende de onde o satélite
+        #    começa, só do período.
         mean = KeplerianElements(a=a, e=e, i=i, raan=raan, argp=math.pi / 2.0, psi=0.0)
+        # 2. Médio → osculador (S4-04): o estado instantâneo cuja média no Cowell é `mean`. Sem
+        #    isso o semieixo médio ficaria ≈ 9,5 km alto e o período sairia muito errado.
         osc = mean_to_osculating(mean, epoch, conv_models).elements
+        # 3. Cowell com TODAS as forças pedidas, partindo do estado osculador.
         prop = CowellPropagator(osc, epoch, models)
-        # Nós num ciclo e mais uma volta (≥ N + 1 nós): Tnod pelo ajuste linear t_k = t_0 + k·Tnod
+        # 4. Nós ascendentes num ciclo e mais 1,5 volta (cycle_s/N ≈ Tnod), para ter ao menos
+        #    N + 1 nós qualquer que seja o instante do primeiro. Interpolação linear, passo step_s.
         t_nodes, _ = node_crossings(prop, epoch, cycle_s + 1.5 * cycle_s / n_revs, step_s)
+        # 5. Tnod medido: reta t_k = t_0 + k·Tnod pelos instantes dos nós (k = 0, 1, 2, …); a
+        #    inclinação da reta é o período nodal médio. O ajuste em ~92 nós dilui as oscilações
+        #    de curto período e o erro de interpolação de cada nó.
         t_nod = float(np.polyfit(np.arange(t_nodes.size), t_nodes, 1)[0])
-        # Ω̇ medido no mesmo ciclo → dia nodal (eq. 35)
+        # 6. Ω̇ medido no mesmo ciclo: reta de mínimos quadrados do Ω osculador (as oscilações de
+        #    uma volta se anulam no ajuste de 6 dias).
         raan_dot = fit_rate(t_raan, osculating_elements(prop, t_raan).raan)
+        # 7. Dia nodal (Sem4 eq. 35): o tempo para a Terra dar uma volta sob o plano orbital, que
+        #    também gira (a Ω̇). Numa SSO é o dia solar médio, ≈ 86 400,007 s.
         t_day_nod = 2.0 * math.pi / (OMEGA_EARTH - raan_dot)
+        # 8. O resíduo da condição de repetição (eq. 37): duração de N voltas menos D dias nodais.
+        #    Na 91/6 com o a de projeto: −2,2 s (o ciclo termina 2,2 s cedo, ≈ 1 km a leste).
         f = n_revs * t_nod - n_days * t_day_nod
         logger.debug("a = %.3f m: Tnod = %.4f s, Tdia,nod = %.4f s, f = %.4e s",
                      a, t_nod, t_day_nod, f)  # fmt: skip
+        # Tnod volta junto: o 2º ponto da secante usa a derivada analítica dT/da, que precisa dele.
         return f, t_nod
 
+    # 1ª medida, no semieixo da teoria.
     f0, t_nod0 = residual(a0)
+    # Se a teoria já fecha o ciclo dentro da tolerância (ex.: models só com J2), não há o que
+    # corrigir.
     if abs(f0) < tol_s:
         return a0
-    # 2º ponto: δ(N·Tnod) = 1,5·N·Tnod·δa/a (Sem4 §7.6) para cancelar f0
+    # 2º ponto, para a secante ter dois pontos: δT/T = 1,5·δa/a (3ª lei de Kepler, Sem4 §7.6),
+    # logo δf ≈ N·δT = 1,5·N·Tnod·δa/a. Escolher δa = −f0/(1,5·N·Tnod/a) zera f0 a menos da
+    # variação de Tdia,nod com a, que é pequena. Na 91/6: δa ≈ +19,2 m, e f cai de −2,2 s para
+    # ≈ 1e-2 s numa tacada.
     a1 = a0 - f0 / (1.5 * n_revs * t_nod0 / a0)
+    # Método da secante: até max_iter medidas no total (a 1ª já foi feita acima).
     for _ in range(max_iter - 1):
+        # Mede o resíduo no ponto atual.
         f1, _ = residual(a1)
+        # Convergiu: |f| < tol_s (1e-3 s ≈ 0,5 m de fechamento no equador por ciclo).
         if abs(f1) < tol_s:
             return a1
+        # Secante: a reta pelos dois últimos pontos (a0, f0) e (a1, f1) cruza zero em
+        # a1 − f1·(a1 − a0)/(f1 − f0). Esse cruzamento vira o novo ponto; o atual vira o
+        # anterior. f(a) é quase linear perto da raiz: na 91/6 o resíduo vai de 1e-2 s a 1e-8 s
+        # num passo.
         a0, f0, a1 = a1, f1, a1 - f1 * (a1 - a0) / (f1 - f0)
+    # Esgotou as medidas sem atingir a tolerância: avisa e devolve a melhor estimativa.
     logger.warning("repeat_semi_major_axis_calibrated não convergiu em %d medidas", max_iter)
     return a1
