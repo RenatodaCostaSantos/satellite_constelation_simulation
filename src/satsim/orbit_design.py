@@ -172,19 +172,40 @@ def repeat_orbit(n_revs: int, n_days: int, e: float = 0.0) -> tuple[float, float
         ValueError: se N, D não forem positivos ou se não houver solução entre 150 e 2 500 km
             de altitude (faixa do Sem4 §9.1).
     """
+    # N voltas em D dias só faz sentido com inteiros positivos (D = 0 dividiria por zero).
     if n_revs <= 0 or n_days <= 0:
         raise ValueError("n_revs e n_days devem ser positivos")
+    # Meta da condição de repetição (eq. 37): voltas nodais por dia nodal. 91/6 → 15,1667.
+    # Numa SSO o dia nodal é o dia solar médio (§7.2), então é literalmente "voltas por dia".
     target = n_revs / n_days
 
     def revs_per_day_minus_target(a: float) -> float:
+        """f(a) = voltas por dia da SSO de semieixo a, menos N/D. A órbita procurada é f(a) = 0.
+
+        A condição heliossíncrona fixa i em função de a; por isso sobra uma incógnita só, a.
+        """
+        # 1. Condição heliossíncrona (eq. 27): a única inclinação em que o plano gira junto com
+        #    o Sol (Ω̇ = 0,9856 °/dia) neste semieixo. Sobe com a (≈ 97,4° a 510 km).
         i = sso_inclination(a, e)
+        # 2. Taxas seculares de 1ª ordem só J2 (eqs. 23–25) nesse (a, e, i): ψ̇ (movimento
+        #    médio perturbado), ω̇ (giro do perigeu) e Ω̇ (giro do plano, = taxa do Sol aqui).
         rates = secular_rates(a, e, i)
+        # 3. Voltas por dia (eq. 37) = (velocidade do satélite de nó a nó, ψ̇ + ω̇ = du/dt)
+        #    / (velocidade com que a Terra gira por baixo do plano, ω⊕ − Ω̇). Subtrai a meta.
+        #    Quanto maior a, mais lenta a volta: f decresce com a (raiz única).
         return (rates.psi_dot + rates.argp_dot) / (OMEGA_EARTH - rates.raan_dot) - target
 
+    # Faixa de busca do Sem4 §9.1: 150 km a 2 500 km de altitude, onde f vai de ≈ 16,44 a
+    # ≈ 10,37 voltas/dia, menos N/D. Cobre todas as linhas da Tabela 3 (315 a 786 km).
     lo, hi = R_EARTH + 150e3, R_EARTH + 2500e3
+    # O brentq exige que f troque de sinal entre lo e hi. Se não troca, N/D está fora de
+    # ≈ 10,4…16,4 voltas/dia: nenhuma SSO nessa faixa de altitude repete assim.
     if not revs_per_day_minus_target(lo) * revs_per_day_minus_target(hi) < 0.0:
         raise ValueError(f"sem órbita de repetição {n_revs}/{n_days} entre 150 e 2 500 km")
+    # Raiz de f por Brent (bisseção + interpolação, sempre dentro do intervalo), até 1e-6 m
+    # em a, como o solver do Sem4 §9.1. Cerca de 10 avaliações de f, cada uma analítica.
     a = float(brentq(revs_per_day_minus_target, lo, hi, xtol=1e-6))
+    # Devolve o semieixo e a inclinação heliossíncrona correspondente (a mesma do passo 1).
     return a, float(sso_inclination(a, e))
 
 
