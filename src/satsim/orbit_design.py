@@ -28,6 +28,12 @@ com J2–J4 (LTAN −4,5 min/ano na órbita de projeto), e mesmo a teoria J2–J
 N·Tnod = D·Tdia,nod (eq. 37) para (a, i), só com J2 de 1ª ordem, como o solver do Sem4 §9.1:
 reproduz a Tabela 3 do Sem4. ``constellation_phases`` dá as fases ψ0 dos P satélites num único
 plano (Sem4 eq. 42, Tabela 4).
+
+Semieixo de repetição calibrado (card S5-02)
+--------------------------------------------
+``repeat_semi_major_axis_calibrated`` faz para o semieixo o que ``sso_inclination_calibrated``
+fez para a inclinação: a teoria de 1ª ordem só J2 deixa o ciclo 91/6 aberto de ≈ 1 km no Cowell
+J2–J4; a secante em a, medindo N·Tnod − D·Tdia,nod no próprio Cowell, fecha-o (Δa ≈ +19 m).
 """
 
 import logging
@@ -45,6 +51,7 @@ from satsim.constants import J2, J3, J4, MU, OMEGA_EARTH, OMEGA_SUN, R_EARTH, SE
 from satsim.elements import KeplerianElements
 from satsim.ephemeris import sun_ra_dec
 from satsim.forces import AccelerationModel
+from satsim.groundtrack import node_crossings
 from satsim.mean_osc import conversion_models, mean_to_osculating
 from satsim.propagators.cowell import CowellPropagator
 from satsim.secular import nodal_period, secular_rates, zonal_mean_rates
@@ -367,3 +374,83 @@ def sso_inclination_calibrated(
     # Esgotou as medidas sem atingir a tolerância: avisa e devolve a melhor estimativa.
     logger.warning("sso_inclination_calibrated não convergiu em %d medidas", max_iter)
     return i1
+
+
+def repeat_semi_major_axis_calibrated(
+    n_revs: int,
+    n_days: int,
+    e: float,
+    i: float,
+    epoch: datetime,
+    models: Sequence[AccelerationModel],
+    raan: float = 0.0,
+    a0: float | None = None,
+    step_s: float = 30.0,
+    tol_s: float = 1e-3,
+    max_iter: int = 6,
+) -> float:
+    """Semieixo médio que fecha o ciclo N/D no Cowell(models): N·Tnod = D·Tdia,nod (eq. 37).
+
+    Para cada a candidato: elementos médios (a, e, i, Ω, ω = 90°, ψ = 0) → ``mean_to_osculating``
+    (só a gravidade zonal de ``models``) → Cowell(models) por um ciclo (D dias + 1 volta) e:
+
+    - Tnod: inclinação do ajuste linear dos instantes dos nós ascendentes (``node_crossings``)
+      contra o número da volta (Sem4 eq. 34, medido);
+    - Tdia,nod = 2π/(ω⊕ − Ω̇) (Sem4 eq. 35), com Ω̇ = ``fit_rate`` do Ω osculador a cada 60 s.
+
+    A secante zera f(a) = N·Tnod − D·Tdia,nod [s], partindo de ``a0`` (padrão: o a de projeto,
+    ``repeat_orbit(n_revs, n_days, e)``). O 2º ponto usa dT/da = 1,5·T/a (Sem4 §7.6), isto é,
+    df/da ≈ 1,5·N·Tnod/a. A dependência de Tdia,nod em a (via Ω̇ ∝ a^(−7/2)) entra só pela
+    secante. Como na inclinação, a calibração deve ser feita sem arrasto: com arrasto a ciclo não
+    fecha (é a deriva que a manutenção corrige, S5-05).
+
+    Args:
+        n_revs: N.
+        n_days: D.
+        e: excentricidade média (a congelada).
+        i: inclinação média [rad] (a heliossíncrona calibrada).
+        epoch: época (tz-aware).
+        models: forças do Cowell (ex.: ``(ZonalAcceleration(),)``).
+        raan: Ω médio [rad]; só importa com Sol/Lua.
+        a0: semieixo inicial [m]; ``None`` usa ``repeat_orbit``.
+        step_s: passo da amostragem dos nós [s].
+        tol_s: tolerância em |N·Tnod − D·Tdia,nod| [s] (1e-3 s ≈ 0,5 m no equador por ciclo).
+        max_iter: número máximo de medidas no Cowell.
+
+    Returns:
+        a calibrado [m]. Se ``max_iter`` se esgotar, devolve o último e registra um aviso.
+    """
+    conv_models = conversion_models(models)
+    if a0 is None:
+        a0, _ = repeat_orbit(n_revs, n_days, e)
+    cycle_s = n_days * SECONDS_PER_DAY
+    t_raan = np.arange(0.0, cycle_s + 1.0, 60.0)
+
+    def residual(a: float) -> tuple[float, float]:
+        """(f(a) = N·Tnod − D·Tdia,nod [s], Tnod [s]) medidos no Cowell com semieixo médio a."""
+        mean = KeplerianElements(a=a, e=e, i=i, raan=raan, argp=math.pi / 2.0, psi=0.0)
+        osc = mean_to_osculating(mean, epoch, conv_models).elements
+        prop = CowellPropagator(osc, epoch, models)
+        # Nós num ciclo e mais uma volta (≥ N + 1 nós): Tnod pelo ajuste linear t_k = t_0 + k·Tnod
+        t_nodes, _ = node_crossings(prop, epoch, cycle_s + 1.5 * cycle_s / n_revs, step_s)
+        t_nod = float(np.polyfit(np.arange(t_nodes.size), t_nodes, 1)[0])
+        # Ω̇ medido no mesmo ciclo → dia nodal (eq. 35)
+        raan_dot = fit_rate(t_raan, osculating_elements(prop, t_raan).raan)
+        t_day_nod = 2.0 * math.pi / (OMEGA_EARTH - raan_dot)
+        f = n_revs * t_nod - n_days * t_day_nod
+        logger.debug("a = %.3f m: Tnod = %.4f s, Tdia,nod = %.4f s, f = %.4e s",
+                     a, t_nod, t_day_nod, f)  # fmt: skip
+        return f, t_nod
+
+    f0, t_nod0 = residual(a0)
+    if abs(f0) < tol_s:
+        return a0
+    # 2º ponto: δ(N·Tnod) = 1,5·N·Tnod·δa/a (Sem4 §7.6) para cancelar f0
+    a1 = a0 - f0 / (1.5 * n_revs * t_nod0 / a0)
+    for _ in range(max_iter - 1):
+        f1, _ = residual(a1)
+        if abs(f1) < tol_s:
+            return a1
+        a0, f0, a1 = a1, f1, a1 - f1 * (a1 - a0) / (f1 - f0)
+    logger.warning("repeat_semi_major_axis_calibrated não convergiu em %d medidas", max_iter)
+    return a1

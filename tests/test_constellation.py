@@ -1,13 +1,12 @@
 """Satellite, Constellation, repeat_orbit e a constelação 91/6 (card S5-01).
 
 Referências: Apêndice A.1 e A.2 do prompt da Semana 5 (tests/golden/reference_values.py) e
-Sem4 Tabelas 3 e 4. A constelação no Cowell completo é construída uma vez por módulo (i dada,
-≈ 0,3 s) e propagada uma vez por duas voltas (≈ 1 s).
+Sem4 Tabelas 3 e 4. A constelação no Cowell completo é a de referência do conftest (uma vez por
+sessão, i dada, ≈ 0,3 s); aqui ela é propagada por duas voltas (≈ 1 s).
 """
 
 import dataclasses
 import math
-import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -27,10 +26,7 @@ from satsim.constants import R_EARTH
 from satsim.constellation import CONSTELLATION_PALETTE, Constellation, sso_constellation
 from satsim.elements import KeplerianElements, mean_to_true, state_to_elements
 from satsim.forces import (
-    DragAcceleration,
     J2Acceleration,
-    SolarRadiationPressure,
-    ThirdBodyAcceleration,
     ZonalAcceleration,
 )
 from satsim.mean_osc import window_mean_elements
@@ -50,29 +46,15 @@ I_A1 = math.radians(A1.i_calibrated_deg)
 LEO = KeplerianElements(7000e3, 0.001, math.radians(98.0), 0.3, 0.5, 0.0)
 
 
-def full_models(epoch: datetime) -> tuple:
-    """Cowell completo do A.1 (A.7 da Semana 4): J2–J4 + Sol/Lua + SRP + arrasto geodésico."""
-    return (
-        ZonalAcceleration(),
-        ThirdBodyAcceleration("sun", epoch),
-        ThirdBodyAcceleration("moon", epoch),
-        SolarRadiationPressure(epoch, cr=A1.srp_cr, area_over_mass=A1.srp_area_over_mass),
-        DragAcceleration(cd=2.2, area_over_mass=A1.drag_cd_a_m / 2.2),
-    )
+@pytest.fixture(scope="module")
+def built(reference_constellation_built) -> tuple[Constellation, float]:
+    """A constelação de referência (A.1, i dada; conftest, por sessão) e o tempo de construção."""
+    return reference_constellation_built
 
 
 @pytest.fixture(scope="module")
-def built() -> tuple[Constellation, float]:
-    """A constelação de referência (A.1, i dada) e o tempo de construção [s]."""
-    models = full_models(EPOCH)
-    t0 = time.perf_counter()
-    constellation = sso_constellation(EPOCH, models, i=I_A1)
-    return constellation, time.perf_counter() - t0
-
-
-@pytest.fixture(scope="module")
-def constellation(built) -> Constellation:
-    return built[0]
+def constellation(reference_constellation) -> Constellation:
+    return reference_constellation
 
 
 @pytest.fixture(scope="module")
@@ -304,7 +286,9 @@ def test_sso_constellation_default_eccentricity_is_frozen() -> None:
     assert [m.raan for m in seen] == pytest.approx([raan] * 6, abs=1e-15)
 
 
-def test_sso_constellation_calibrates_once_and_converts_with_zonal_only(monkeypatch) -> None:
+def test_sso_constellation_calibrates_once_and_converts_with_zonal_only(
+    monkeypatch, a1_models
+) -> None:
     """Receita da Semana 4: calibração uma vez para os seis; conversão só com gravidade zonal."""
     calls: dict[str, list] = {"calib": [], "conv": []}
 
@@ -318,7 +302,7 @@ def test_sso_constellation_calibrates_once_and_converts_with_zonal_only(monkeypa
 
     monkeypatch.setattr(constellation_module, "sso_inclination_calibrated", fake_calibrated)
     monkeypatch.setattr(constellation_module, "mean_to_osculating", fake_mean_to_osc)
-    models = full_models(EPOCH)
+    models = a1_models
     c = sso_constellation(EPOCH, models)
     assert len(c) == 6
     assert len(calls["calib"]) == 1

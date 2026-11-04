@@ -1228,3 +1228,97 @@ class MeanGridA2:
 
 
 MEAN_GRID_A2 = MeanGridA2()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.3 do prompt da Semana 5: nós ascendentes e grade no Cowell completo
+#     (experimento de referência, constelação do A.1 com o a de projeto, janela [0, 24 h) salvo
+#     indicação). Ideal: 360°/91 = 3,95604°. Afastamento ancorado no 1º nó de S1.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class NodeGridA3:
+    grid_ideal_deg: float = 3.95604
+    # P = 6, 1 dia
+    p6_nodes: int = 91
+    p6_gap_min_deg: float = 3.95173
+    p6_gap_max_deg: float = 3.96431
+    p6_gap_tol_deg: float = 0.002  # critério do card S5-02
+    p6_max_offset_deg: float = 0.0064
+    p6_max_offset_limit_deg: float = 0.01  # critério do card S5-02
+    # P = 1, 6 dias (91 primeiros nós)
+    p1_6d_nodes: int = 91
+    p1_6d_gap_min_deg: float = 3.9169
+    p1_6d_gap_max_deg: float = 3.9674
+    # P = 7 na mesma órbita (Δψ = 51,43°)
+    p7_nodes: int = 106
+    p7_gap_min_deg: float = 3.3834
+    p7_gap_max_deg: float = 3.9585
+    p7_max_offset_deg: float = 1.694
+    p7_max_offset_limit_deg: float = 1.0  # critério do card: > 1°
+    # Precisão do nó (S1, 15 nós em 24 h): interpolação linear × brentq em z_ECI = 0
+    node_err_60s_deg: float = 7.3e-5
+    node_err_60s_s: float = 1.1e-3
+    node_err_30s_deg: float = 9.3e-6
+    node_err_30s_s: float = 3e-4
+    node_err_10s_deg: float = 4.8e-7
+    node_err_30s_limit_deg: float = 2e-5  # critério do card S5-02
+    node_err_30s_limit_s: float = 1e-3  # critério do card S5-02
+    # Período nodal medido no Cowell completo em 6 dias (ajuste linear) e alvo da repetição
+    tnod_cowell_full_6d_s: float = 5696.590
+    tnod_repeat_target_s: float = 5696.704
+    # Medido no satsim (S5-02, node_crossings a 30 s): P = 6: 91 nós, 3,951728 … 3,964321°,
+    # afastamento 0,006447° (âncora S1; com a âncora no 1º nó no tempo, o de S3, 0,010672°);
+    # P = 7: 106 nós, 3,383367 … 3,958479°, afastamento 1,694° (âncora S1; 1,702° no tempo).
+    # Precisão: 60 s 7,31e-5° / 1,12e-3 s; 30 s 9,26e-6° / 2,7e-4 s; 10 s 5,17e-7° / 2,9e-5 s.
+    # Os desvios à grade têm padrão de período 3 (s1/s4, s2/s5, s3/s6; ±0,0045°): o termo de
+    # curto período de J2 em Ω e u, que a conversão médio → osculador (S4-04) não corrige.
+
+
+NODE_GRID_A3 = NodeGridA3()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.4 do prompt da Semana 5: fechamento do ciclo de 6 dias e semieixo de
+#     repetição calibrado (experimento; S1 da constelação do A.1, Cowell).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class RepeatClosureA4:
+    a_design_m: float = 6888089.0
+    # J2–J4, a de projeto
+    closure_design_j2j4_deg: float = 0.00895
+    closure_design_j2j4_km: float = 1.00
+    closure_design_tol_km: float = 0.2  # critério do card S5-02
+    residual_design_s: float = -2.197  # 91·Tnod − 6·Tdia,nod
+    tnod_design_s: float = 5696.6796
+    # J2–J4, a calibrado
+    a_calibrated_m: float = 6888108.37
+    delta_a_m: float = 19.37
+    delta_a_tol_m: float = 1.0  # critério do card S5-02
+    closure_calibrated_j2j4_deg: float = -0.00020
+    closure_calibrated_j2j4_km: float = -0.022
+    closure_calibrated_limit_km: float = 0.1  # critério do card S5-02
+    secant_residuals_s: tuple[float, float] = (1e-2, 3e-9)  # 2º ponto → secante
+    # Cowell completo (com arrasto)
+    closure_design_full_deg: float = 0.0422
+    closure_design_full_km: float = 4.69
+    closure_calibrated_full_deg: float = 0.0330
+    closure_calibrated_full_km: float = 3.68
+    # Ω medido (6 dias, 60 s) e dia nodal
+    raan_dot_design_deg_day: float = 0.985632
+    raan_dot_calibrated_deg_day: float = 0.985622
+    t_day_nod_s: float = 86400.0065
+    # Sem4 eq. 32: efeito de +19 m no LTAN
+    ltan_drift_delta_a_min_year: float = -0.014
+    # Medido no satsim (S5-02): ver o relatório reports/s5_constelacao/relatorio.md e o teste
+    # tests/test_repeat_grid.py. J2–J4: a calibrado 6 888 108,374 m (Δa +19,374 m em relação a
+    # 6 888 089 m), f: −2,1686 s (a0 = repeat_orbit, 6 888 089,253 m) → 1,0e-2 s → 1,4e-8 s;
+    # fechamento +0,008952° (0,996 km) com o a de projeto e −0,000201° (−0,022 km) com o
+    # calibrado. A maior parte do resíduo do calibrado vem de ω⊕ = 7,292115e-5 rad/s (usado em
+    # Tdia,nod, como no card) ser 8,55e-12 rad/s menor que a taxa real do GMST que gira o ECEF
+    # (7,2921158553e-5): em 6 dias, −2,54e-4° (−28 m) previstos; o resto (≈ +0,5e-4°) é o
+    # ruído do ajuste de Tnod contra o nó 91 medido.
+
+
+REPEAT_CLOSURE_A4 = RepeatClosureA4()
