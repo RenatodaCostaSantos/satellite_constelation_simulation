@@ -86,6 +86,7 @@
     <li><code>src/satsim/forces/srp.py</code> e o eclipse — a fração da órbita na sombra: corda × arco e a eq. 30 do Sem4</li>
     <li><code>src/satsim/mean_osc.py</code> — elementos médios × osculadores: de onde vêm, o método do tiro e quais forças entram na conversão (comparação com o SGP4)</li>
     <li><code>scripts/build_demo.py</code> — SSO-1 (Cowell) e Sentinel-2A na demo: o que a comparação visual mostra e onde está a comparação entre propagadores</li>
+    <li><code>src/satsim/groundtrack.py</code> na Semana 5 — nós, grade e fechamento do ciclo: as funções medem, os testes verificam</li>
   </ol>
 </nav>
 
@@ -2236,6 +2237,83 @@ SGP4 em t = 0 e (B) com o estado ajustado em 72 h (<code>fit_initial_state</code
 786 km de altitude, isso é muito menos que um pixel, e os dois marcadores ficariam sobrepostos. Se um dia ela for
 para a demo, a forma útil é numérica: um "Sentinel-2A (Cowell)" ajustado ao SGP4 e, no painel, a distância atual entre
 os dois, em metros.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="groundtrack-s5">
+<h2>17. groundtrack.py na Semana 5 — medir não é verificar</h2>
+<div class="file">src/satsim/groundtrack.py · tests/test_repeat_grid.py · scripts/constellation_report.py · card S5-02</div>
+
+<h3>A pergunta</h3>
+<p>No S5-02 o <code>groundtrack.py</code> ganhou três funções: <code>node_crossings</code>,
+<code>grid_metrics</code> e <code>repeat_closure</code>. Elas servem para verificar se a constelação
+se comporta como esperado? <strong>Em parte.</strong> As funções <strong>medem</strong> o traço no
+solo. Quem <strong>verifica</strong> são os testes e o relatório, que comparam essas medidas com a
+teoria do Sem4 e com o Apêndice do prompt. E as mesmas medidas também são usadas no
+<strong>projeto</strong> da órbita e na <strong>GUI</strong>, não só na verificação.</p>
+
+<h3>O papel de cada função</h3>
+<table>
+  <tr><th>Função</th><th>O que faz</th><th>Onde é usada</th></tr>
+  <tr><td><code>subpoint</code> (S2)</td><td>a posição do satélite projetada no solo (lat, lon, alt)</td>
+      <td>mapa 2D da GUI, passagens; base das demais (seção 6)</td></tr>
+  <tr><td><code>split_at_antimeridian</code> (S2)</td><td>quebra o traço em ±180° para não riscar o mapa</td>
+      <td>só desenho (GUI, gráficos)</td></tr>
+  <tr><td><code>ascending_node_crossings</code> (S2)</td><td>numa série já amostrada, acha onde a
+      latitude cruza 0 de sul para norte</td><td>usada por <code>node_crossings</code></td></tr>
+  <tr><td><strong><code>node_crossings</code></strong> (S5-02)</td><td>dado um propagador e uma janela de
+      tempo, devolve <strong>quando e em que longitude</strong> o satélite cruza o equador subindo</td>
+      <td><strong>projeto</strong>: dentro de <code>repeat_semi_major_axis_calibrated</code>, para medir o
+      período nodal; <strong>verificação</strong>: testes e relatório; <strong>GUI</strong>: os nós da
+      camada “grade do dia” (S5-06)</td></tr>
+  <tr><td><strong><code>grid_metrics</code></strong> (S5-02)</td><td>recebe as longitudes dos nós e diz
+      quantos são, o menor e o maior espaçamento entre vizinhos e quanto o pior nó se afasta da grade
+      ideal de 360°/N</td><td><strong>verificação e diagnóstico</strong>: é a métrica que mostra que
+      P = 6 forma a grade e P = 7 não</td></tr>
+  <tr><td><strong><code>repeat_closure</code></strong> (S5-02)</td><td>diz quanto o nó N caiu longe do
+      nó 0, isto é, quanto o traço deixou de fechar no ciclo</td><td><strong>verificação</strong> da
+      repetição (1,0 km com o a de projeto, −0,022 km com o calibrado) e, no S5-05,
+      <strong>manutenção</strong>: com arrasto o fechamento cresce, e isso diz quando manobrar</td></tr>
+</table>
+
+<h3>As funções não sabem o que é “esperado”</h3>
+<p>Nenhuma delas contém 91/6, tolerâncias ou números de referência. <code>grid_metrics</code> recebe o
+número de trilhas N como parâmetro e devolve números para qualquer conjunto de nós, de qualquer
+órbita ou constelação. Isso é deliberado: uma função de medida que já “soubesse” a resposta não
+poderia ser usada para descobrir que a resposta está errada. A decisão sobre o que é certo fica em
+dois lugares:</p>
+<ul>
+  <li><code>tests/test_repeat_grid.py</code> compara as medidas com o golden
+  (<code>tests/golden/reference_values.py</code>): 91 nós, espaçamento de 3,9517° a 3,9643°,
+  afastamento ≤ 0,01°, fechamento &lt; 0,1 km;</li>
+  <li><code>scripts/constellation_report.py</code> faz as mesmas medidas em janelas maiores e põe os
+  números ao lado dos do Apêndice, em <code>reports/s5_constelacao/relatorio.md</code>.</li>
+</ul>
+
+<h3>Exemplo: a grade de um dia</h3>
+<p>A verificação do teorema P = D (Sem4 §8.3) passa por três etapas, cada uma num lugar diferente
+do código:</p>
+<pre><code>Cowell (6 satélites, 1 dia)
+   └─ node_crossings  → 91 longitudes no equador          (medida)
+        └─ grid_metrics → 91 nós, 3,952…3,964°, 0,006°    (métrica)
+             └─ teste: 91 nós, espaçamento ±0,002°,
+                afastamento ≤ 0,01°  →  OK                (verificação)</code></pre>
+<figure>
+  <img src="../../reports/s5_constelacao/grade_nos.png" style="width:100%"
+       alt="Nós ascendentes em 1 dia para P = 6 e P = 7">
+  <figcaption>Nós ascendentes em 1 dia no Cowell completo, gerado por
+  <code>python scripts/constellation_report.py</code> (equivalente à Figura 12 do Sem4). Em cima,
+  P = 6: um nó por linha da grade de 91 trilhas. Embaixo, P = 7 na mesma órbita: os nós saem da grade,
+  com quase-duplicatas e lacunas.</figcaption>
+</figure>
+
+<h3>A mesma medida em três usos</h3>
+<p>A <code>node_crossings</code> é o melhor exemplo de por que as funções são ferramentas gerais. A
+mesma função que confirma o teorema P = D nos testes é usada para <strong>calibrar</strong> o semieixo
+(a secante de <code>repeat_semi_major_axis_calibrated</code> mede o período nodal pelo ajuste linear dos
+instantes dos nós) e, no S5-06, vai <strong>alimentar o mapa</strong> da GUI com os nós já percorridos.
+Uma única implementação, testada uma vez, evita que o projeto, a verificação e a tela usem contas
+diferentes para a mesma grandeza.</p>
 </section>
 
 </main>
