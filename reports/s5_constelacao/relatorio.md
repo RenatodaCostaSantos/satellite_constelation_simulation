@@ -103,3 +103,37 @@ Os seis satélites estão no **mesmo plano**, em fila, separados de 60° em argu
 
 O plano orbital acompanha o Sol (SSO): o trem passa pela estação **duas vezes por dia**, na metade ascendente da órbita (nó às 22h30 local, de noite) e na descendente (10h30, de manhã), **sempre nos mesmos horários solares**. Entre os dois trens não há nenhum contato: as outras ≈ 13 voltas de cada satélite passam longe demais de São Bento.
 
+## S5-05 · Manutenção: deriva do traço e do LTAN
+
+Indicador de manutenção (`maintenance_status`), com ȧ medido no Cowell completo por médias em janelas nodais (`measure_decay_rate`, 1 dia) e di/dt = −9,8e-5 °/dia (Sol, S4-02). Bandas: traço ±5 km no equador, LTAN ±5 min. A.7: ȧ −23,71 m/dia → 6,95 dias, 0,0910 m/s por manobra, 4,78 m/s/ano; LTAN −3,43 min em 1 ano, 1,21 ano, 4,75 m/s/ano.
+
+| Satélite | ȧ [m/dia] | Próxima correção do traço [dias] | Δv por manobra [m/s] | Δv/ano traço [m/s] | LTAN em 1 ano [min] | LTAN fora da banda [anos] | Δv/ano inclinação [m/s] |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| S1 | −24,02 | 6,91 | 0,0916 | 4,84 | −3,43 | 1,21 | 4,75 |
+| S2 | −23,95 | 6,92 | 0,0915 | 4,83 | −3,43 | 1,21 | 4,75 |
+| S3 | −24,00 | 6,91 | 0,0916 | 4,84 | −3,43 | 1,21 | 4,75 |
+| S4 | −23,95 | 6,92 | 0,0915 | 4,83 | −3,43 | 1,21 | 4,75 |
+| S5 | −23,95 | 6,92 | 0,0915 | 4,83 | −3,43 | 1,21 | 4,75 |
+| S6 | −24,01 | 6,91 | 0,0916 | 4,84 | −3,43 | 1,21 | 4,75 |
+
+- **ȧ medido:** −24,0 m/dia nos seis satélites (A.7: −23,71, 1,0% de diferença). As janelas de média começam nos nós ascendentes medidos e duram o período nodal medido: com o período calculado do semieixo osculador (≈ 12 s curto) o resto do termo de 2u escorrega de janela em janela e o ȧ de 6 dias sairia −30 m/dia.
+
+### Traço: a fórmula do Sem4 contra o Cowell
+
+![Deriva do traço](manutencao_traco.png)
+
+- **Curva do Cowell:** diferença de longitude, nó a nó, entre o S1 com e sem arrasto (mesmo a calibrado, 6 888 108,4 m, Cowell completo nos dois). Ela segue a parábola da fórmula com o ȧ medido: a deriva do traço é quadrática, como no Sem4 §7.6.
+- **Fechamento de 6 dias com arrasto:** Cowell 3,680 km × fórmula 3,773 km com ȧ = −24,02 m/dia (2,5%; critério ≤ 10%; A.4/A.7: 3,68 × 3,72 km). Com o a de projeto o Cowell dá 4,70 km: ≈ 1 km de viés de semieixo (S5-02) somado à deriva do arrasto.
+- **Três coeficientes balísticos:** o tempo até a banda cai com √|ȧ| (Sem4 eq. 41); dobrar o C_D·A/m não reduz o intervalo à metade, mas a 1/√2.
+
+### LTAN: a inclinação que o Sol puxa
+
+![Deriva do LTAN](manutencao_ltan.png)
+
+- **Fórmula:** δΩ̇ = −Ω☉·tan i·δi (Sem4 eq. 32) com δi(t) = (di/dt)·t: o LTAN se afasta quadraticamente, −3,43 min em 1 ano, e sai da banda de ±5 min em 1,21 ano.
+- **Validação no Cowell J2–J4 + Sol (60 dias):** di/dt = −9,82e-5 °/dia (S4-02: −9,8e-5) e aceleração do LTAN −7,13 min/ano² × −6,88 pela eq. 32 com o di/dt medido. Com a Lua, os termos de ≈ 14 dias contaminam o ajuste em 60 dias: di/dt = −8,22e-5 °/dia, −4,98 × −5,76 min/ano². O di/dt do S4-02 é a parte do Sol; ele também varia com a estação, então o indicador é uma previsão de ordem de grandeza para um ano.
+
+### Dois orçamentos parecidos, por motivos diferentes
+
+O traço consome ≈ 4,8 m/s por ano em ≈ 53 manobras pequenas (uma por semana, no plano, repondo o semieixo que o arrasto tira); o LTAN, ≈ 4,8 m/s por ano numa correção de inclinação (fora do plano). Os números são parecidos por coincidência da órbita de 510 km; o que dita a operação é o traço, pela cadência (Sem4 §6.2). As manobras não são simuladas: o indicador prevê quando e quanto.
+

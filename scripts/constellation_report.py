@@ -19,10 +19,13 @@ Seções (uma por card; os próximos cards acrescentam as suas):
   máximo de revisita da constelação em 3 dias (sem e com luz).
 - **S5-04 · Plano de contatos.** Passagens dos 6 satélites sobre São Bento do Sapucaí em 24 h
   (el ≥ 10°, ``contact_plan``): linha do tempo, trens, dia/noite, contato total e sobreposições.
+- **S5-05 · Manutenção.** ȧ medido no Cowell, ``MaintenanceStatus`` dos 6 satélites, deriva do
+  traço × tempo para 3 coeficientes balísticos (como a Figura 10 do Sem4) com a curva do Cowell
+  completo, e a deriva do LTAN em 2 anos validada no Cowell J2–J4 + Sol (60 dias).
 
 Toda constelação é criada por ``satsim.constellation.sso_constellation`` (também a de 1 satélite).
-Gera grade_nos.png, cobertura_latitude.png, revisita_mapa.png, contatos_24h.png, relatorio.md e
-resultados.json
+Gera grade_nos.png, cobertura_latitude.png, revisita_mapa.png, contatos_24h.png,
+manutencao_traco.png, manutencao_ltan.png, relatorio.md e resultados.json
 (números brutos, para --from-json).
 """
 
@@ -60,8 +63,23 @@ from satsim.coverage import (  # noqa: E402
 )
 from satsim.elements import KeplerianElements  # noqa: E402
 from satsim.ephemeris import sun_ra_dec  # noqa: E402
-from satsim.forces import ZonalAcceleration  # noqa: E402
+from satsim.forces import (  # noqa: E402
+    DragAcceleration,
+    ThirdBodyAcceleration,
+    ZonalAcceleration,
+)
 from satsim.groundtrack import grid_metrics, node_crossings, repeat_closure  # noqa: E402
+from satsim.maintenance import (  # noqa: E402
+    MINUTES_PER_RAD_OF_RAAN,
+    YEAR_S,
+    ltan_offset,
+    maintenance_status,
+    measure_decay_rate,
+    time_to_deadband,
+    time_to_ltan_band,
+    track_drift,
+)
+from satsim.mean_osc import window_mean_elements  # noqa: E402
 from satsim.observer import SAO_BENTO_DO_SAPUCAI  # noqa: E402
 from satsim.orbit_design import (  # noqa: E402
     constellation_phases,
@@ -506,6 +524,257 @@ def contacts_report_lines(data: dict) -> list[str]:
     ]
 
 
+# --- S5-05: manutenção ----------------------------------------------------------------------------
+
+BALLISTIC = (0.0044, 0.011, 0.022)  # C_D·A/m [m²/kg]: 0,4×, 1× (A.1) e 2× o de referência
+DEADBAND_KM = 5.0
+LTAN_BAND_MIN = 5.0
+
+
+def _lon_diff_km(lon_a: np.ndarray, lon_b: np.ndarray) -> np.ndarray:
+    d = np.mod(lon_a - lon_b + np.pi, 2.0 * np.pi) - np.pi
+    return d * R_EARTH / 1e3
+
+
+def maintenance_section() -> dict:
+    """ȧ medido, MaintenanceStatus, deriva do traço no Cowell × fórmula e validação do LTAN."""
+    full = full_force_models(EPOCH)
+    out: dict = {}
+    # 1. Constelação de referência: ȧ por satélite (1 dia) e o indicador
+    c = sso_constellation(EPOCH, full, a=A_DESIGN, i=I_CAL)
+    out["status"] = [
+        maintenance_status(s.id, measure_decay_rate(s, 1.0), A_DESIGN, I_CAL).as_dict() for s in c
+    ]
+    # 2. Deriva do traço no Cowell completo: nós com arrasto − nós sem arrasto (mesmo a calibrado)
+    a_cal = data_a_calibrated()
+    days = 14.0
+    with_drag = sso_constellation(EPOCH, full, n_sats=1, a=a_cal, i=I_CAL)[0]
+    no_drag = sso_constellation(EPOCH, full[:-1], n_sats=1, a=a_cal, i=I_CAL)[0]
+    t_nodes, lon_drag = node_crossings(with_drag, EPOCH, days * DAY)
+    _, lon_free = node_crossings(no_drag, EPOCH, days * DAY)
+    n = min(lon_drag.size, lon_free.size)
+    a_dot_cal = measure_decay_rate(with_drag, 6.0)
+    _, closure_lon = node_crossings(with_drag, EPOCH, 6 * DAY + 2 * 5697.0)
+    out["cowell_track"] = {
+        "a_calibrated_m": a_cal,
+        "t_days": (t_nodes[:n] / DAY).tolist(),
+        "drift_km": _lon_diff_km(lon_drag[:n], lon_free[:n]).tolist(),
+        "a_dot_m_day": a_dot_cal * DAY,
+        "closure_6d_km": repeat_closure(closure_lon, N_REVS) * R_EARTH / 1e3,
+        "formula_6d_km": float(track_drift(6 * DAY, a_dot_cal, a_cal)[1]),
+    }
+    # 3. Três coeficientes balísticos: ȧ no Cowell J2–J4 + arrasto (2 dias)
+    out["ballistic"] = []
+    for cda in BALLISTIC:
+        models = (ZonalAcceleration(), DragAcceleration(cd=2.2, area_over_mass=cda / 2.2))
+        sat = sso_constellation(EPOCH, models, n_sats=1, a=a_cal, i=I_CAL)[0]
+        a_dot = measure_decay_rate(sat, 2.0)
+        t_band = time_to_deadband(DEADBAND_KM, a_dot, a_cal) / DAY
+        out["ballistic"].append({"cd_a_m": cda, "a_dot_m_day": a_dot * DAY, "days_to_band": t_band})
+    # 4. LTAN no Cowell J2–J4 + Sol (e + Lua), 60 dias: di/dt, aceleração do LTAN × eq. 32
+    out["ltan"] = {}
+    for label, models in (
+        ("sun", (ZonalAcceleration(), ThirdBodyAcceleration("sun", EPOCH))),
+        ("sun_moon", (ZonalAcceleration(), ThirdBodyAcceleration("sun", EPOCH),
+                      ThirdBodyAcceleration("moon", EPOCH))),
+    ):  # fmt: skip
+        out["ltan"][label] = _ltan_validation(models)
+    return out
+
+
+def data_a_calibrated() -> float:
+    """O semieixo calibrado do S5-02 (do JSON, se já calculado; senão, recalcula)."""
+    path = OUT_DIR / "resultados.json"
+    if path.exists():
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        if "repeat" in saved:
+            return float(saved["repeat"]["a_calibrated_m"])
+    return float(repeat_section()["a_calibrated_m"])
+
+
+def _ltan_validation(models, days: float = 60.0) -> dict:
+    """i(t) e Ω(t) médios por volta no Cowell: di/dt e a parte quadrática do LTAN × eq. 32."""
+    sat = sso_constellation(EPOCH, models, n_sats=1, a=A_DESIGN, i=I_CAL)[0]
+    t_nodes, _ = node_crossings(sat, EPOCH, days * DAY)
+    period = float(np.mean(np.diff(t_nodes)))
+    starts = t_nodes[:-1]
+    inc = window_mean_elements(sat.propagator, starts, period, 30.0).i
+    tt = (starts[:, None] + np.linspace(0.0, period, 60)[None, :]).ravel()
+    raan = np.unwrap(osculating_elements(sat.propagator, tt).raan).reshape(starts.size, -1)
+    tc = starts + period / 2.0
+    ltan_min = (raan.mean(axis=1) - OMEGA_SUN * tc) * MINUTES_PER_RAD_OF_RAAN
+    di_dt = float(np.polyfit(tc, inc, 1)[0])
+    c2, c1, c0 = np.polyfit(tc, ltan_min, 2)
+    return {
+        "di_dt_deg_day": math.degrees(di_dt) * DAY,
+        "ltan_accel_min_year2": 2.0 * c2 * YEAR_S**2,
+        "ltan_accel_formula_min_year2": 2.0 * float(ltan_offset(YEAR_S, di_dt, I_CAL)),
+        "t_days": (tc / DAY).tolist(),
+        "ltan_min": ltan_min.tolist(),  # LTAN − nominal medido [min], com tendência linear
+        "formula_min": np.asarray(ltan_offset(tc, di_dt, I_CAL)).tolist(),  # eq. 32, di/dt medido
+    }
+
+
+def plot_maintenance(data: dict, out_track: Path, out_ltan: Path) -> None:
+    """Deriva do traço × tempo (3 coeficientes balísticos + Cowell) e deriva do LTAN em 2 anos."""
+    m = data["maintenance"]
+    a_cal = m["cowell_track"]["a_calibrated_m"]
+    t = np.linspace(0.0, 20.0, 400)
+    fig, ax = plt.subplots(figsize=(8.5, 4.6))
+    colors = ("#7cff6b", "#0b6e8a", "#ff4d8d")
+    for b, color in zip(m["ballistic"], colors, strict=True):
+        _, km = track_drift(t * DAY, b["a_dot_m_day"] / DAY, a_cal)
+        ax.plot(t, km, color=color, lw=2,
+                label=f"C_D·A/m = {_f(b['cd_a_m'], 4)} m²/kg: ȧ = {_f(b['a_dot_m_day'], 1)} m/dia, "
+                      f"±5 km em {_f(b['days_to_band'], 1)} dias")  # fmt: skip
+    ct = m["cowell_track"]
+    ax.plot(ct["t_days"], ct["drift_km"], ".", ms=2.5, color="0.15",
+            label="Cowell completo (C_D·A/m = 0,011): nós com arrasto − sem arrasto")  # fmt: skip
+    ax.axhline(DEADBAND_KM, color="0.4", ls="--", lw=1)
+    ax.text(0.3, DEADBAND_KM + 0.4, "banda morta ±5 km", fontsize=8.5, color="0.3")
+    ax.set_xlim(0, 20)
+    ax.set_ylim(0, 20)
+    ax.set_xlabel("tempo desde a última manobra [dias]")
+    ax.set_ylabel("desvio do traço no equador [km]")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=7.8, loc="upper left")
+    ax.set_title(
+        "Deriva do traço por arrasto: λ(t) = 3π|ȧ|t²/(2a) (Sem4 §7.6) × Cowell", fontsize=10
+    )
+    fig.tight_layout()
+    fig.savefig(out_track, dpi=130)
+    plt.close(fig)
+
+    st = m["status"][0]
+    di_dt = math.radians(st["di_dt_deg_day"]) / DAY
+    years = np.linspace(0.0, 2.0, 300)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.3))
+    ax = axes[0]
+    label = f"ΔLTAN = ½·k·(di/dt)·t², di/dt = {_sci(st['di_dt_deg_day'], 1)} °/d (S4-02)"
+    ax.plot(years, ltan_offset(years * YEAR_S, di_dt, I_CAL), color="#0b6e8a", lw=2, label=label)
+    t_band = time_to_ltan_band(LTAN_BAND_MIN, di_dt, I_CAL) / YEAR_S
+    ax.axhline(-LTAN_BAND_MIN, color="0.4", ls="--", lw=1)
+    ax.axvline(t_band, color="0.6", ls=":", lw=1)
+    ax.text(t_band + 0.03, -1.0, f"±5 min em {_f(t_band, 2)} ano", fontsize=8.5, color="0.3")
+    ax.set_xlabel("tempo [anos]")
+    ax.set_ylabel("afastamento do LTAN [min]")
+    ax.set_xlim(0, 2)
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, loc="lower left")
+    ax.set_title("Deriva do LTAN em 2 anos (Sem4 eq. 32)", fontsize=10)
+    ax = axes[1]
+    for key, color, label in (("sun", "#ff8a3d", "Cowell J2–J4 + Sol"),
+                              ("sun_moon", "#8f7bff", "Cowell J2–J4 + Sol + Lua")):  # fmt: skip
+        v = m["ltan"][key]
+        t_d = np.array(v["t_days"])
+
+        def detrend(y: list, t_d: np.ndarray = t_d) -> np.ndarray:
+            """Tira a reta de melhor ajuste: sobra a parte quadrática (a mesma base nas duas)."""
+            y = np.asarray(y)
+            return y - np.polyval(np.polyfit(t_d, y, 1), t_d)
+
+        ax.plot(t_d, detrend(v["ltan_min"]) * 60, ".", ms=2, color=color,
+                label=f"{label}: {_f(v['ltan_accel_min_year2'], 2)} min/ano²")  # fmt: skip
+        ax.plot(t_d, detrend(v["formula_min"]) * 60, color=color, lw=1.5,
+                label=f"eq. 32 com o di/dt medido ({_sci(v['di_dt_deg_day'])} °/d): "
+                      f"{_f(v['ltan_accel_formula_min_year2'], 2)}")  # fmt: skip
+    ax.set_xlabel("tempo [dias]")
+    ax.set_ylabel("parte quadrática do LTAN [s]")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=7.2, loc="lower center")
+    ax.set_title("Validação no Cowell (60 dias; tendência linear removida)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_ltan, dpi=125)
+    plt.close(fig)
+
+
+def maintenance_report_lines(data: dict) -> list[str]:
+    m = data["maintenance"]
+    ct = m["cowell_track"]
+    st0 = m["status"][0]
+    sun, sun_moon = m["ltan"]["sun"], m["ltan"]["sun_moon"]
+    design_full = data.get("repeat", {}).get("full_design", {}).get("closure_km")
+    rows = [
+        f"| {s['sat_id'].upper()} | {_f(s['a_dot_m_day'], 2)} | "
+        f"{_f(s['days_to_track_correction'], 2)} | {_f(s['track_delta_v_per_maneuver_m_s'], 4)} | "
+        f"{_f(s['track_delta_v_per_year_m_s'], 2)} | {_f(s['ltan_offset_1y_min'], 2)} | "
+        f"{_f(s['days_to_ltan_correction'] / 365.2422, 2)} | "
+        f"{_f(s['inclination_delta_v_per_year_m_s'], 2)} |"
+        for s in m["status"]
+    ]
+    err = ct["formula_6d_km"] / ct["closure_6d_km"] - 1.0
+    lines = [
+        "## S5-05 · Manutenção: deriva do traço e do LTAN",
+        "",
+        "Indicador de manutenção (`maintenance_status`), com ȧ medido no Cowell completo por "
+        "médias em janelas nodais (`measure_decay_rate`, 1 dia) e di/dt = "
+        f"{_sci(st0['di_dt_deg_day'], 1)} °/dia (Sol, S4-02). Bandas: traço ±{DEADBAND_KM:g} km no "
+        f"equador, LTAN ±{LTAN_BAND_MIN:g} min. A.7: ȧ −23,71 m/dia → 6,95 dias, 0,0910 m/s por "
+        "manobra, 4,78 m/s/ano; LTAN −3,43 min em 1 ano, 1,21 ano, 4,75 m/s/ano.",
+        "",
+        "| Satélite | ȧ [m/dia] | Próxima correção do traço [dias] | Δv por manobra [m/s] "
+        "| Δv/ano traço [m/s] | LTAN em 1 ano [min] | LTAN fora da banda [anos] "
+        "| Δv/ano inclinação [m/s] |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        *rows,
+        "",
+        "- **ȧ medido:** −24,0 m/dia nos seis satélites (A.7: −23,71, 1,0% de diferença). As "
+        "janelas de média começam nos nós ascendentes medidos e duram o período nodal medido: com "
+        "o período calculado do semieixo osculador (≈ 12 s curto) o resto do termo de 2u escorrega "
+        "de janela em janela e o ȧ de 6 dias sairia −30 m/dia.",
+        "",
+        "### Traço: a fórmula do Sem4 contra o Cowell",
+        "",
+        "![Deriva do traço](manutencao_traco.png)",
+        "",
+        "- **Curva do Cowell:** diferença de longitude, nó a nó, entre o S1 com e sem arrasto "
+        f"(mesmo a calibrado, {_f(ct['a_calibrated_m'], 1)} m, Cowell completo nos dois). Ela "
+        "segue a parábola da fórmula com o ȧ medido: a deriva do traço é quadrática, como no "
+        "Sem4 §7.6.",
+        f"- **Fechamento de 6 dias com arrasto:** Cowell {_f(ct['closure_6d_km'], 3)} km × fórmula "
+        f"{_f(ct['formula_6d_km'], 3)} km com ȧ = {_f(ct['a_dot_m_day'], 2)} m/dia "
+        f"({_f(100 * err, 1)}%; critério ≤ 10%; A.4/A.7: 3,68 × 3,72 km). Com o a de projeto o "
+        + (
+            f"Cowell dá {_f(design_full, 2)} km: "
+            if design_full is not None
+            else "Cowell dá mais: "
+        )
+        + "≈ 1 km de viés de semieixo (S5-02) somado à deriva do arrasto.",
+        "- **Três coeficientes balísticos:** o tempo até a banda cai com √|ȧ| (Sem4 eq. 41); "
+        "dobrar o C_D·A/m não reduz o intervalo à metade, mas a 1/√2.",
+        "",
+        "### LTAN: a inclinação que o Sol puxa",
+        "",
+        "![Deriva do LTAN](manutencao_ltan.png)",
+        "",
+        "- **Fórmula:** δΩ̇ = −Ω☉·tan i·δi (Sem4 eq. 32) com δi(t) = (di/dt)·t: o LTAN se afasta "
+        f"quadraticamente, {_f(st0['ltan_offset_1y_min'], 2)} min em 1 ano, e sai da banda de "
+        f"±5 min em {_f(st0['days_to_ltan_correction'] / 365.2422, 2)} ano.",
+        "- **Validação no Cowell J2–J4 + Sol (60 dias):** di/dt = "
+        f"{_sci(sun['di_dt_deg_day'])} °/dia (S4-02: −9,8e-5) e aceleração do LTAN "
+        f"{_f(sun['ltan_accel_min_year2'], 2)} min/ano² × "
+        f"{_f(sun['ltan_accel_formula_min_year2'], 2)} "
+        "pela eq. 32 com o di/dt medido. Com a Lua, os termos de ≈ 14 dias contaminam o ajuste em "
+        f"60 dias: di/dt = {_sci(sun_moon['di_dt_deg_day'])} °/dia, "
+        f"{_f(sun_moon['ltan_accel_min_year2'], 2)} × "
+        f"{_f(sun_moon['ltan_accel_formula_min_year2'], 2)} "
+        "min/ano². O di/dt do S4-02 é a parte do Sol; ele também varia com a estação, então o "
+        "indicador é uma previsão de ordem de grandeza para um ano.",
+        "",
+        "### Dois orçamentos parecidos, por motivos diferentes",
+        "",
+        f"O traço consome ≈ {_f(st0['track_delta_v_per_year_m_s'], 1)} m/s por ano em ≈ "
+        f"{_f(365.2422 / st0['days_to_track_correction'], 0)} manobras pequenas (uma por semana, "
+        "no plano, repondo o semieixo que o arrasto tira); o LTAN, ≈ "
+        f"{_f(st0['inclination_delta_v_per_year_m_s'], 1)} m/s por ano numa correção de "
+        "inclinação (fora do plano). Os números são parecidos por coincidência da órbita de "
+        "510 km; o que dita a operação é o traço, pela cadência (Sem4 §6.2). As manobras não são "
+        "simuladas: o indicador prevê quando e quanto.",
+        "",
+    ]
+    return lines
+
+
 # --- Gráficos e relatório ------------------------------------------------------------------------
 
 
@@ -537,6 +806,12 @@ def plot_grid(data: dict, out: Path) -> None:
     fig.tight_layout()
     fig.savefig(out, dpi=130)
     plt.close(fig)
+
+
+def _sci(x: float, nd: int = 2) -> str:
+    """Notação científica no formato do relatório: −9,82e-5 (vírgula, sinal "−", expoente curto)."""
+    mant, exp = f"{x:.{nd}e}".split("e")
+    return f"{mant.replace('.', ',').replace('-', '−')}e{int(exp)}"
 
 
 def _f(x: float, nd: int) -> str:
@@ -650,6 +925,8 @@ def write_report(data: dict, out: Path, elapsed_s: float | None) -> None:
         lines += coverage_report_lines(data)
     if "contacts" in data:
         lines += contacts_report_lines(data)
+    if "maintenance" in data:
+        lines += maintenance_report_lines(data)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -658,6 +935,7 @@ SECTIONS = {
     "repeat": ("S5-02: repetição", repeat_section),
     "coverage": ("S5-03: cobertura", coverage_section),
     "contacts": ("S5-04: contatos", contacts_section),
+    "maintenance": ("S5-05: manutenção", maintenance_section),
 }
 
 
@@ -685,6 +963,8 @@ def main() -> None:
         plot_coverage(data, OUT_DIR / "cobertura_latitude.png", OUT_DIR / "revisita_mapa.png")
     if "contacts" in data:
         plot_contacts(data, OUT_DIR / "contatos_24h.png")
+    if "maintenance" in data:
+        plot_maintenance(data, OUT_DIR / "manutencao_traco.png", OUT_DIR / "manutencao_ltan.png")
     write_report(data, OUT_DIR / "relatorio.md", elapsed)
     logger.info("relatório em %s", OUT_DIR)
 

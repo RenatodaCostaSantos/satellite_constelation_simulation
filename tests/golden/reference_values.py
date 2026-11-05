@@ -1449,3 +1449,77 @@ class ContactPlanA6:
 
 
 CONTACT_PLAN_A6 = ContactPlanA6()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.7 do prompt da Semana 5: manutenção (Sem4 §6.1, §7.6 e experimento).
+#     λ(t) = 3π|ȧ|t²/(2a) (Sem4 §7.6); v = 7 607,1 m/s; Δv = v·δa/(2a). Banda do traço ±5 km.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class TrackMaintenanceRow:
+    a_dot_m_day: float
+    days_to_5km: float
+    delta_a_m: float
+    delta_v_per_maneuver_m_s: float
+    maneuvers_per_year: float
+    delta_v_per_year_m_s: float
+    source: str
+
+
+TRACK_MAINTENANCE_A7: tuple[TrackMaintenanceRow, ...] = (
+    TrackMaintenanceRow(-23.71, 6.95, 164.8, 0.0910, 52.5, 4.78, "Cowell (A.7 da Semana 4)"),
+    TrackMaintenanceRow(-25.47, 6.71, 170.8, 0.0943, 54.5, 5.14, "modelo médio, mesmo caso"),
+    TrackMaintenanceRow(-35.0, 5.72, 200.3, 0.1106, 63.8, 7.06, "Sem4 §6.2"),
+)
+
+
+@dataclass(frozen=True)
+class MaintenanceA7:
+    a_m: float = 6888089.0
+    i_deg: float = 97.46325
+    v_m_s: float = 7607.1
+    deadband_km: float = 5.0
+    rel_tol: float = 0.02  # critério do card S5-05 ("A.7, rel 2%")
+    # Verificação no Cowell: a calibrado + arrasto, fechamento de 6 dias (A.4) × fórmula
+    closure_cowell_6d_km: float = 3.68
+    closure_formula_6d_km: float = 3.72
+    closure_formula_tol: float = 0.10  # critério do card S5-05: fórmula a ≤ 10% do Cowell
+    # LTAN (Sem4 eq. 32)
+    ltan_per_di_001deg_min_year: float = 1.92  # Sem4: +1,9
+    ltan_per_dh_1km_min_year: float = -0.73
+    di_dt_sun_deg_day: float = -9.8e-5  # S4-02
+    di_dt_sun_deg_year: float = -0.0358
+    ltan_accel_min_year2: float = -6.87  # → −3,43·t² min (t em anos)
+    ltan_quadratic_coeff_min: float = -3.43
+    ltan_band_min: float = 5.0
+    years_to_ltan_band: float = 1.21
+    inclination_delta_v_per_year_m_s: float = 4.75
+    # Medido no satsim (S5-05): fórmulas idênticas ao A.7 (6,95 d, 164,8 m, 0,0910 m/s, 52,5/ano,
+    # 4,78 m/s/ano; −6,867 min/ano², 1,207 ano, 4,752 m/s/ano; 1,919 e −0,732 min/ano).
+    # ȧ da constelação de referência por janelas nodais (Cowell completo): −23,95 m/dia em 1 dia,
+    # −24,01 em 6 dias (A.7: −23,71; 1,0–1,3%). Fechamento de 6 dias com o a calibrado e arrasto:
+    # Cowell completo 3,673 km × fórmula 3,772 km (2,7%). Validação do LTAN no Cowell J2–J4 + Sol
+    # (60 dias): di/dt −9,82e-5 °/d, aceleração do LTAN −7,13 min/ano² × fórmula −6,88 (4%).
+
+
+MAINTENANCE_A7 = MaintenanceA7()
+
+
+@dataclass(frozen=True)
+class MaintenanceTestS5:
+    """Referência própria do teste Cowell × fórmula (S5-05): S1 com o a calibrado, Cowell só
+    J2–J4 + arrasto (≈ 2× mais rápido que o completo), 6 dias.
+
+    Medido no satsim (S5-05): fechamento 3,838 km; ȧ em 6 dias −24,03 m/dia; fórmula 3,774 km
+    (1,7%). No Cowell completo: 3,673 km e 3,772 km (2,7%).
+    """
+
+    a_calibrated_m: float = 6888108.374
+    closure_6d_km: float = 3.838
+    formula_6d_km: float = 3.774
+    regression_tol_km: float = 0.01
+    a_dot_6d_m_day: float = -24.03
+
+
+MAINTENANCE_TEST_S5 = MaintenanceTestS5()
