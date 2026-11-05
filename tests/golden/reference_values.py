@@ -1387,3 +1387,65 @@ class CoverageTestS5:
 
 
 COVERAGE_TEST_S5 = CoverageTestS5()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.6 do prompt da Semana 5: passagens da constelação do A.1 (a de projeto,
+#     Cowell completo) sobre São Bento do Sapucaí, 2026-10-23 00:00 UTC + 24 h, el ≥ 10°,
+#     find_passes (experimento de referência).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class ContactPassA6:
+    sat: str
+    aos_utc: str  # HH:MM:SS em 2026-10-23
+    max_el_deg: float
+    duration_s: float
+
+
+CONTACT_PASSES_A6: tuple[ContactPassA6, ...] = (
+    ContactPassA6("S5", "00:32:20", 12.83, 209.9),
+    ContactPassA6("S6", "00:46:51", 21.42, 351.3),
+    ContactPassA6("S1", "01:01:59", 36.04, 418.5),
+    ContactPassA6("S2", "01:17:23", 65.20, 448.4),
+    ContactPassA6("S3", "01:33:01", 69.55, 449.3),
+    ContactPassA6("S4", "01:48:51", 38.48, 422.2),
+    ContactPassA6("S5", "02:04:57", 22.98, 361.5),
+    ContactPassA6("S6", "02:21:30", 14.08, 242.8),
+    ContactPassA6("S3", "12:05:18", 12.27, 188.7),
+    ContactPassA6("S4", "12:19:37", 20.13, 337.0),
+    ContactPassA6("S5", "12:34:35", 33.21, 409.5),
+    ContactPassA6("S6", "12:49:54", 59.02, 444.8),
+    ContactPassA6("S1", "13:05:28", 76.87, 451.3),
+    ContactPassA6("S2", "13:21:18", 42.03, 429.8),
+    ContactPassA6("S3", "13:37:26", 24.53, 374.1),
+    ContactPassA6("S4", "13:54:05", 14.80, 261.5),
+)
+
+
+@dataclass(frozen=True)
+class ContactPlanA6:
+    start_utc: str = "2026-10-23T00:00:00+00:00"
+    duration_s: float = 86400.0
+    el_min_deg: float = 10.0
+    n_passes: int = 16
+    n_passes_tol: int = 1  # critério do card S5-04
+    passes_per_sat: tuple[int, ...] = (2, 2, 3, 3, 3, 3)  # S1 … S6
+    total_contact_min: float = 96.68
+    total_contact_tol_min: float = 3.0  # critério do card S5-04
+    max_elevation_deg: float = 76.87
+    n_overlaps: int = 0
+    n_trains: int = 2
+    # Trens (BRT = UTC−3): noturno 00:32–02:25 UTC = 21h32–23h25 BRT;
+    # diurno 12:05–13:58 UTC = 9h05–10h58 BRT
+    night_train_utc: tuple[str, str] = ("00:32", "02:25")
+    day_train_utc: tuple[str, str] = ("12:05", "13:58")
+    # Dentro de um trem: AOS consecutivos a 14–17 min (≈ Tnod/6 = 15,8 min + geometria)
+    train_aos_spacing_min: tuple[float, float] = (14.0, 17.0)  # critério do card S5-04
+    # Medido no satsim (S5-04, contact_plan): as 16 passagens idênticas ao A.6 (AOS no segundo,
+    # el máx a 0,005°, duração a 0,05 s); contato total 96,68 min; trens 21:32–23:25 e
+    # 09:05–10:58 BRT; Sol no TCA de −42,9° a −55,5° (noite) e de 50,2° a 73,5° (dia); maior
+    # intervalo sem contato 10,03 h (do último LOS ao fim da janela).
+
+
+CONTACT_PLAN_A6 = ContactPlanA6()

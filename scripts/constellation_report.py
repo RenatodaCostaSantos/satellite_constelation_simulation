@@ -17,9 +17,12 @@ Seções (uma por card; os próximos cards acrescentam as suas):
   |lat| ≤ 80° numa grade de 1°, passo de 10 s, Cowell completo: fração coberta por latitude em
   1 dia (P = 1 e P = 6, com e sem a restrição de luz), P = 1 em 6 dias e o mapa do intervalo
   máximo de revisita da constelação em 3 dias (sem e com luz).
+- **S5-04 · Plano de contatos.** Passagens dos 6 satélites sobre São Bento do Sapucaí em 24 h
+  (el ≥ 10°, ``contact_plan``): linha do tempo, trens, dia/noite, contato total e sobreposições.
 
 Toda constelação é criada por ``satsim.constellation.sso_constellation`` (também a de 1 satélite).
-Gera grade_nos.png, cobertura_latitude.png, revisita_mapa.png, relatorio.md e resultados.json
+Gera grade_nos.png, cobertura_latitude.png, revisita_mapa.png, contatos_24h.png, relatorio.md e
+resultados.json
 (números brutos, para --from-json).
 """
 
@@ -59,6 +62,7 @@ from satsim.elements import KeplerianElements  # noqa: E402
 from satsim.ephemeris import sun_ra_dec  # noqa: E402
 from satsim.forces import ZonalAcceleration  # noqa: E402
 from satsim.groundtrack import grid_metrics, node_crossings, repeat_closure  # noqa: E402
+from satsim.observer import SAO_BENTO_DO_SAPUCAI  # noqa: E402
 from satsim.orbit_design import (  # noqa: E402
     constellation_phases,
     frozen_eccentricity,
@@ -68,6 +72,7 @@ from satsim.orbit_design import (  # noqa: E402
     repeat_semi_major_axis_calibrated,
     sso_inclination,
 )
+from satsim.passes import contact_plan, sun_elevation_deg  # noqa: E402
 from satsim.propagators import MeanJ2Propagator  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -344,6 +349,163 @@ def coverage_report_lines(data: dict) -> list[str]:
     ]
 
 
+# --- S5-04: plano de contatos ---------------------------------------------------------------------
+
+
+def contacts_section() -> dict:
+    """Plano de contatos de 24 h sobre São Bento do Sapucaí (el ≥ 10°) e o Sol na estação."""
+    c = sso_constellation(EPOCH, full_force_models(EPOCH), a=A_DESIGN, i=I_CAL)
+    plan = contact_plan(c, SAO_BENTO_DO_SAPUCAI, EPOCH, DAY, el_min_deg=10.0)
+
+    def h(dt: datetime) -> float:
+        return (dt - EPOCH).total_seconds() / 3600.0
+
+    contacts = [
+        {
+            "sat": ct.pass_.sat_id,
+            "aos_h": h(ct.pass_.aos),
+            "los_h": h(ct.pass_.los),
+            "tca_h": h(ct.pass_.tca),
+            "max_el_deg": ct.pass_.max_elevation_deg,
+            "duration_s": ct.pass_.duration_s,
+            "sun_el_deg": ct.sun_elevation_deg,
+            "lighting": ct.lighting,
+            "train": ct.train,
+        }  # fmt: skip
+        for ct in plan.contacts
+    ]
+    trains = []
+    for tr in plan.trains:
+        aos = [contacts[k]["aos_h"] for k in tr.contact_indices]
+        trains.append({"start_h": h(tr.start), "end_h": h(tr.end), "lighting": tr.lighting,
+                       "n": len(tr.contact_indices),
+                       "aos_spacing_min": (np.diff(aos) * 60).tolist()})  # fmt: skip
+    t_sun = [EPOCH + timedelta(minutes=10 * k) for k in range(145)]
+    return {
+        "contacts": contacts,
+        "trains": trains,
+        "colors": {s.id: s.color for s in c},
+        "total_contact_min": plan.total_contact_s / 60,
+        "max_gap_h": plan.max_gap_s / 3600,
+        "n_overlaps": len(plan.overlaps),
+        "per_sat": plan.passes_per_satellite,
+        "sun_h": [h(t) for t in t_sun],
+        "sun_el_deg": sun_elevation_deg(SAO_BENTO_DO_SAPUCAI, t_sun).tolist(),
+    }
+
+
+def plot_contacts(data: dict, out: Path) -> None:
+    """Linha do tempo de 24 h dos contatos (um satélite por linha) e um zoom em cada trem."""
+    ct = data["contacts"]
+    sats = sorted(ct["colors"])
+    row = {s: k for k, s in enumerate(sats)}
+    sun_h, sun_el = np.array(ct["sun_h"]), np.array(ct["sun_el_deg"])
+    fig = plt.figure(figsize=(12, 6.4))
+    gs = fig.add_gridspec(2, 2, height_ratios=(1.0, 1.15), hspace=0.45, wspace=0.12)
+    top = fig.add_subplot(gs[0, :])
+    zooms = [fig.add_subplot(gs[1, k]) for k in range(len(ct["trains"][:2]))]
+
+    def draw(ax, xlim, label_el: bool) -> None:
+        night = sun_el < -6.0
+        ax.fill_between(sun_h, -0.6, len(sats) - 0.4, where=night, color="#1d2330", alpha=0.12,
+                        step="mid", lw=0)  # fmt: skip
+        for c in ct["contacts"]:
+            y = row[c["sat"]]
+            ax.barh(y, c["los_h"] - c["aos_h"], left=c["aos_h"], height=0.6,
+                    color=ct["colors"][c["sat"]], edgecolor="0.25", lw=0.5)  # fmt: skip
+            if label_el and xlim[0] <= c["tca_h"] <= xlim[1]:
+                ax.text(c["tca_h"], y + 0.42, f"{c['max_el_deg']:.0f}°", ha="center", va="top",
+                        fontsize=7, color="0.25", clip_on=True)  # fmt: skip
+        ax.set_yticks(range(len(sats)), [s.upper() for s in sats])
+        ax.set_ylim(-0.6, len(sats) - 0.4)
+        ax.invert_yaxis()
+        ax.set_xlim(*xlim)
+        ax.grid(axis="x", alpha=0.3)
+
+    draw(top, (0.0, 24.0), False)
+    ticks = np.arange(0, 25, 3)
+    top.set_xticks(ticks, [f"{t:02d}h\n{(t - 3) % 24:02d}h" for t in ticks])
+    top.set_xlabel("UTC (em cima) / BRT (embaixo) — faixas escuras: noite na estação (Sol < −6°)")
+    top.set_title(
+        f"Contatos com São Bento do Sapucaí em 24 h (el ≥ 10°): {len(ct['contacts'])} passagens, "
+        f"{_f(ct['total_contact_min'], 1)} min, {ct['n_overlaps']} sobreposições",
+        fontsize=10,
+    )
+    for ax, tr in zip(zooms, ct["trains"], strict=False):
+        draw(ax, (tr["start_h"] - 0.1, tr["end_h"] + 0.1), True)
+        hh = np.arange(math.floor(tr["start_h"] * 4) / 4, tr["end_h"] + 0.25, 0.25)
+        ax.set_xticks(hh, [f"{int(x) % 24:02d}:{int(round(x % 1 * 60)):02d}" for x in hh],
+                      fontsize=8)  # fmt: skip
+        spacing = tr["aos_spacing_min"]
+        ax.set_title(
+            f"trem {'noturno' if tr['lighting'] == 'noite' else 'diurno'}: {tr['n']} passagens, "
+            f"AOS a {_f(min(spacing), 1)}–{_f(max(spacing), 1)} min",
+            fontsize=9.5,
+        )
+        ax.set_xlabel("UTC (rótulos: elevação máxima)")
+    fig.savefig(out, dpi=125, bbox_inches="tight")
+    plt.close(fig)
+
+
+def contacts_report_lines(data: dict) -> list[str]:
+    ct = data["contacts"]
+    night, day = ct["trains"][0], ct["trains"][1]
+
+    def brt(hours: float) -> str:
+        m = int((hours - 3.0) % 24 * 60)  # trunca no minuto, como o A.6
+        return f"{m // 60:02d}h{m % 60:02d}"
+
+    spacing = night["aos_spacing_min"] + day["aos_spacing_min"]
+    per_sat = ", ".join(f"{k.upper()} {v}" for k, v in sorted(ct["per_sat"].items()))
+    rows = []
+    for k, c in enumerate(ct["contacts"], start=1):
+        rows.append(
+            f"| {k} | {c['train'] + 1} | {c['sat'].upper()} | {brt(c['aos_h'])} | "
+            f"{_f(c['max_el_deg'], 1)}° | {_f(c['duration_s'] / 60, 1)} min | "
+            f"{_f(c['sun_el_deg'], 1)}° | {c['lighting']} |"
+        )
+    return [
+        "## S5-04 · Plano de contatos sobre São Bento do Sapucaí",
+        "",
+        "`contact_plan` (estação −22,69°, −45,73°, 900 m; el ≥ 10°; 2026-10-23 00:00 UTC + 24 h; "
+        "constelação de referência no Cowell completo). Dia/noite pela elevação do Sol na estação "
+        "no TCA (crepúsculo civil, −6°); trens = passagens com AOS a menos de 30 min da anterior.",
+        "",
+        "![Linha do tempo dos contatos](contatos_24h.png)",
+        "",
+        f"- **{len(ct['contacts'])} passagens** ({per_sat}), "
+        f"**{_f(ct['total_contact_min'], 1)} min** de contato, **{ct['n_overlaps']} "
+        "sobreposições** (uma antena basta) — A.6: 16, 96,68 min, nenhuma.",
+        f"- **Dois trens:** noturno de {brt(night['start_h'])} a {brt(night['end_h'])} BRT e "
+        f"diurno de {brt(day['start_h'])} a {brt(day['end_h'])} BRT (A.6: 21h32–23h25 e "
+        f"9h05–10h58). O maior intervalo sem contato é de {_f(ct['max_gap_h'], 2)} h.",
+        "",
+        "| # | Trem | Satélite | AOS (BRT) | El. máx. | Duração | Sol no TCA | Luz |",
+        "|---:|---:|---|---|---:|---:|---:|---|",
+        *rows,
+        "",
+        "### Por que as passagens chegam em trens de 15,8 min",
+        "",
+        "Os seis satélites estão no **mesmo plano**, em fila, separados de 60° em argumento "
+        "de latitude: cada um cruza qualquer ponto da órbita Tnod/6 = 5 696,7/6 s ≈ 15,8 min "
+        "depois do anterior (Sem4 §8.5, Tabela 4). Nesse intervalo a Terra gira ≈ 3,96° (um "
+        "passo da grade), então o satélite seguinte passa ≈ 440 km a oeste no equador (≈ 400 km "
+        "na latitude de São Bento): ainda dentro do círculo de visibilidade da estação, que tem "
+        "≈ 1 590 km de raio para el ≥ 10° a 510 km (`footprint_half_angle`: 14,2°). Por isso a "
+        "estação vê o trem passar inteiro, um satélite a cada ≈ 15,8 min (AOS a "
+        f"{_f(min(spacing), 1)}–{_f(max(spacing), 1)} min: o tempo entre AOS varia porque cada "
+        "satélite corta o círculo numa corda diferente, as primeiras do trem perto de uma borda, "
+        "as do meio perto do centro e as últimas perto da borda oposta). As passagens do meio do "
+        "trem são as mais altas e longas; as das pontas, rasantes e curtas.",
+        "",
+        "O plano orbital acompanha o Sol (SSO): o trem passa pela estação **duas vezes por "
+        "dia**, na metade ascendente da órbita (nó às 22h30 local, de noite) e na descendente "
+        "(10h30, de manhã), **sempre nos mesmos horários solares**. Entre os dois trens não há "
+        "nenhum contato: as outras ≈ 13 voltas de cada satélite passam longe demais de São Bento.",
+        "",
+    ]
+
+
 # --- Gráficos e relatório ------------------------------------------------------------------------
 
 
@@ -486,6 +648,8 @@ def write_report(data: dict, out: Path, elapsed_s: float | None) -> None:
     ]
     if "coverage" in data:
         lines += coverage_report_lines(data)
+    if "contacts" in data:
+        lines += contacts_report_lines(data)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -493,6 +657,7 @@ SECTIONS = {
     "grid": ("S5-02: grade", grid_section),
     "repeat": ("S5-02: repetição", repeat_section),
     "coverage": ("S5-03: cobertura", coverage_section),
+    "contacts": ("S5-04: contatos", contacts_section),
 }
 
 
@@ -518,6 +683,8 @@ def main() -> None:
     plot_grid(data, OUT_DIR / "grade_nos.png")
     if "coverage" in data:
         plot_coverage(data, OUT_DIR / "cobertura_latitude.png", OUT_DIR / "revisita_mapa.png")
+    if "contacts" in data:
+        plot_contacts(data, OUT_DIR / "contatos_24h.png")
     write_report(data, OUT_DIR / "relatorio.md", elapsed)
     logger.info("relatório em %s", OUT_DIR)
 

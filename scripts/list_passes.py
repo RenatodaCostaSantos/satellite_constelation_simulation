@@ -6,6 +6,7 @@ Uso (na raiz do repositório, com o pacote instalado):
     python scripts/list_passes.py --days 7 --el-min 5 --offline
     python scripts/list_passes.py --csv passagens.csv
     python scripts/list_passes.py --tle-file tests/data/iss_sample.tle --start tle-epoch
+    python scripts/list_passes.py --constellation --start 2026-10-23T00:00:00Z --days 1
 
 O TLE vem de satsim.tle.get_tle (cache com menos de 2 h → CelesTrak → cache antigo → TLE
 embarcado), ou de --tle-file. A janela começa agora (UTC, arredondado ao minuto), num instante
@@ -14,16 +15,26 @@ ISO 8601 (--start 2026-10-23T00:00:00Z) ou na época do TLE (--start tle-epoch, 
 O script imprime a fonte e a idade do TLE no início da janela, com aviso acima de 3 dias, e a
 tabela de passagens em UTC e no horário de Brasília (BRT = UTC−03:00). "Passagem" aqui é o
 satélite acima da elevação mínima (visibilidade por rádio), não visível a olho nu.
+
+Com --constellation (S5-04), lista o plano de contatos da constelação 91/6 de 6 satélites
+(``sso_constellation``: a de projeto, i calibrada do A.7 da Semana 4, LTAN 22h30 no início da
+janela, Cowell completo): cada passagem com o satélite, o trem, a elevação do Sol no TCA e a
+classe dia/noite, mais o resumo (trens, contato total, maior intervalo, sobreposições). Sem
+--start, a janela começa agora; o TLE não é usado. O Cowell completo custa ≈ 1 s por satélite e
+por dia de janela.
 """
 
 import argparse
 import csv
 import logging
+import math
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from satsim.constellation import Constellation, sso_constellation
 from satsim.observer import SAO_BENTO_DO_SAPUCAI
-from satsim.passes import Pass, find_passes, format_passes
+from satsim.passes import Pass, contact_plan, find_passes, format_contact_plan, format_passes
 from satsim.propagators import SGP4Propagator
 from satsim.tle import AGE_WARNING, ISS_NORAD_ID, Tle, get_tle
 
@@ -36,6 +47,29 @@ def parse_start(text: str | None, tle: Tle) -> datetime:
         return datetime.now(UTC).replace(second=0, microsecond=0)
     if text == "tle-epoch":
         return tle.epoch
+    start = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if start.tzinfo is None:
+        raise SystemExit("--start precisa de fuso horário (ex.: 2026-10-23T00:00:00Z)")
+    return start.astimezone(UTC)
+
+
+CONSTELLATION_I_DEG = 97.46325  # i calibrada no Cowell J2–J4 (A.7 da Semana 4)
+
+
+def build_constellation(start: datetime) -> Constellation:
+    """A constelação 91/6 com época no início da janela (Cowell completo do build_demo)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from build_demo import full_force_models
+
+    return sso_constellation(start, full_force_models(start), i=math.radians(CONSTELLATION_I_DEG))
+
+
+def parse_start_utc(text: str | None) -> datetime:
+    """Início da janela sem TLE: agora (arredondado ao minuto) ou um instante ISO 8601."""
+    if text is None:
+        return datetime.now(UTC).replace(second=0, microsecond=0)
+    if text == "tle-epoch":
+        raise SystemExit("--start tle-epoch não se aplica a --constellation")
     start = datetime.fromisoformat(text.replace("Z", "+00:00"))
     if start.tzinfo is None:
         raise SystemExit("--start precisa de fuso horário (ex.: 2026-10-23T00:00:00Z)")
@@ -69,8 +103,26 @@ def main(argv: list[str] | None = None) -> None:
         "--cache-dir", default=None, help="padrão: $SATSIM_CACHE_DIR ou data/cache/tle"
     )
     parser.add_argument("--csv", type=Path, default=None, help="grava as passagens em CSV")
+    parser.add_argument("--constellation", action="store_true",
+                        help="plano de contatos da constelação 91/6 (6 satélites)")  # fmt: skip
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="aviso: %(message)s")
+
+    if args.constellation:
+        start = parse_start_utc(args.start)
+        station = SAO_BENTO_DO_SAPUCAI
+        print("constelação: 91/6, 6 satélites num plano (sso_constellation), Cowell completo")
+        print(f"estação:  {station.name} ({station.lat_deg:.2f}°, {station.lon_deg:.2f}°, "
+              f"{station.alt:.0f} m)")  # fmt: skip
+        print(f"janela:   {start:%Y-%m-%d %H:%M} UTC + {args.days:g} dia(s), el ≥ {args.el_min:g}°")
+        print()
+        plan = contact_plan(build_constellation(start), station, start, args.days * 86400.0,
+                            el_min_deg=args.el_min, step_s=args.step)  # fmt: skip
+        print(format_contact_plan(plan))
+        if args.csv is not None:
+            write_csv(plan.passes, args.csv)
+            print(f"\n{len(plan.passes)} passagens gravadas em {args.csv}")
+        return
 
     if args.tle_file is not None:
         tle = Tle.from_text(args.tle_file.read_text(encoding="utf-8"))

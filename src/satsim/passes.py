@@ -62,16 +62,32 @@ são as mais curtas: para garanti-las, reduza ``step_s``.
 **Bordas da janela**: se o satélite já está acima de ε no início, a 1ª passagem começa no início
 da janela (``starts_inside=True``, ``aos = start``); se ainda está acima no fim, a última termina
 no fim (``ends_inside=True``, ``los = start + duration``).
+
+Plano de contatos de uma constelação (card S5-04)
+-------------------------------------------------
+``contact_plan`` junta as passagens de todos os satélites (``find_passes_many``) num plano de
+operação: cada passagem com a elevação do Sol na estação no TCA e a classe "dia"/"noite"
+(crepúsculo civil, Sol a −6°), os **trens** (passagens consecutivas com AOS a menos de 30 min um
+do outro), o tempo total de contato, as passagens por satélite, o maior intervalo sem contato e
+as sobreposições (dois satélites visíveis ao mesmo tempo, que exigiriam duas antenas).
+
+Os trens são a assinatura do faseamento num só plano (Sem4 §8.5): os 6 satélites passam em fila,
+Tnod/6 = 15,8 min um atrás do outro, sobre a mesma região; a estação vê o trem duas vezes por
+dia, sempre nos mesmos horários solares (ascendente à noite, descendente de manhã).
 """
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.optimize import brentq, minimize_scalar
 
+from satsim.astrotime import datetime_to_jd
+from satsim.ephemeris import sun_direction
+from satsim.frames import eci_to_ecef, gmst_at
 from satsim.observer import GroundStation, observe
 from satsim.propagators.base import Propagator
 
@@ -80,6 +96,12 @@ BLOCK_S = 6 * 3600.0
 
 XTOL_S = 1e-3
 """Tolerância das raízes (AOS, LOS) e do máximo (TCA) [s]."""
+
+CIVIL_TWILIGHT_DEG = -6.0
+"""Elevação do Sol que separa "dia" de "noite" no plano de contatos (crepúsculo civil) [°]."""
+
+TRAIN_GAP_S = 1800.0
+"""Passagens com AOS a menos disto da anterior pertencem ao mesmo trem [s]."""
 
 
 @dataclass(frozen=True)
@@ -297,4 +319,239 @@ def format_passes(passes: Sequence[Pass], tz_offset_hours: float = -3.0) -> str:
         lines.append("(nenhuma passagem)")
     if any(p.starts_inside or p.ends_inside for p in passes):
         lines.append("* já acima da elevação mínima no início da janela; + ainda acima no fim")
+    return "\n".join(lines)
+
+
+# --- Plano de contatos da constelação (S5-04) ---------------------------------------------------
+
+
+def sun_elevation_deg(station: GroundStation, times: Sequence[datetime]) -> NDArray[np.float64]:
+    """Elevação do Sol [°] vista da estação nos instantes dados (UTC tz-aware).
+
+    Direção do Sol no ECI da data (``ephemeris.sun_direction``) girada ao ECEF pelo GMST e
+    projetada na vertical local geodésica da estação (linha U de ``enu_matrix``). O Sol é tratado
+    como direção (paralaxe de 8,8″, desprezível).
+    """
+    if not times:
+        return np.zeros(0)
+    for k, dt in enumerate(times):
+        _check_aware(dt, f"times[{k}]")
+    t0 = times[0]
+    t = np.array([(dt - t0).total_seconds() for dt in times])
+    jd = datetime_to_jd(t0) + t / 86400.0
+    sun_ecef = eci_to_ecef(sun_direction(jd), gmst_at(t0, t))
+    up = station.enu_matrix()[2]
+    return np.degrees(np.arcsin(np.clip(sun_ecef @ up, -1.0, 1.0)))
+
+
+@dataclass(frozen=True)
+class Contact:
+    """Uma passagem no plano de contatos.
+
+    Attributes:
+        pass_: a passagem (``Pass``).
+        sun_elevation_deg: elevação do Sol na estação no TCA [°].
+        lighting: ``"dia"`` (Sol ≥ −6°, crepúsculo civil) ou ``"noite"``.
+        train: índice do trem a que a passagem pertence (0, 1, …).
+    """
+
+    pass_: Pass
+    sun_elevation_deg: float
+    lighting: str
+    train: int
+
+
+@dataclass(frozen=True)
+class Train:
+    """Grupo de passagens consecutivas com AOS a menos de ``train_gap_s`` um do outro.
+
+    Attributes:
+        index: número do trem (0, 1, …), em ordem de tempo.
+        contact_indices: índices em ``ContactPlan.contacts``.
+        start: AOS da primeira passagem.
+        end: o LOS mais tardio do trem.
+        lighting: ``"dia"``, ``"noite"`` ou ``"misto"`` (passagens das duas classes).
+    """
+
+    index: int
+    contact_indices: tuple[int, ...]
+    start: datetime
+    end: datetime
+    lighting: str
+
+
+@dataclass(frozen=True)
+class Overlap:
+    """Dois satélites acima de ``el_min`` ao mesmo tempo (exigiriam duas antenas)."""
+
+    sat_a: str
+    sat_b: str
+    start: datetime
+    end: datetime
+
+
+@dataclass(frozen=True)
+class ContactPlan:
+    """Plano de contatos de uma constelação sobre uma estação, numa janela (S5-04).
+
+    Attributes:
+        station: a estação.
+        start: início da janela (UTC).
+        duration_s: duração da janela [s].
+        el_min_deg: elevação mínima [°].
+        contacts: as passagens de todos os satélites, ordenadas por AOS.
+        trains: os trens, em ordem de tempo.
+        overlaps: sobreposições entre passagens de satélites diferentes.
+    """
+
+    station: GroundStation
+    start: datetime
+    duration_s: float
+    el_min_deg: float
+    contacts: tuple[Contact, ...]
+    trains: tuple[Train, ...]
+    overlaps: tuple[Overlap, ...]
+
+    @property
+    def passes(self) -> list[Pass]:
+        """As passagens, ordenadas por AOS."""
+        return [c.pass_ for c in self.contacts]
+
+    @property
+    def total_contact_s(self) -> float:
+        """Soma das durações das passagens [s] (= tempo de antena, se não houver sobreposição)."""
+        return float(sum(c.pass_.duration_s for c in self.contacts))
+
+    @property
+    def passes_per_satellite(self) -> dict[str, int]:
+        """Número de passagens por satélite."""
+        counts: dict[str, int] = {}
+        for c in self.contacts:
+            counts[c.pass_.sat_id] = counts.get(c.pass_.sat_id, 0) + 1
+        return counts
+
+    @property
+    def max_gap_s(self) -> float:
+        """Maior intervalo sem nenhum satélite visível [s], incluindo as bordas da janela."""
+        end_window = self.start + timedelta(seconds=self.duration_s)
+        gap, covered_until = 0.0, self.start
+        for p in sorted(self.passes, key=lambda p: p.aos):
+            gap = max(gap, (p.aos - covered_until).total_seconds())
+            covered_until = max(covered_until, p.los)
+        return max(gap, (end_window - covered_until).total_seconds())
+
+
+def contact_plan(
+    constellation: Iterable,
+    station: GroundStation,
+    start: datetime,
+    duration_s: float,
+    el_min_deg: float = 10.0,
+    step_s: float = 20.0,
+    train_gap_s: float = TRAIN_GAP_S,
+    twilight_deg: float = CIVIL_TWILIGHT_DEG,
+) -> ContactPlan:
+    """Plano de contatos: passagens de todos os satélites, dia/noite, trens e sobreposições.
+
+    As passagens vêm de ``find_passes_many`` (as mesmas de ``find_passes`` satélite a
+    satélite). Para cada uma: elevação do Sol na estação no TCA (``sun_elevation_deg``) e a classe
+    ``"dia"`` (≥ ``twilight_deg``) ou ``"noite"``. Trens: passagens consecutivas (por AOS) com
+    intervalo entre AOS < ``train_gap_s``. Sobreposição: interseção não vazia entre [AOS, LOS] de
+    dois satélites diferentes.
+
+    Args:
+        constellation: ``Constellation`` ou qualquer iterável de ``Satellite`` (com ``id`` e
+            ``propagator``).
+        station: a estação de solo.
+        start: início da janela (tz-aware).
+        duration_s: duração [s].
+        el_min_deg: elevação mínima [°].
+        step_s: passo da varredura de ``find_passes`` [s].
+        train_gap_s: separação máxima entre AOS do mesmo trem [s].
+        twilight_deg: elevação do Sol que separa dia de noite [°] (crepúsculo civil, −6°).
+
+    Returns:
+        ``ContactPlan``.
+    """
+    _check_aware(start, "start")
+    props = {sat.id: sat.propagator for sat in constellation}
+    passes = find_passes_many(props, station, start, duration_s, el_min_deg, step_s)
+    sun_el = sun_elevation_deg(station, [p.tca for p in passes])
+
+    train_of: list[int] = []
+    for k, p in enumerate(passes):
+        new = k == 0 or (p.aos - passes[k - 1].aos).total_seconds() >= train_gap_s
+        train_of.append((train_of[-1] + 1 if train_of else 0) if new else train_of[-1])
+    contacts = tuple(
+        Contact(p, float(el), "dia" if el >= twilight_deg else "noite", train)
+        for p, el, train in zip(passes, sun_el, train_of, strict=True)
+    )
+
+    trains = []
+    for index in sorted(set(train_of)):
+        members = tuple(k for k, tr in enumerate(train_of) if tr == index)
+        classes = {contacts[k].lighting for k in members}
+        trains.append(
+            Train(
+                index=index,
+                contact_indices=members,
+                start=passes[members[0]].aos,
+                end=max(passes[k].los for k in members),
+                lighting=classes.pop() if len(classes) == 1 else "misto",
+            )
+        )
+
+    overlaps = []
+    for a in range(len(passes)):
+        for b in range(a + 1, len(passes)):
+            pa, pb = passes[a], passes[b]
+            if pb.aos >= pa.los:
+                break  # ordenadas por AOS: nenhuma posterior a b sobrepõe a
+            if pa.sat_id != pb.sat_id:
+                overlaps.append(Overlap(pa.sat_id, pb.sat_id, pb.aos, min(pa.los, pb.los)))
+
+    return ContactPlan(
+        station=station,
+        start=start,
+        duration_s=float(duration_s),
+        el_min_deg=float(el_min_deg),
+        contacts=contacts,
+        trains=tuple(trains),
+        overlaps=tuple(overlaps),
+    )
+
+
+def format_contact_plan(plan: ContactPlan, tz_offset_hours: float = -3.0) -> str:
+    """Tabela de texto do plano de contatos: UTC e fuso local, satélite, trem e dia/noite."""
+    tz = _tz(tz_offset_hours)
+    label = tz.tzname(None)
+    w = max([len("satélite"), *(len(c.pass_.sat_id) for c in plan.contacts)])
+    header = (
+        f"{'#':>2}  {'trem':>4}  {'satélite':<{w}}  {'AOS UTC':<19}  {'AOS ' + label:<8}  "
+        f"{'LOS ' + label:<8}  {'el máx':>6}  {'dur':>5}  {'Sol':>6}  luz"
+    )
+    lines = [header, "-" * len(header)]
+    for k, c in enumerate(plan.contacts, start=1):
+        p = c.pass_
+        lines.append(
+            f"{k:>2}  {c.train + 1:>4}  {p.sat_id:<{w}}  {p.aos:%Y-%m-%d %H:%M:%S}  "
+            f"{p.aos.astimezone(tz):%H:%M:%S}  {p.los.astimezone(tz):%H:%M:%S}  "
+            f"{p.max_elevation_deg:5.1f}°  {p.duration_s / 60:4.1f}m  "
+            f"{c.sun_elevation_deg:5.1f}°  {c.lighting}"
+        )
+    if not plan.contacts:
+        lines.append("(nenhuma passagem)")
+    lines.append("")
+    for tr in plan.trains:
+        lines.append(
+            f"trem {tr.index + 1}: {len(tr.contact_indices)} passagens, "
+            f"{tr.start.astimezone(tz):%H:%M}–{tr.end.astimezone(tz):%H:%M} {label} ({tr.lighting})"
+        )
+    per_sat = ", ".join(f"{k} {v}" for k, v in sorted(plan.passes_per_satellite.items()))
+    lines += [
+        f"contato total: {plan.total_contact_s / 60:.1f} min em {len(plan.contacts)} passagens "
+        f"({per_sat})",
+        f"maior intervalo sem contato: {plan.max_gap_s / 3600:.2f} h",
+        f"sobreposições (duas antenas): {len(plan.overlaps)}",
+    ]
     return "\n".join(lines)

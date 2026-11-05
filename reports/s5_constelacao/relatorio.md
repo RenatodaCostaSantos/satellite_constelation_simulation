@@ -69,3 +69,37 @@ Rolagem η = ±23,2°: alcance transversal λ = 1,9784° = 220,2 km (Sem4 eq. 45
 - **Sem luz: ≈ 12 a 14 h.** Cada alvo é visto duas vezes por dia, numa passagem ascendente (nó às 22h30 local) e numa descendente (10h30), a ≈ 12 h uma da outra. No equador a revisita máxima é ≈ 12,1 h; ela cresce com a latitude (≈ 14 h a ±60°, ≈ 19 h a ±80°) porque fora do equador as duas passagens deixam de ser simétricas: a hora local do sobrevoo se afasta de 10h30 e 22h30 em sentidos opostos, e o intervalo entre elas fica alternadamente mais curto e mais longo que 12 h.
 - **Com luz: ≈ 24 h.** Uma câmera óptica só usa a passagem descendente, de manhã (10h30): a ascendente é noturna. Resta uma visita por dia, e a revisita dobra. Em outubro a declinação do Sol é −11,9°: ao meio-dia solar, ele fica abaixo de 10° de elevação para latitudes acima de 90° − 10° + δ ≈ 68,1° N. Nenhum alvo acima de ≈ 69° N é visto com luz: a fração cai para 92,55% (A.5: 92,55%). No hemisfério sul é o contrário: a primavera austral deixa o Sol alto, e com P = 1 a fração com luz sobe para perto de −80° (gráfico por latitude).
 
+## S5-04 · Plano de contatos sobre São Bento do Sapucaí
+
+`contact_plan` (estação −22,69°, −45,73°, 900 m; el ≥ 10°; 2026-10-23 00:00 UTC + 24 h; constelação de referência no Cowell completo). Dia/noite pela elevação do Sol na estação no TCA (crepúsculo civil, −6°); trens = passagens com AOS a menos de 30 min da anterior.
+
+![Linha do tempo dos contatos](contatos_24h.png)
+
+- **16 passagens** (S1 2, S2 2, S3 3, S4 3, S5 3, S6 3), **96,7 min** de contato, **0 sobreposições** (uma antena basta) — A.6: 16, 96,68 min, nenhuma.
+- **Dois trens:** noturno de 21h32 a 23h25 BRT e diurno de 09h05 a 10h58 BRT (A.6: 21h32–23h25 e 9h05–10h58). O maior intervalo sem contato é de 10,03 h.
+
+| # | Trem | Satélite | AOS (BRT) | El. máx. | Duração | Sol no TCA | Luz |
+|---:|---:|---|---|---:|---:|---:|---|
+| 1 | 1 | S5 | 21h32 | 12,8° | 3,5 min | −42,9° | noite |
+| 2 | 1 | S6 | 21h46 | 21,4° | 5,9 min | −45,4° | noite |
+| 3 | 1 | S1 | 22h01 | 36,0° | 7,0 min | −47,8° | noite |
+| 4 | 1 | S2 | 22h17 | 65,2° | 7,5 min | −50,0° | noite |
+| 5 | 1 | S3 | 22h33 | 69,6° | 7,5 min | −51,8° | noite |
+| 6 | 1 | S4 | 22h48 | 38,5° | 7,0 min | −53,4° | noite |
+| 7 | 1 | S5 | 23h04 | 23,0° | 6,0 min | −54,6° | noite |
+| 8 | 1 | S6 | 23h21 | 14,1° | 4,0 min | −55,5° | noite |
+| 9 | 2 | S3 | 09h05 | 12,3° | 3,1 min | 50,2° | dia |
+| 10 | 2 | S4 | 09h19 | 20,1° | 5,6 min | 53,8° | dia |
+| 11 | 2 | S5 | 09h34 | 33,2° | 6,8 min | 57,3° | dia |
+| 12 | 2 | S6 | 09h49 | 59,0° | 7,4 min | 60,7° | dia |
+| 13 | 2 | S1 | 10h05 | 76,9° | 7,5 min | 64,1° | dia |
+| 14 | 2 | S2 | 10h21 | 42,0° | 7,2 min | 67,4° | dia |
+| 15 | 2 | S3 | 10h37 | 24,5° | 6,2 min | 70,6° | dia |
+| 16 | 2 | S4 | 10h54 | 14,8° | 4,4 min | 73,5° | dia |
+
+### Por que as passagens chegam em trens de 15,8 min
+
+Os seis satélites estão no **mesmo plano**, em fila, separados de 60° em argumento de latitude: cada um cruza qualquer ponto da órbita Tnod/6 = 5 696,7/6 s ≈ 15,8 min depois do anterior (Sem4 §8.5, Tabela 4). Nesse intervalo a Terra gira ≈ 3,96° (um passo da grade), então o satélite seguinte passa ≈ 440 km a oeste no equador (≈ 400 km na latitude de São Bento): ainda dentro do círculo de visibilidade da estação, que tem ≈ 1 590 km de raio para el ≥ 10° a 510 km (`footprint_half_angle`: 14,2°). Por isso a estação vê o trem passar inteiro, um satélite a cada ≈ 15,8 min (AOS a 14,3–16,6 min: o tempo entre AOS varia porque cada satélite corta o círculo numa corda diferente, as primeiras do trem perto de uma borda, as do meio perto do centro e as últimas perto da borda oposta). As passagens do meio do trem são as mais altas e longas; as das pontas, rasantes e curtas.
+
+O plano orbital acompanha o Sol (SSO): o trem passa pela estação **duas vezes por dia**, na metade ascendente da órbita (nó às 22h30 local, de noite) e na descendente (10h30, de manhã), **sempre nos mesmos horários solares**. Entre os dois trens não há nenhum contato: as outras ≈ 13 voltas de cada satélite passam longe demais de São Bento.
+
