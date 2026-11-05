@@ -88,6 +88,7 @@
     <li><code>scripts/build_demo.py</code> — SSO-1 (Cowell) e Sentinel-2A na demo: o que a comparação visual mostra e onde está a comparação entre propagadores</li>
     <li><code>src/satsim/groundtrack.py</code> na Semana 5 — nós, grade e fechamento do ciclo: as funções medem, os testes verificam</li>
     <li><code>src/satsim/coverage.py</code> — o que é “100% em 1 dia”, a órbita heliossíncrona como um aro fixo em relação ao Sol, e SSO × órbita de repetição</li>
+    <li><code>src/satsim/passes.py</code> na Semana 5 — o plano de contatos: tempo de antena, a conta das 24 h e por que as passagens chegam em dois trens</li>
   </ol>
 </nav>
 
@@ -2413,6 +2414,108 @@ Antártida, e nos equinócios os dois polos ficam no limite.</p>
 a órbita heliossíncrona garante uma passagem de manhã e P = D garante que as 91 trilhas sejam percorridas
 no dia. O preço da noite é revisitar uma vez por dia em vez de duas, e a cobertura só falha onde não há luz
 em hora nenhuma.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="contact-plan">
+<h2>19. passes.py na Semana 5 — o plano de contatos e os dois trens</h2>
+<div class="file">src/satsim/passes.py · scripts/list_passes.py · tests/test_contact_plan.py · card S5-04</div>
+
+<h3>Organizar, não recalcular</h3>
+<p>Saber <em>quais satélites passam sobre a estação e quando</em> já era trabalho de <code>find_passes</code>
+(Semana 3; o método está na docstring de <code>passes.py</code>). As peças novas do S5-04 não calculam visibilidade de novo: pegam as passagens de todos
+os satélites e as <strong>organizam</strong> num plano de operação.</p>
+<pre><code>find_passes (S3)          → "quando o satélite X fica acima de 10° sobre São Bento?"
+find_passes_many (S3)     → o mesmo para vários satélites, numa lista única ordenada
+        │
+        ▼
+contact_plan (S5-04)      → organiza essa lista num plano de operação</code></pre>
+<table>
+  <tr><th>Nome</th><th>Tipo</th><th>Responde a</th></tr>
+  <tr><td><code>contact_plan</code></td><td>função</td><td>monta o plano: chama <code>find_passes_many</code> e
+      acrescenta o resto</td></tr>
+  <tr><td><code>ContactPlan</code></td><td>classe (resultado)</td><td>guarda passagens, trens e sobreposições;
+      calcula o contato total, as passagens por satélite e o maior intervalo sem contato</td></tr>
+  <tr><td><code>Contact</code></td><td>classe</td><td>uma passagem do plano, mais a elevação do Sol na estação no
+      TCA, a classe “dia”/“noite” (Sol ≥ −6°, crepúsculo civil) e o trem a que pertence</td></tr>
+  <tr><td><code>Train</code></td><td>classe</td><td>um grupo de passagens com AOS a menos de 30 min um do outro:
+      “quando os satélites chegam em sequência?”</td></tr>
+  <tr><td><code>Overlap</code></td><td>classe</td><td>dois satélites visíveis ao mesmo tempo, que exigiriam duas
+      antenas</td></tr>
+  <tr><td><code>sun_elevation_deg</code></td><td>função</td><td>a elevação do Sol na estação (para dia/noite)</td></tr>
+  <tr><td><code>format_contact_plan</code></td><td>função</td><td>a tabela UTC/BRT que
+      <code>list_passes.py --constellation</code> imprime</td></tr>
+</table>
+
+<h3>O tempo de antena</h3>
+<p>É a soma dos intervalos em que algum satélite fica acima de 10° de elevação visto da estação. O
+<code>find_passes</code> não constrói um círculo no chão: testa a elevação. Mas el ≥ 10° é o mesmo que o
+subponto do satélite estar a menos de um raio λ da estação (<code>observer.footprint_half_angle</code>,
+Sem4 §9.4):</p>
+<pre><code>λ = arccos(R⊕/(R⊕ + h)·cos 10°) − 10° = 14,2°  ≈ 1 590 km   (h = 510 km)</code></pre>
+<p>Cada passagem é um trecho do traço que atravessa esse círculo, de 3,1 min (rasante, pela borda) a 7,5 min
+(perto do centro). Em 23/10 são 16 passagens, somando <strong>96,7 min por dia</strong> em que a antena tem um
+satélite para baixar imagens, enviar comandos ou receber telemetria.</p>
+<p>O nome “tempo de antena” importa quando há sobreposição: uma antena aponta para um satélite de cada vez, e
+a soma das durações contaria duas vezes o trecho com dois satélites no céu. Na constelação 91/6 não há
+sobreposição (cada satélite sai do céu antes de o próximo entrar), então a soma e o tempo de antena coincidem
+e uma antena basta. O número não desconta o tempo para a antena girar entre satélites, a aquisição do sinal
+nem o relevo (os 10° valem para todos os azimutes, sem máscara de horizonte).</p>
+
+<h3>A conta das 24 horas</h3>
+<p>Dentro de cada trem há de 8,2 a 11,0 min entre o LOS de um satélite e o AOS do seguinte. Mas as 16
+passagens não se espalham pelo dia: vêm em <strong>dois blocos de 8</strong>, separados por ≈ 10 h sem
+contato. Em BRT, numa janela de 24 h que começa às 21h00:</p>
+<table>
+  <tr><th>Trecho</th><th>De</th><th>Até</th><th>Duração</th></tr>
+  <tr><td>antes do 1º trem</td><td>21h00</td><td>21h32</td><td>0 h 32 min</td></tr>
+  <tr><td><strong>trem noturno</strong> (8 passagens)</td><td>21h32</td><td>23h25</td><td><strong>1 h 53 min</strong></td></tr>
+  <tr><td>sem contato</td><td>23h25</td><td>09h05</td><td>9 h 40 min</td></tr>
+  <tr><td><strong>trem diurno</strong> (8 passagens)</td><td>09h05</td><td>10h58</td><td><strong>1 h 53 min</strong></td></tr>
+  <tr><td>sem contato</td><td>10h58</td><td>21h00</td><td>10 h 02 min</td></tr>
+  <tr><td><strong>total</strong></td><td></td><td></td><td><strong>24 h 00 min</strong></td></tr>
+</table>
+<p>Cada trem: 8 passagens (≈ 48 min de contato) mais 7 intervalos curtos (≈ 65 min) = 1 h 53 min.</p>
+<figure>
+  <img src="../../reports/s5_constelacao/contatos_24h.png" style="width:100%"
+       alt="Linha do tempo dos contatos em 24 h">
+  <figcaption>Contatos com São Bento do Sapucaí em 24 h (el ≥ 10°), gerado por
+  <code>python scripts/constellation_report.py</code>. Em cima, o dia inteiro (faixas escuras: noite na
+  estação); embaixo, um zoom em cada trem, com a elevação máxima de cada passagem.</figcaption>
+</figure>
+
+<h3>Por que dois trens, se os satélites estão igualmente espaçados</h3>
+<p>Os satélites <strong>não</strong> estão agrupados: estão a 60° uns dos outros ao longo de todo o aro (seção
+18), e em qualquer instante há satélites em volta da Terra inteira. O “trem” não é um aglomerado de
+satélites. É a <strong>janela da estação</strong>: o intervalo em que ela está perto o bastante do aro para ver
+os satélites que passam por ele.</p>
+<p>O aro fica fixo em relação ao Sol, na linha 10h30 / 22h30 de hora local, e a Terra gira dentro dele. A
+estação cruza o aro em dois pontos opostos por dia:</p>
+<ul>
+  <li><strong>≈ 22h30 local</strong>: pelo lado noturno do aro, com os satélites subindo de sul para norte (trem
+  noturno);</li>
+  <li><strong>≈ 10h30 local</strong>: pelo lado diurno, com os satélites descendo (trem da manhã).</li>
+</ul>
+<p>No resto do dia os satélites continuam dando voltas, ≈ 15 cada um, mas sobre outras longitudes. A cada volta
+o traço anda 23,7° para oeste, ≈ 2 400 km na latitude de São Bento, bem mais que o raio de visibilidade de
+≈ 1 590 km. Assim que a estação sai de baixo do aro, nenhum traço chega perto o bastante até o próximo
+cruzamento.</p>
+
+<h3>Por que a janela dura ≈ 2 h e tem 8 passagens</h3>
+<p>A estação enxerga 14,2° para cada lado do subponto: uma faixa de ≈ 28° em volta do aro. Atravessá-la exige
+que a Terra gire ≈ 28°/cos 22,7° ≈ 30° em longitude, que a 15°/h levam ≈ 2 h. Nesse tempo os satélites passam
+pelo aro um a cada Tnod/6 ≈ 15,8 min, cada um ≈ 400 km a oeste do anterior, ainda dentro do círculo. As
+passagens do meio do trem são as mais altas (o aro passa quase sobre a estação); as das pontas, rasantes.</p>
+<p>São 8 passagens, e não 6, porque a janela (≈ 2 h) dura mais que uma volta (95 min): os primeiros satélites
+da fila passam de novo na volta seguinte, com o traço deslocado 23,7°, e ainda pegam a borda do círculo (S5 e
+S6 no trem da noite, S3 e S4 no da manhã). Por isso S3 a S6 têm 3 passagens no dia e S1 e S2 têm 2.</p>
+
+<h3>Uma analogia: a roda-gigante e o carrossel</h3>
+<p>Pense numa roda-gigante iluminada girando sempre no mesmo lugar, com 6 cabines igualmente espaçadas (os
+satélites no aro). Você está num carrossel enorme que dá uma volta por dia em torno dela (a estação na Terra
+que gira). Só quando o carrossel o leva para perto da roda você vê as cabines passarem, uma a cada 15,8 min.
+Isso acontece duas vezes por volta do carrossel, uma de cada lado da roda. No resto do tempo as cabines
+continuam girando, mas longe de você.</p>
 </section>
 
 </main>
