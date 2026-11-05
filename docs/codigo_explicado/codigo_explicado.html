@@ -87,6 +87,7 @@
     <li><code>src/satsim/mean_osc.py</code> — elementos médios × osculadores: de onde vêm, o método do tiro e quais forças entram na conversão (comparação com o SGP4)</li>
     <li><code>scripts/build_demo.py</code> — SSO-1 (Cowell) e Sentinel-2A na demo: o que a comparação visual mostra e onde está a comparação entre propagadores</li>
     <li><code>src/satsim/groundtrack.py</code> na Semana 5 — nós, grade e fechamento do ciclo: as funções medem, os testes verificam</li>
+    <li><code>src/satsim/coverage.py</code> — o que é “100% em 1 dia”, a órbita heliossíncrona como um aro fixo em relação ao Sol, e SSO × órbita de repetição</li>
   </ol>
 </nav>
 
@@ -2314,6 +2315,104 @@ mesma função que confirma o teorema P = D nos testes é usada para <strong>cal
 instantes dos nós) e, no S5-06, vai <strong>alimentar o mapa</strong> da GUI com os nós já percorridos.
 Uma única implementação, testada uma vez, evita que o projeto, a verificação e a tela usem contas
 diferentes para a mesma grandeza.</p>
+</section>
+
+<!-- ============================================================================== -->
+<section class="script" id="coverage-sso">
+<h2>18. coverage.py — cobertura diária, luz e o que a órbita heliossíncrona garante</h2>
+<div class="file">src/satsim/coverage.py · tests/test_coverage.py · reports/s5_constelacao/relatorio.md · card S5-03</div>
+
+<h3>O que quer dizer “100% dos alvos entre ±80° vistos em 1 dia”</h3>
+<p>É o resultado do teste <code>test_daily_coverage_six_satellites</code>, e cada palavra tem um
+significado preciso:</p>
+<ul>
+  <li><strong>alvos</strong>: os pontos de uma grade de 1° × 1° de −80° a +80° de latitude, em todas as
+  longitudes (161 × 360 = 57 960 pontos, <code>TargetGrid(1, 1)</code>);</li>
+  <li><strong>entre ±80°</strong>: com inclinação de 97,46°, os satélites sobem no máximo até 82,5° de
+  latitude; além de 80° as trilhas se fecham em volta do polo e a cobertura deixa de ser uniforme;</li>
+  <li><strong>vistos</strong>: algum dos 6 satélites passou perto o bastante para apontar a câmera para o
+  alvo inclinando-a até 23,2° para o lado, isto é, o subponto ficou a até 220 km do alvo (ângulo
+  geocêntrico λ = 1,978°, Sem4 eq. 45). É <em>oportunidade de imagem</em>, não imagem tirada;</li>
+  <li><strong>em 1 dia</strong>: 24 h a partir de 2026-10-23 00:00 UTC, com amostras a cada 10 s.</li>
+</ul>
+<p>Com um satélite só, 48,8% dos alvos são vistos no dia e é preciso o ciclo inteiro de 6 dias para chegar
+a 100%. O número não considera a luz (ver abaixo), nuvens, a agilidade do satélite para girar entre alvos
+vizinhos nem conflitos entre alvos que disputam o mesmo satélite.</p>
+
+<h3>A órbita como um aro fixo em relação ao Sol</h3>
+<p>Uma imagem ajuda a entender o que é uma órbita heliossíncrona (SSO). Olhe a Terra a partir do Sol:</p>
+<ul>
+  <li><strong>a órbita é um aro</strong> quase polar (97,5°), parado em relação ao Sol, na linha
+  10h30 / 22h30 de hora local: um lado do aro cruza o hemisfério iluminado de manhã, o outro cruza o
+  escuro à noite;</li>
+  <li><strong>o satélite corre pelo aro</strong>, uma volta a cada ≈ 95 min, ≈ 15 voltas por dia;</li>
+  <li><strong>a Terra gira dentro do aro</strong>, uma vez por dia.</li>
+</ul>
+<p>“Parado em relação ao Sol” é a definição de SSO. O aro não fica parado em relação às estrelas: gira
+0,9856°/dia, exatamente o que o Sol anda no céu ao longo do ano. É o achatamento da Terra (J2) que faz
+esse giro, e a inclinação de 97,46° é escolhida para que ele tenha essa taxa (Sem4 §4).</p>
+<p>Três consequências:</p>
+<ol>
+  <li><strong>O LTAN vale para todas as passagens, não para uma por dia.</strong> O satélite cruza o equador
+  subindo ≈ 15 vezes por dia, sempre às 22h30 de hora local, e descendo outras ≈ 15, sempre às 10h30, cada
+  vez numa longitude diferente. Em UTC os horários mudam de lugar para lugar; em hora local são sempre os
+  mesmos. Todo ponto da Terra passa por baixo do aro duas vezes por dia: uma de manhã, uma à noite.</li>
+  <li><strong>Muitas faixas por dia.</strong> A cada volta a Terra girou ≈ 23,7° por baixo do aro, então o
+  satélite desenha uma faixa nova, 23,7° a oeste da anterior: ≈ 15 faixas diurnas (metade descendente) e
+  ≈ 15 noturnas (metade ascendente) por dia.</li>
+  <li><strong>Claro e escuro a cada volta, não a cada 12 h.</strong> Um satélite que está agora sobre o lado
+  escuro volta ao claro em ≈ 47 minutos (meia volta), não em 12 horas. A rotação da Terra não muda se o
+  satélite está no claro ou no escuro; muda quais longitudes passam por baixo da metade iluminada. Os 6
+  satélites estão em fila no mesmo plano (15,8 min entre eles): em qualquer instante, cerca de metade da
+  fila está sobre o lado iluminado, e isso se inverte a cada ≈ 47 min. Todos fotografam em todas as voltas,
+  na metade descendente.</li>
+</ol>
+
+<h3>Heliossíncrona × órbita de repetição</h3>
+<p>“24 horas depois” o satélite não está sobre o mesmo traço: em 24 h ele dá 15,17 voltas, não um número
+inteiro, e as faixas do dia seguinte caem entre as do dia anterior. O traço só se repete depois de 6 dias
+(91 voltas). São duas propriedades diferentes, que a órbita de projeto tem ao mesmo tempo:</p>
+<table>
+  <tr><th>Propriedade</th><th>O que garante</th><th>De onde vem</th></tr>
+  <tr><td><strong>Heliossíncrona</strong></td><td>mesmo horário <em>local</em> em toda passagem, todo dia
+      (iluminação parecida nas imagens)</td><td>a inclinação de 97,46°: o aro acompanha o Sol</td></tr>
+  <tr><td><strong>Repetição 91/6</strong></td><td>os <em>mesmos pontos</em> do solo de novo a cada 6 dias
+      (91 trilhas fixas)</td><td>o semieixo de 6 888 108 m (o calibrado no S5-02, seção 17)</td></tr>
+</table>
+<p>A ISS é o contraexemplo: o aro dela gira −5°/dia em relação às estrelas, longe do giro do Sol, e os
+horários locais das suas passagens mudam dia a dia; ela passa de manhã numa semana e de madrugada algumas
+semanas depois.</p>
+
+<h3>A luz: a noite custa frequência, não cobertura</h3>
+<p>Para uma câmera óptica, só a passagem descendente (10h30) serve; a ascendente (22h30) é noturna. Como a
+SSO garante a passagem da manhã em qualquer longitude e os 6 satélites (P = D, Sem4 §8.3) cobrem as 91
+trilhas em um dia, todo ponto iluminado recebe uma passagem com luz por dia. O que se perde é a frequência:</p>
+<table>
+  <tr><th>P = 6, 3 dias</th><th>Sem restrição de luz</th><th>Só com Sol ≥ 10° no alvo</th></tr>
+  <tr><td>Visitas por dia a cada ponto</td><td>2 (manhã e noite)</td><td>1 (manhã)</td></tr>
+  <tr><td>Revisita máxima, |lat| ≤ 60°</td><td>13,97 h</td><td>24,26 h</td></tr>
+</table>
+<p>Um sensor que funciona no escuro (radar, infravermelho térmico) aproveita as duas passagens. A rotação da
+Terra, sozinha, não basta para a cobertura diária: com um satélite a Terra também gira 24 h por baixo dele,
+e só 48,8% dos pontos são vistos no dia. Quem fecha a cobertura é o número de satélites igual ao ciclo.</p>
+
+<h3>Onde esperar a Terra girar não ajuda: a noite polar</h3>
+<p>Com luz, a fração vista é <strong>92,55%</strong>, não 100%, mesmo em 3 dias. Os 7,45% que faltam são todos
+os pontos acima de ≈ 69° N: em 23/10 o Sol está a −11,9° de declinação, e nessas latitudes ele não sobe a
+10° de elevação nem ao meio-dia (90° − 10° + δ ≈ 68° N), em longitude nenhuma. É a noite polar chegando:
+nenhuma passagem, de nenhum satélite, encontra luz suficiente ali. Só a estação muda isso: em abril falta a
+Antártida, e nos equinócios os dois polos ficam no limite.</p>
+<figure>
+  <img src="../../reports/s5_constelacao/cobertura_latitude.png" style="width:92%"
+       alt="Fração de alvos vistos em 1 dia por latitude">
+  <figcaption>Alvos vistos em 1 dia por latitude, gerado por <code>python scripts/constellation_report.py</code>.
+  P = 6 cobre 100% sem restrição de luz; só com luz, 100% até ≈ 68° N e nada acima (a queda à direita). A
+  curva de P = 1 com luz sobe para o sul: a primavera austral deixa o Sol alto até −80°.</figcaption>
+</figure>
+<p>Em resumo: com 6 satélites, todo ponto entre −80° e ≈ +68° (em outubro) é visto com luz todo dia, porque
+a órbita heliossíncrona garante uma passagem de manhã e P = D garante que as 91 trilhas sejam percorridas
+no dia. O preço da noite é revisitar uma vez por dia em vez de duas, e a cobertura só falha onde não há luz
+em hora nenhuma.</p>
 </section>
 
 </main>
