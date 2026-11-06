@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Resumo dos cards</title>
+<style>
+  @page { size: A4; margin: 18mm 18mm 18mm 18mm; }
+  :root { --ink: #1a2233; --accent: #0b6e99; --muted: #5b6577; }
+  body { font-family: "DejaVu Serif", Georgia, serif; font-size: 10.5pt; line-height: 1.45;
+         color: var(--ink); margin: 0; }
+  h1, h2 { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--ink); }
+  h1 { font-size: 20pt; margin: 0 0 4pt; }
+  h2 { font-size: 13.5pt; margin: 18pt 0 6pt; padding-bottom: 3pt;
+       border-bottom: 2px solid var(--accent); page-break-after: avoid; }
+  .subtitle { color: var(--muted); font-size: 10.5pt; margin-bottom: 10pt; }
+  ul { margin: 4pt 0 0 0; padding-left: 16pt; }
+  li { margin-bottom: 4pt; }
+  code { font-family: "DejaVu Sans Mono", Menlo, monospace; font-size: 9pt; color: #6a1b4d; }
+  .box { border-left: 3px solid var(--accent); background: #eef6fa; padding: 6pt 10pt;
+         margin: 8pt 0; font-size: 10pt; }
+  section { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<h1>Resumo dos cards — Semana 5</h1>
+<div class="subtitle">Constelação de 6 satélites em órbita heliossíncrona (SSO) com repetição
+91/6, simulada no pacote <code>satsim</code>. Cada bullet resume, em linguagem simples, o que o
+card acrescentou.</div>
+
+<div class="box">
+<b>Contexto em uma frase:</b> seis satélites dividem a mesma órbita, espaçados igualmente, e o
+traço deles no solo se repete exatamente a cada 6 dias, depois de 91 voltas.
+</div>
+
+<section>
+<h2>Card S5-01 · Satellite, Constellation e a constelação 91/6</h2>
+<ul>
+  <li>Até a Semana 4 o código propagava um satélite por vez; este card cria a noção de
+      "satélite" e de "constelação".</li>
+  <li>A classe <code>Satellite</code> junta num só objeto o nome, a cor, os dados de arrasto e o
+      propagador (quem calcula a posição ao longo do tempo).</li>
+  <li>A classe <code>Constellation</code> agrupa vários satélites com a mesma época e calcula a
+      posição de todos de uma vez (<code>propagate</code>).</li>
+  <li>A função <code>repeat_orbit</code> encontra a altitude e a inclinação em que o traço no solo
+      se repete após 91 voltas em 6 dias.</li>
+  <li>A função <code>constellation_phases</code> distribui os 6 satélites igualmente espaçados ao
+      longo da órbita (60° entre vizinhos).</li>
+  <li>A função <code>sso_constellation</code> monta a constelação completa, já com todas as forças
+      (gravidade não esférica, Sol, Lua, radiação solar e arrasto).</li>
+  <li>O exportador da cena 3D (<code>build_scene</code>) passou a aceitar uma constelação
+      inteira, sem quebrar o formato antigo.</li>
+</ul>
+</section>
+
+<section>
+<h2>Card S5-02 · Nós ascendentes, grade de 91 trilhas e repetição calibrada</h2>
+<ul>
+  <li>Este card verifica se a constelação realmente se comporta como projetado, medindo o traço
+      no solo.</li>
+  <li>A função <code>node_crossings</code> encontra os instantes e as longitudes em que o satélite
+      cruza o equador indo para o norte (nó ascendente).</li>
+  <li>A função <code>grid_metrics</code> confere se esses cruzamentos formam uma grade de 91
+      trilhas igualmente espaçadas no equador.</li>
+  <li>A função <code>repeat_closure</code> mede quanto o traço do dia 7 erra em relação ao dia 1,
+      ou seja, se o ciclo de 6 dias "fecha".</li>
+  <li>Com todas as forças, o ciclo não fecha sozinho: as perturbações mudam o período alguns
+      segundos.</li>
+  <li>A função <code>repeat_semi_major_axis_calibrated</code> corrige o semieixo maior (+19 m) até
+      o ciclo fechar no simulador completo.</li>
+</ul>
+</section>
+
+<section>
+<h2>Card S5-03 · Cobertura diária e revisita</h2>
+<ul>
+  <li>Este card mede quais pontos da Terra a constelação consegue observar e com que
+      frequência.</li>
+  <li>A função <code>swath_half_angle</code> calcula a largura da faixa de solo que a câmera vê
+      quando o satélite inclina (rola) para o lado.</li>
+  <li>A função <code>roll_for_half_grid</code> calcula a inclinação da câmera (≈ 23°) para que
+      faixas vizinhas se encostem e não deixem buracos.</li>
+  <li>A classe <code>TargetGrid</code> espalha pontos-alvo sobre a Terra entre as latitudes −80° e
+      +80°.</li>
+  <li>A função <code>access_times</code> lista em que instantes cada alvo é visto, com a opção de
+      exigir que o local esteja iluminado pelo Sol.</li>
+  <li>A função <code>coverage_stats</code> resume esses acessos: fração de alvos vistos e tempo
+      entre duas observações (revisita).</li>
+  <li>Resultado: 100% dos alvos entre ±80° são vistos em 1 dia; a revisita é menor perto dos
+      polos, onde as faixas se sobrepõem.</li>
+</ul>
+</section>
+
+<section>
+<h2>Card S5-04 · Plano de contatos com a estação de solo</h2>
+<ul>
+  <li>Este card responde quando e quais satélites passam sobre a estação de São Bento do Sapucaí
+      para comunicação.</li>
+  <li>A função <code>contact_plan</code> junta as passagens dos 6 satélites num só plano, em ordem
+      de horário.</li>
+  <li>A função <code>sun_elevation_deg</code> calcula a altura do Sol na estação, para marcar cada
+      passagem como "dia" ou "noite".</li>
+  <li>As passagens chegam em dois "trens": um à noite (≈ 21h30–23h30) e outro de manhã
+      (≈ 9h–11h), cada um com 8 passagens em fila.</li>
+  <li>Os trens existem porque a estação, girando com a Terra, cruza o plano da órbita só duas
+      vezes por dia.</li>
+  <li>A classe <code>ContactPlan</code> informa o tempo total de antena (≈ 97 min/dia), o maior
+      intervalo sem contato e as sobreposições.</li>
+  <li>A função <code>format_contact_plan</code> imprime o plano em horário de Brasília; o script
+      <code>list_passes.py --constellation</code> usa essa saída.</li>
+</ul>
+</section>
+
+<section>
+<h2>Card S5-05 · Manutenção da constelação: deriva do traço e do LTAN</h2>
+<ul>
+  <li>O arrasto atmosférico, a principal força dissipativa nesta altitude, faz o satélite perder
+      altura aos poucos (≈ 24 m/dia).</li>
+  <li>Com órbita mais baixa, a volta fica mais curta e o traço no solo escorrega para leste,
+      saindo da grade de 91 trilhas.</li>
+  <li>A função <code>measure_decay_rate</code> mede no simulador quanto o semieixo maior,
+      <i>a</i>, cai por dia devido ao arrasto.</li>
+  <li>A função <code>track_drift</code> calcula quanto o traço se desloca no equador; o desvio
+      cresce com o quadrado do tempo.</li>
+  <li>A função <code>time_to_deadband</code> calcula em quantos dias o traço sai da tolerância de
+      ±5 km (≈ 7 dias).</li>
+  <li>As funções <code>delta_v_for_semi_major_axis</code> e <code>track_delta_v_per_year</code>
+      calculam o empurrão do motor para corrigir <i>a</i> (≈ 4,8 m/s/ano).</li>
+  <li>A gravidade do Sol (não o arrasto) muda lentamente a inclinação, <i>i</i>, e isso altera o
+      giro do plano da órbita, Ω.</li>
+  <li>Esse giro alterado desloca o LTAN (a hora local em que o satélite cruza o equador);
+      <code>ltan_drift_from_inclination</code> calcula essa taxa.</li>
+  <li>A função <code>ltan_offset</code> calcula quantos minutos o LTAN acumula ao longo do tempo
+      (≈ 3,4 min em 1 ano, crescendo com t²).</li>
+  <li>A função <code>time_to_ltan_band</code> diz quando o LTAN sai da tolerância de ±5 min
+      (≈ 1,2 ano).</li>
+  <li><code>inclination_delta_v_per_year</code> calcula o custo de corrigir a inclinação
+      (≈ 4,75 m/s/ano), parecido com o da altitude.</li>
+  <li>A classe <code>MaintenanceStatus</code> reúne, por satélite, quando será a próxima correção
+      e quanto ela custa, pronta para exibição na cena 3D.</li>
+  <li>Conclusão: o custo anual das duas correções é parecido, mas a altitude pede uma manobra
+      por semana e a inclinação, uma por ano.</li>
+</ul>
+</section>
+
+<section>
+<h2>Card S5-06 · Interface da constelação</h2>
+<ul>
+  <li>Pendente: ainda não iniciado.</li>
+</ul>
+</section>
+
+</body>
+</html>
