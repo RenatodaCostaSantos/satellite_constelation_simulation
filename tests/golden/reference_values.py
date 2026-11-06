@@ -1523,3 +1523,31 @@ class MaintenanceTestS5:
 
 
 MAINTENANCE_TEST_S5 = MaintenanceTestS5()
+
+
+@dataclass(frozen=True)
+class DemoSceneS5:
+    """Constelação na cena da demo (S5-06): critérios do card e medidas de regressão.
+
+    Critérios do card S5-06: 6 membros em ``meta.constellation``; 91 nós somados em 1 dia (A.3,
+    ``NODE_GRID_A3.p6_nodes``); LTAN dos 6 satélites constante em 24 h, 22,500 ± 0,01 h, e iguais
+    entre si (mesma tolerância); ``--days 6`` com arquivo < 15 MB.
+
+    Medido no satsim (S5-06, build_demo --offline, 2026-10-23 00:00 UTC, Cowell completo, a
+    calibrado): LTAN 22,4994 … 22,5029 h nos seis, diferença máxima entre eles 0,0006 h; 15 ou 16
+    nós por satélite (91 no total); faixa λ = 1,9955° (rolagem de meia grade do A.5, 23,1957°, no
+    raio médio da órbita); ȧ −23,94 … −24,01 m/dia. Arquivo: 1 dia (passo 20 s) 6,7 MB; 6 dias
+    (passo 60 s) 11,2 MB, 8 641 amostras por satélite, 40 s para gerar.
+    """
+
+    start_utc: str = "2026-10-23T00:00:00Z"
+    member_ids: tuple[str, ...] = ("s1", "s2", "s3", "s4", "s5", "s6")
+    nodes_1d: int = 91  # A.3
+    ltan_h: float = 22.5
+    ltan_tol_h: float = 0.01  # critério do card
+    ltan_spread_tol_h: float = 0.01  # critério do card ("iguais entre si")
+    max_file_mb: float = 15.0  # critério do card
+    step_6d_s: float = 60.0
+
+
+DEMO_SCENE_S5 = DemoSceneS5()

@@ -61,15 +61,36 @@ tests/                       testes (pytest)
 
 ![Demo do satsim: a ISS real em passagem sobre São Bento do Sapucaí, com a linha estação → satélite no globo, o círculo de visibilidade no mapa e a lista de passagens](docs/img/demo.png)
 
-Globo 3D e mapa 2D na mesma tela e sincronizados, com a **ISS real** (TLE/SGP4) desde a
-Semana 3. Tudo é calculado em Python; o viewer só desenha. A demo cobre **24 h a partir de
-agora** (passo de 20 s) com três satélites:
+Globo 3D e mapa 2D na mesma tela e sincronizados. Tudo é calculado em Python; o viewer só
+desenha. A demo cobre **24 h a partir de agora** (passo de 20 s), ou o ciclo inteiro de 6 dias
+com `--days 6`, com oito satélites:
 
 | Satélite | Propagador | O que mostra |
 |---|---|---|
-| ISS | `SGP4Propagator` | a ISS real, a partir do TLE mais recente (CelesTrak → cache → TLE embarcado) |
-| SSO-1 (Cowell) | `CowellPropagator` completo (J2–J4 + Sol/Lua + SRP + arrasto) | a SSO de projeto 91/6 calibrada (i = 97,46325°, e congelada, ω = 90°), LTAN 22h30 no início da cena, a partir de `mean_to_osculating` dos elementos médios (S4-06) |
-| Sentinel-2A | `SGP4Propagator` | uma SSO real a ≈ 786 km (TLE da CelesTrak → cache → TLE embarcado), para comparar com a de projeto (S4-06) |
+| S1 … S6 (constelação 91/6) | `CowellPropagator` completo (J2–J4 + Sol/Lua + SRP + arrasto) | os 6 satélites de `sso_constellation` num único plano, 60° entre vizinhos: a calibrado (S5-02), i = 97,46325°, e congelada, ω = 90°, LTAN 22h30 no início da cena (S5-06) |
+| ISS | `SGP4Propagator` | a ISS real, a partir do TLE mais recente (CelesTrak → cache → TLE embarcado); desligada no início |
+| Sentinel-2A | `SGP4Propagator` | uma SSO real a ≈ 786 km (TLE da CelesTrak → cache → TLE embarcado), para comparar com a de projeto (S4-06); desligada no início |
+
+### Constelação 91/6 (Semana 5)
+
+![Demo da constelação: os seis satélites em fila no mesmo plano no globo; no mapa, a faixa alcançável ao longo do traço e os nós ascendentes já percorridos marcados no equador](docs/img/demo_constelacao.png)
+
+- **Seis satélites em fila no mesmo plano:** no globo, a órbita prevista é desenhada uma vez (a
+  do satélite selecionado) e cada satélite deixa a sua trilha colorida. Como as órbitas são
+  iguais, os seis passam pelos mesmos pontos do espaço, um a cada ≈ 15,8 min.
+- **Grade do dia** (camada do mapa): cada nó ascendente já percorrido vira um traço vertical no
+  equador, com a cor do satélite. O título do mapa conta quantas das 91 trilhas já foram
+  percorridas: com os seis satélites, a grade se completa em 1 dia; com `--days 6` e só um
+  satélite ligado, as 91 trilhas aparecem uma a uma ao longo do ciclo (a melhor demonstração do
+  projeto, Sem4 §9.4).
+- **Faixa** (camada do mapa): a área que a câmera alcança com a rolagem de meia grade (±23,2°,
+  λ ≈ 2° para cada lado), ao longo das últimas 100 min de traço. As faixas vizinhas se encostam.
+- **Painel Informações** de um membro: **fase Δu** em relação a S1 (S2 = −60°, S4 = ±180°…),
+  **próxima correção do traço** (contagem regressiva a partir dos ≈ 6,9 dias do S5-05; a cena
+  não simula manobras) e **Δv/ano** de manutenção (traço + inclinação).
+- **Legenda agrupada:** "Constelação 91/6" com uma caixa que liga/desliga os seis; ISS e
+  Sentinel-2A ficam em "Outros satélites", desligados no início. Com a constelação, o círculo de
+  visibilidade da estação aparece só para o satélite selecionado.
 
 E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
 
@@ -89,9 +110,9 @@ E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
   idade passa de 3 dias (a posição real pode diferir de dezenas de km).
 
 No painel **Informações** do satélite selecionado (S4-06): **LTAN** (hora local do nó
-ascendente; na SSO-1 fica em 22h30 o dia inteiro, na ISS muda continuamente), **β** (ângulo entre
+ascendente; nos seis satélites da constelação fica em 22h30 o dia inteiro, na ISS muda continuamente), **β** (ângulo entre
 o plano da órbita e o Sol) e **Sol**: *iluminado* ou *em eclipse*. Na sombra da Terra o marcador
-do satélite fica esmaecido, no globo e no mapa; na SSO-1, cerca de 36% de cada volta (≈ 35 min).
+do satélite fica esmaecido, no globo e no mapa; na constelação, cerca de 36% de cada volta (≈ 35 min).
 
 As passagens do viewer são as mesmas de `scripts/list_passes.py` (a mesma função,
 `satsim.passes.find_passes`).
@@ -99,7 +120,8 @@ As passagens do viewer são as mesmas de `scripts/list_passes.py` (a mesma funç
 **Gerar** (na raiz do repositório, com o venv ativo):
 
 ```bash
-python scripts/build_demo.py              # ISS e Sentinel-2A reais, 24 h a partir de agora (~4 MB)
+python scripts/build_demo.py              # constelação + ISS e Sentinel-2A reais, 24 h (~7 MB, ~10 s)
+python scripts/build_demo.py --days 6     # o ciclo inteiro de 6 dias, passo de 60 s (~11 MB, ~40 s)
 python scripts/build_demo.py --offline    # sem rede: cache local ou TLE embarcado
 python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-epoch   # reprodutível
 ```
@@ -109,10 +131,11 @@ python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-ep
 embutidas no arquivo. A rede só é usada ao **gerar** a demo, para baixar um TLE recente, e é
 opcional. A pasta `demo/` não é versionada; gere de novo para atualizar a ISS.
 
-**Adicionar um satélite:** acrescente-o à lista devolvida por `design_satellites` em
+**Adicionar um satélite:** acrescente-o à lista `satellites` montada em `main` de
 [`scripts/build_demo.py`](scripts/build_demo.py): um `SceneSatellite(id, nome, cor,
-propagador)` com qualquer propagador (a SSO-1, em `sso_design`, mostra a receita "elementos
-médios → `mean_to_osculating` → Cowell completo"). Por exemplo, com elementos médios de J2:
+propagador)` ou um `Satellite` com qualquer propagador (a constelação, em
+`build_constellation`, usa a receita "elementos médios → `mean_to_osculating` → Cowell
+completo" de `sso_constellation`). Por exemplo, com elementos médios de J2:
 
 ```text
 SceneSatellite("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator(KeplerianElements(7200e3, 0.01, math.radians(30), math.radians(200), 0.0, math.radians(90)), start)),
@@ -127,11 +150,12 @@ lista.
 | Controle | Ação |
 |---|---|
 | ▶ / ❚❚ (ou barra de espaço) | reproduzir / pausar |
-| 1x · 10x · 60x · 300x · 1000x | velocidade da simulação |
-| linha do tempo (embaixo) | arrastar para qualquer instante da janela de 24 h; marcas verdes = passagens |
+| 1x · 10x · 60x · 300x · 1000x · 5000x | velocidade da simulação (5000x: 1 dia em ≈ 17 s) |
+| linha do tempo (embaixo) | arrastar para qualquer instante da janela; marcas verdes = passagens |
 | ⏮ início | voltar ao início da janela |
 | passagem na lista | ir a 60 s antes do AOS |
-| caixas na lista de satélites | mostrar / ocultar cada satélite |
+| caixas na lista de satélites | mostrar / ocultar cada satélite; a do grupo, a constelação inteira |
+| camadas do mapa | ligar / desligar a grade do dia e a faixa |
 | nome na lista de satélites | selecionar: os painéis **Informações** e da estação passam a mostrar esse satélite |
 | arrastar / roda do mouse no globo | girar / zoom |
 
