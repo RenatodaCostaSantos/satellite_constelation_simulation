@@ -63,20 +63,43 @@ def circular_velocity(a: float) -> float:
 def track_drift(t: ArrayLike, a_dot: float, a: float) -> tuple[FloatOrArray, FloatOrArray]:
     """Deriva do traço no equador partindo da órbita nominal: λ(t) = 3π|ȧ|t²/(2a·T_dia).
 
-    Sem4 §7.6, integrando a eq. 40 com δa(t) = ȧ·t: a taxa de deriva é dλ/dt = 3π|δa|/(a·T_dia)
-    (o fechamento de um ciclo de D dias, 3πD·δa/a, repartido pelos dias), e cresce com o erro
-    acumulado em a. Subestima em ≈ 0,5% (o efeito de ȧ em Ω̇ fica de fora, Sem4 §7.6).
+    É a consequência, no solo, do decaimento por arrasto: a órbita desce, o período encurta e o
+    traço sai da grade projetada (sempre para leste com ȧ < 0). Sem4 §7.6, eq. 40 integrada.
+
+    Derivação:
+
+    1. Erro de período (3ª lei de Kepler): δT = 1,5·T·δa/a.
+    2. Por volta, a Terra gira sob a órbita a ≈ 2π/T_dia; a volta δT mais curta faz o nó
+       ascendente cair ω⊕·δT a leste do previsto, e isso se repete a cada volta.
+    3. Taxa de deriva (deslocamento por volta / duração da volta):
+       dλ/dt = ω⊕·δT/T = (2π/T_dia)·1,5·δa/a = 3π·δa/(a·T_dia)
+       (é o fechamento de um ciclo de D dias, 3πD·δa/a, repartido pelos dias).
+    4. Com arrasto, o erro em a cresce linearmente, δa(t) = |ȧ|·t; integrando de 0 a t:
+       λ(t) = ∫ 3π|ȧ|t′/(a·T_dia) dt′ = 3π|ȧ|t²/(2a·T_dia).
+       O t² aparece porque se soma um erro que cresce linearmente: o dobro do tempo dá o
+       quádruplo da deriva.
+
+    Exemplo (A.7): ȧ = −23,71 m/dia, t = 6 dias → λ = 5,84e-4 rad → 3,72 km (Cowell: 3,68 km).
+    A inversa é ``time_to_deadband`` (±5 km em 6,95 dias).
+
+    Aproximações: T_dia = 86 400 s (dia solar médio, como na eq. 40; o dia nodal difere em
+    ≈ 0,3%), e o efeito de δa sobre Ω̇ (J2) fica de fora, o que subestima a deriva em ≈ 0,5%.
 
     Args:
-        t: tempo desde a última manobra [s], escalar ou array.
-        a_dot: taxa de variação do semieixo [m/s] (negativa com arrasto; usa-se |ȧ|).
-        a: semieixo [m].
+        t: tempo desde a última manobra (traço na grade) [s], escalar ou array.
+        a_dot: taxa de variação do semieixo [m/s] (negativa com arrasto; usa-se |ȧ|, pois o
+            sentido da deriva é conhecido e a função devolve o tamanho do desvio).
+        a: semieixo nominal [m].
 
     Returns:
-        (λ [rad], λ·R⊕ [km]): o desvio no equador, com o shape de ``t``.
+        (λ [rad], λ·R⊕ [km]): o desvio no equador, com o shape de ``t`` (float se ``t`` for
+        escalar).
     """
+    # aceita escalar ou série de tempos (o relatório desenha a curva com um array)
     t = np.asarray(t, dtype=float)
+    # 3π = 2π (rotação da Terra) × 1,5 (Kepler); o 2 do denominador vem de ∫t′dt′ = t²/2
     lam = 3.0 * math.pi * abs(a_dot) * t**2 / (2.0 * a * SECONDS_PER_DAY)
+    # λ em rad e o arco correspondente no equador, λ·R⊕, em km; _scalar devolve float p/ escalar
     return _scalar(lam), _scalar(lam * R_EARTH / 1e3)
 
 
