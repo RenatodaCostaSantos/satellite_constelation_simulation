@@ -34,11 +34,34 @@ Com ``sun_geometry=True``, cada satélite ganha, por amostra (também sem mudar
 - ``beta_deg[]``: ângulo β entre o plano da órbita e a direção do Sol (``ephemeris.beta_angle``,
   Sem4 eq. 29);
 - ``eclipse[]``: ``true`` na sombra cilíndrica da Terra (``ephemeris.in_shadow_cylindrical``).
+
+Satellite e Constellation (S5-01)
+---------------------------------
+``build_scene`` aceita ``satsim.satellite.Satellite`` (a classe do ADR), o ``SceneSatellite``
+provisório (mantido por compatibilidade) ou uma ``satsim.constellation.Constellation`` inteira.
+O contrato JSON não muda: só id, nome, cor e propagador de cada satélite são usados.
+
+Constelação na cena (S5-06, campos opcionais)
+---------------------------------------------
+Com ``constellation_info`` (um ``SceneConstellation``), a cena ganha, ainda sem mudar
+``schema_version``:
+
+- ``meta.constellation = {name, n_revs, n_days, n_sats, grid_deg, member_ids, roll_deg}``: a
+  repetição N/D, o passo da grade no equador (360°/N), os ids dos membros e a rolagem da faixa
+  (``roll_deg`` é ``null`` sem rolagem);
+- em cada membro, ``nodes = {t_s[], lon_deg[]}``: os nós ascendentes na janela
+  (``groundtrack.node_crossings``, S5-02), em segundos desde o início da cena;
+- em cada membro, com rolagem, ``swath_deg``: o alcance transversal λ da eq. 45 do Sem4
+  (``coverage.swath_half_angle``) para a rolagem dada, no raio médio da órbita na janela;
+- em cada membro com indicador, ``maintenance``: o resumo do ``MaintenanceStatus`` (S5-05),
+  com ``null`` no lugar de valores infinitos (sem decaimento, nunca sai da banda).
+
+Satélites fora de ``member_ids`` (ISS, Sentinel-2A) não ganham esses campos.
 """
 
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -46,13 +69,18 @@ import numpy as np
 from numpy.typing import NDArray
 
 from satsim.astrotime import datetime_to_jd, gmst, gmst_rate, jd_from_epoch
+from satsim.constellation import Constellation
+from satsim.coverage import swath_half_angle
 from satsim.elements import state_to_elements
 from satsim.ephemeris import beta_angle, in_shadow_cylindrical, ltan_hours, sun_direction
 from satsim.frames import eci_to_ecef
 from satsim.geodesy import ecef_to_geodetic
+from satsim.groundtrack import node_crossings
+from satsim.maintenance import MaintenanceStatus
 from satsim.observer import GroundStation, footprint_half_angle
 from satsim.passes import Pass, find_passes
 from satsim.propagators import Propagator
+from satsim.satellite import Satellite
 from satsim.tle import Tle
 
 SCHEMA_VERSION = 1
@@ -84,6 +112,26 @@ LTAN_DECIMALS = 4
 BETA_DECIMALS = 4
 """Casas decimais de ``beta_deg`` [°]."""
 
+NODE_TIME_DECIMALS = 3
+"""Casas decimais de ``nodes.t_s`` [s] (1 ms)."""
+
+MAINTENANCE_DECIMALS = 4
+"""Casas decimais dos campos de ``maintenance``."""
+
+MAINTENANCE_FIELDS: tuple[str, ...] = (
+    "a_dot_m_day",
+    "track_deadband_km",
+    "days_to_track_correction",
+    "track_delta_v_per_maneuver_m_s",
+    "track_maneuvers_per_year",
+    "track_delta_v_per_year_m_s",
+    "ltan_offset_1y_min",
+    "ltan_band_min",
+    "days_to_ltan_correction",
+    "inclination_delta_v_per_year_m_s",
+)
+"""Campos do ``MaintenanceStatus`` (S5-05) que entram no resumo ``satellites[i].maintenance``."""
+
 _FRAME = "ECI simplificado (x -> equinócio vernal)"
 _GEODESY = "WGS84"
 
@@ -92,7 +140,9 @@ _GEODESY = "WGS84"
 class SceneSatellite:
     """Satélite da cena: dados de exibição + propagador.
 
-    Provisório: será substituído pela classe ``Satellite`` do ADR na S5-01.
+    Provisório (Semanas 1–4), mantido por compatibilidade: desde a S5-01 a classe do ADR é
+    ``satsim.satellite.Satellite``, que ``build_scene`` também aceita. Não é um alias dela porque a
+    ordem posicional dos campos difere (aqui ``color`` vem antes de ``propagator``).
     """
 
     id: str
@@ -122,6 +172,56 @@ class SceneStation:
     def ground_station(self) -> GroundStation:
         """A ``GroundStation`` equivalente (para calcular az/el e passagens)."""
         return GroundStation.from_degrees(self.name, self.lat_deg, self.lon_deg, self.alt_m)
+
+
+@dataclass(frozen=True)
+class SceneConstellation:
+    """Descrição da constelação para a cena (S5-06): repetição, membros, faixa e manutenção.
+
+    Attributes:
+        name: nome exibido na legenda (ex.: "Constelação 91/6").
+        n_revs: N, voltas por ciclo de repetição.
+        n_days: D, dias do ciclo.
+        member_ids: ids dos satélites da cena que pertencem à constelação, em ordem.
+        roll_rad: rolagem da câmera [rad] para a faixa (``swath_deg``); ``None``, sem faixa.
+        maintenance: ``MaintenanceStatus`` por id de satélite (os que faltarem ficam sem o campo).
+        node_step_s: passo da amostragem dos nós ascendentes [s] (``node_crossings``).
+    """
+
+    name: str
+    n_revs: int
+    n_days: int
+    member_ids: tuple[str, ...]
+    roll_rad: float | None = None
+    maintenance: Mapping[str, MaintenanceStatus] = field(default_factory=dict)
+    node_step_s: float = 30.0
+
+    @property
+    def grid_deg(self) -> float:
+        """Passo da grade de trilhas no equador, 360°/N."""
+        return 360.0 / self.n_revs
+
+    def meta(self) -> dict[str, Any]:
+        """``meta.constellation`` do contrato."""
+        return {
+            "name": self.name,
+            "n_revs": self.n_revs,
+            "n_days": self.n_days,
+            "n_sats": len(self.member_ids),
+            "grid_deg": round(self.grid_deg, ANGLE_DECIMALS),
+            "member_ids": list(self.member_ids),
+            "roll_deg": (None if self.roll_rad is None else round(math.degrees(self.roll_rad), 4)),
+        }
+
+
+def maintenance_summary(status: MaintenanceStatus) -> dict[str, float | None]:
+    """Resumo do ``MaintenanceStatus`` para a cena: ``MAINTENANCE_FIELDS``, inf → ``None``."""
+    data = status.as_dict()
+    out: dict[str, float | None] = {}
+    for key in MAINTENANCE_FIELDS:
+        value = float(data[key])
+        out[key] = round(value, MAINTENANCE_DECIMALS) if math.isfinite(value) else None
+    return out
 
 
 def round_ms(dt: datetime) -> datetime:
@@ -162,7 +262,7 @@ def subpoint_geodetic(r_ecef: NDArray[np.float64]) -> NDArray[np.float64]:
 
 
 def build_scene(
-    satellites: Sequence[SceneSatellite],
+    satellites: Sequence[SceneSatellite | Satellite] | Constellation,
     stations: Sequence[SceneStation],
     epoch: datetime,
     duration_s: float,
@@ -171,11 +271,13 @@ def build_scene(
     tle: Tle | None = None,
     tle_source: str | None = None,
     sun_geometry: bool = False,
+    constellation_info: SceneConstellation | None = None,
 ) -> dict[str, Any]:
     """Monta a cena (contrato JSON do ADR 0001) amostrando todos os satélites no tempo.
 
     Args:
-        satellites: satélites a exportar (qualquer quantidade, R7).
+        satellites: satélites a exportar (qualquer quantidade, R7): ``Satellite``,
+            ``SceneSatellite`` ou uma ``Constellation`` (S5-01).
         stations: estações de solo.
         epoch: instante inicial da cena (tz-aware). Cada propagador pode ter época própria; o
             tempo é convertido para cada um.
@@ -186,13 +288,16 @@ def build_scene(
         tle: TLE do satélite real, para ``meta.tle`` (época e idade no início da cena).
         tle_source: origem do TLE (``"network"``, ``"cache"``, ``"bundled"`` ou um arquivo).
         sun_geometry: acrescenta ``ltan_h``, ``beta_deg`` e ``eclipse`` a cada satélite (S4-06).
+        constellation_info: acrescenta ``meta.constellation`` e, nos membros, ``nodes``,
+            ``swath_deg`` e ``maintenance`` (S5-06).
 
     Returns:
         ``dict`` serializável com ``meta``, ``earth``, ``satellites``, ``stations`` e
         ``passes``; cada trajetória tem N = duration_s/step_s + 1 amostras.
 
     Raises:
-        ValueError: época naive, passo não positivo ou duração que não é múltiplo do passo.
+        ValueError: época naive, passo não positivo, duração que não é múltiplo do passo ou
+            membro da constelação ausente da cena.
     """
     if epoch.tzinfo is None or epoch.utcoffset() is None:
         raise ValueError("epoch deve ser um datetime tz-aware")
@@ -204,6 +309,14 @@ def build_scene(
     # A época da cena é arredondada ao milissegundo, a resolução de meta.epoch_utc: amostras,
     # passagens e o relógio do viewer partem exatamente do mesmo instante (ex.: época de um TLE).
     epoch = round_ms(epoch)
+    if isinstance(satellites, Constellation):
+        satellites = satellites.satellites
+    members: frozenset[str] = frozenset()
+    if constellation_info is not None:
+        members = frozenset(constellation_info.member_ids)
+        missing = members - {sat.id for sat in satellites}
+        if missing:
+            raise ValueError(f"membros da constelação ausentes da cena: {sorted(missing)}")
 
     t = np.arange(n_steps + 1) * float(step_s)
     epoch_jd = datetime_to_jd(epoch)
@@ -261,6 +374,8 @@ def build_scene(
                 found = find_passes(sat.propagator, gs, epoch, duration_s, el_min_deg,
                                     step_s=min(20.0, float(step_s)), sat_id=sat.id)  # fmt: skip
                 passes_out += [_pass_json(p, st.id) for p in found]
+        if sat.id in members:
+            sat_out.update(_constellation_fields(sat, constellation_info, r_eci, epoch, duration_s))
         sats_out.append(sat_out)
     passes_out.sort(key=lambda p: (p["aos_utc"], p["sat_id"], p["station_id"]))
 
@@ -274,6 +389,8 @@ def build_scene(
     }
     if el_min_deg is not None:
         meta["el_min_deg"] = float(el_min_deg)
+    if constellation_info is not None:
+        meta["constellation"] = constellation_info.meta()
     if tle is not None:
         meta["tle"] = {
             "name": tle.name,
@@ -306,3 +423,28 @@ def build_scene(
         "stations": stations_out,
         "passes": passes_out,
     }
+
+
+def _constellation_fields(
+    sat: SceneSatellite | Satellite,
+    info: SceneConstellation,
+    r_eci: NDArray[np.float64],
+    epoch: datetime,
+    duration_s: float,
+) -> dict[str, Any]:
+    """``nodes``, ``swath_deg`` e ``maintenance`` de um membro da constelação (S5-06)."""
+    t_nodes, lon_nodes = node_crossings(sat.propagator, epoch, duration_s, step_s=info.node_step_s)
+    out: dict[str, Any] = {
+        "nodes": {
+            "t_s": np.round(t_nodes, NODE_TIME_DECIMALS).tolist(),
+            "lon_deg": np.round(np.degrees(lon_nodes), ANGLE_DECIMALS).tolist(),
+        }
+    }
+    if info.roll_rad is not None:
+        # raio médio na janela: a órbita é quase circular (e ≈ 1e-3), λ varia ≈ 0,1% na volta
+        radius = float(np.mean(np.linalg.norm(r_eci, axis=1)))
+        out["swath_deg"] = round(math.degrees(swath_half_angle(radius, info.roll_rad)), 6)
+    status = info.maintenance.get(sat.id)
+    if status is not None:
+        out["maintenance"] = maintenance_summary(status)
+    return out

@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposto — 2026-09-29.
+Proposto — 2026-09-29. Atualizado na S5-06 (2026-11-06): `Satellite` e `Constellation`
+implementados (S5-01); constelação na cena (S5-06).
 
 ## Contexto
 
@@ -90,8 +91,10 @@ satsim/                          (raiz do repositório)
 
 ## Interfaces
 
-Assinaturas ilustrativas. Nesta semana só `Propagator` é implementado (S1-05); as demais serão
-implementadas nas semanas 3–5.
+Assinaturas resumidas. Implementados: `Propagator` (S1-05; `propagate_utc` na S3-02),
+`GroundStation` (S3-03, `satsim.observer`), `Satellite` (S5-01, `satsim.satellite`) e
+`Constellation` (S5-01, `satsim.constellation`, com a fábrica `sso_constellation` da receita da
+Semana 4).
 
 ```python
 class Propagator(ABC):
@@ -111,22 +114,37 @@ class Propagator(ABC):
 
 
 @dataclass(frozen=True)
-class Satellite:
+class Satellite:  # S5-01
     id: str
     name: str
     propagator: Propagator
-    cd: float | None = None  # coeficiente de arrasto
+    color: str = "#00e5ff"  # cor CSS na cena
+    cd: float | None = None  # coeficiente de arrasto (informativo; a física está no propagador)
     area_over_mass: float | None = None  # A/m [m²/kg]
 
+    @property
+    def epoch(self) -> datetime: ...  # a do propagador
     def propagate(self, t):
         return self.propagator.propagate(t)
 
+    def propagate_utc(self, epoch, t):
+        return self.propagator.propagate_utc(epoch, t)
 
-class Constellation:
+
+class Constellation:  # S5-01
+    def __init__(self, epoch: datetime, satellites: Sequence[Satellite]): ...  # ids únicos
+
     epoch: datetime  # época comum; converte t para cada satélite
-    satellites: Sequence[Satellite]
+    satellites: tuple[Satellite, ...]
+    ids: list[str]  # também len(), iteração e índice
 
     def propagate(self, t) -> tuple[NDArray, NDArray]: ...  # cada um com shape (P, N, 3)
+    def propagate_utc(self, epoch, t) -> tuple[NDArray, NDArray]: ...  # idem, (P, N, 3)
+
+
+def sso_constellation(
+    epoch, models, n_sats=6, a=..., ltan_h=22.5, i=None, e=None, color_palette=...
+) -> Constellation: ...  # 91/6 num plano (Sem4 §8)
 
 
 @dataclass(frozen=True)
@@ -194,7 +212,8 @@ todas as etapas sem laços explícitos.
 
 Python calcula; o viewer só desenha. Gerado por `satsim.app.scene_export.build_scene` (S1-08;
 subponto geodésico WGS84 desde a S2-07; estação, footprint, passagens e TLE desde a S3-06; LTAN,
-β e eclipse desde a S4-06).
+β e eclipse desde a S4-06; constelação, nós, faixa e manutenção desde a S5-06). Aceita
+`Satellite`, `SceneSatellite` ou uma `Constellation` inteira (S5-01).
 Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua época.
 
 ```jsonc
@@ -206,7 +225,11 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
            "el_min_deg": 10,                      // S3-06 (opcional): elevação mínima
            "tle": {"name": "ISS (ZARYA)", "norad_id": 25544,          // S3-06 (opcional)
                    "epoch_utc": "2026-10-22T23:36:04.211Z",
-                   "age_days_at_start": 0.69, "source": "network"}},  // network|cache|bundled
+                   "age_days_at_start": 0.69, "source": "network"},   // network|cache|bundled
+           "constellation": {"name": "Constelação 91/6",                 // S5-06 (opcional)
+                             "n_revs": 91, "n_days": 6, "n_sats": 6, "grid_deg": 3.956044,
+                             "member_ids": ["s1", "s2", "s3", "s4", "s5", "s6"],
+                             "roll_deg": 23.1957}},                     // null sem faixa
   "earth": {"gmst0_rad": 1.234, "gmst_rate_rad_s": 7.2921158553e-5},
   "satellites": [
     {"id": "sso1", "name": "SSO-1", "color": "#00e5ff",
@@ -215,7 +238,12 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
      "footprint_deg": [12.5, ...],                // S3-06 (opcional): raio do footprint
      "ltan_h": [22.5, ...],                       // S4-06 (opcional): LTAN [h] em [0, 24)
      "beta_deg": [23.42, ...],                    // S4-06 (opcional): ângulo β [°]
-     "eclipse": [false, ...]}                     // S4-06 (opcional): na sombra da Terra
+     "eclipse": [false, ...],                     // S4-06 (opcional): na sombra da Terra
+     "nodes": {"t_s": [1234.567, ...],            // S5-06 (opcional, só membros): nós
+               "lon_deg": [-12.345678, ...]},     //   ascendentes na janela
+     "swath_deg": 1.9955,                         // S5-06 (opcional): λ da faixa (eq. 45)
+     "maintenance": {"a_dot_m_day": -23.95,       // S5-06 (opcional): resumo do
+                     "days_to_track_correction": 6.92, ...}}  //   MaintenanceStatus (S5-05)
   ],
   "stations": [{"id": "sbs", "name": "São Bento do Sapucaí",
                 "lat_deg": -22.69, "lon_deg": -45.73, "alt_m": 900,
@@ -262,6 +290,21 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
   - `eclipse[]`: booleano, na sombra cilíndrica da Terra (`ephemeris.in_shadow_cylindrical`).
     O viewer usa a amostra mais próxima (não interpola) e esmaece o marcador do satélite.
   - Sem os campos (cenas antigas) o painel Informações mostra "—" nas três linhas.
+- **S5-06 (compatível, `schema_version` continua 1; campos opcionais que só aparecem quando
+  `build_scene` recebe `constellation_info`, um `SceneConstellation`):**
+  - `meta.constellation`: nome, repetição N/D, número de membros, passo da grade no equador
+    (360°/N), ids dos membros e a rolagem da faixa (`roll_deg`, `null` sem faixa);
+  - em cada membro, `nodes = {t_s[], lon_deg[]}`: os nós ascendentes na janela
+    (`groundtrack.node_crossings`, S5-02), em segundos desde o início da cena;
+  - em cada membro, `swath_deg`: o alcance transversal λ = arcsin((r/R⊕)·sin η) − η da eq. 45
+    do Sem4 (`coverage.swath_half_angle`) para a rolagem η, no raio médio r da órbita na janela;
+  - em cada membro com indicador, `maintenance`: os campos de `MAINTENANCE_FIELDS` do
+    `MaintenanceStatus` (S5-05); valores infinitos (sem decaimento) viram `null`;
+  - satélites fora de `member_ids` não ganham esses campos. Sem `meta.constellation` (cenas
+    antigas) o viewer se comporta como antes: legenda simples, todos os satélites ligados,
+    sem as camadas do mapa e com "—" nas linhas da constelação. Com ela, o viewer agrupa a
+    legenda, desliga os não membros no início, desenha a grade do dia (nós com `t_s` ≤ t) e a
+    faixa (polígono a ±λ do traço recente) e calcula a fase Δu a partir de `eci_km`.
 
 ### Decisão de stack
 
@@ -311,7 +354,10 @@ usamos scripts clássicos (UMD) e embutimos textura (data URI) e cena (`<script>
 - **Subponto**: geodésico WGS84 desde a S2-07 (na Semana 1 era esférico). O globo 3D continua
   sendo uma esfera: desenha o `lla` geodésico sobre ela, o que é só uma escolha de exibição.
 - **Cena pré-amostrada**: o viewer só mostra a janela exportada (ex.: 48 h a cada 20 s); tempos
-  fora dela exigem gerar nova cena.
+  fora dela exigem gerar nova cena. Com 8 satélites o HTML cresce ≈ 1,2 MB por 1 000 amostras;
+  a demo de 6 dias usa passo de 60 s (11,2 MB).
+- **Faixa no mapa**: desenhada com geometria de esfera a ±λ da perpendicular ao traço; é a área
+  alcançável com a rolagem, não o apontamento real da câmera (fora do escopo).
 
 ## Consequências
 

@@ -32,7 +32,7 @@
   </section>
   <section class="side">
     <div class="panel map-panel">
-      <div class="panel-title">Mapa 2D — traço no solo</div>
+      <div class="panel-title">Mapa 2D — traço no solo<span id="map-note"></span></div>
       <div class="map-wrap"><canvas id="map"></canvas></div>
     </div>
     <div class="panel station-panel" id="station-panel" hidden>
@@ -52,6 +52,7 @@
     <div class="panel legend-panel">
       <div class="panel-title">Satélites</div>
       <ul id="legend" class="legend"></ul>
+      <div class="layers" id="layers" hidden><span class="layers-title">Camadas do mapa</span></div>
       <div class="info" id="info" aria-live="polite">
         <div class="info-title">Informações · <span id="info-name">—</span></div>
         <dl class="info-grid">
@@ -61,6 +62,9 @@
           <dt title="Hora solar local do nó ascendente">LTAN</dt><dd id="info-ltan">—</dd>
           <dt title="Ângulo entre o plano da órbita e a direção do Sol">β</dt><dd id="info-beta">—</dd>
           <dt>Sol</dt><dd id="info-light">—</dd>
+          <dt class="k-const" hidden title="Ângulo ao longo da órbita em relação a S1 (argumento de latitude)">Fase Δu</dt><dd class="k-const" id="info-phase" hidden>—</dd>
+          <dt class="k-const" hidden title="Quando o traço sai da banda de ±5 km por causa do arrasto (S5-05)">Correção</dt><dd class="k-const" id="info-maint" hidden>—</dd>
+          <dt class="k-const" hidden title="Δv anual de manutenção: traço (arrasto) + inclinação (Sol)">Δv/ano</dt><dd class="k-const" id="info-dv" hidden>—</dd>
         </dl>
         <div class="info-note" id="info-note"></div>
       </div>
@@ -70,6 +74,8 @@
         <span><i class="k-station"></i> estação de solo</span>
         <span class="k-optional" hidden><i class="k-footprint"></i> visibilidade (footprint)</span>
         <span class="k-optional" hidden><i class="k-los"></i> linha estação → satélite</span>
+        <span class="k-const" hidden><i class="k-node"></i> nó ascendente (grade)</span>
+        <span class="k-const" hidden><i class="k-swath"></i> faixa alcançável</span>
       </div>
       <div class="frame-note" id="frame-note"></div>
     </div>

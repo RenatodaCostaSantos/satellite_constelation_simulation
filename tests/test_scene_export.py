@@ -1,4 +1,5 @@
-"""Testes da exportação da cena para o viewer (S1-08; geodésico na S2-07; ISS real na S3-06)."""
+"""Testes da cena (S1-08; geodésico na S2-07; ISS real na S3-06; Satellite na S5-01;
+constelação na S5-06)."""
 
 import importlib.util
 import json
@@ -11,7 +12,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 from golden.reference_values import (
+    COVERAGE_A5,
     DEMO_SCENE_A7,
+    DEMO_SCENE_S5,
     DESIGN_ORBIT,
     FOOTPRINT_A6,
     PASSES_A2,
@@ -20,18 +23,25 @@ from golden.reference_values import (
 )
 
 from satsim.app.scene_export import (
+    MAINTENANCE_FIELDS,
     SCHEMA_VERSION,
+    SceneConstellation,
     SceneSatellite,
     SceneStation,
     build_scene,
 )
 from satsim.astrotime import datetime_to_jd
 from satsim.constants import R_EARTH
+from satsim.constellation import CONSTELLATION_PALETTE, Constellation
+from satsim.coverage import swath_half_angle
 from satsim.elements import KeplerianElements, state_to_elements
 from satsim.ephemeris import beta_angle, ltan_hours
 from satsim.frames import eci_to_ecef
 from satsim.geodesy import ecef_to_geodetic, ecef_to_spherical
+from satsim.groundtrack import node_crossings
+from satsim.maintenance import maintenance_status
 from satsim.observer import SAO_BENTO_DO_SAPUCAI, footprint_half_angle, observe
+from satsim.orbit_design import constellation_phases
 from satsim.passes import find_passes
 from satsim.propagators import (
     CowellPropagator,
@@ -39,6 +49,7 @@ from satsim.propagators import (
     MeanJ2Propagator,
     SGP4Propagator,
 )
+from satsim.satellite import Satellite
 from satsim.tle import Tle
 
 EPOCH = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
@@ -428,19 +439,24 @@ def _scene_from_html(html: str) -> dict:
     return json.loads(html[start:end])
 
 
-def test_build_demo_offline_without_network(tmp_path, monkeypatch) -> None:
+def test_build_demo_offline_without_network(tmp_path, monkeypatch, reference_constellation):
     def no_network(*args, **kwargs):
         raise urllib.error.URLError("sem rede (teste)")
 
     monkeypatch.setattr(urllib.request, "urlopen", no_network)
     out = tmp_path / "index.html"
+    demo = _load_build_demo()
+    # A constelação de referência do conftest (mesma época, Cowell completo já integrado na
+    # sessão) no lugar da do script, que difere só pelo a calibrado (+19 m): poupa ≈ 7 s
+    monkeypatch.setattr(demo, "build_constellation", lambda start: reference_constellation)
     # Início fixo na data do A.7: os dois TLEs embarcados (ISS e Sentinel-2A) servem
-    _load_build_demo().main(["--offline", "--cache-dir", str(tmp_path / "cache"), "-o", str(out),
-                             "--start", DEMO_SCENE_A7.start_utc])  # fmt: skip
+    demo.main(["--offline", "--cache-dir", str(tmp_path / "cache"), "-o", str(out),
+               "--start", DEMO_SCENE_A7.start_utc])  # fmt: skip
     html = out.read_text(encoding="utf-8")
     scene = _scene_from_html(html)
     assert scene["meta"]["tle"]["source"] == "bundled"
-    assert [s["id"] for s in scene["satellites"]] == ["iss", "sso1", "s2a"]
+    ids = [s["id"] for s in scene["satellites"]]
+    assert ids == ["iss", *DEMO_SCENE_S5.member_ids, "s2a"]
     assert scene["meta"]["duration_s"] == 24 * 3600 and scene["meta"]["step_s"] == 20
     assert "looks" in scene["stations"][0] and "footprint_deg" in scene["satellites"][0]
     assert 'src="vendor' not in html and "<script src=" not in html  # tudo embutido
@@ -449,7 +465,7 @@ def test_build_demo_offline_without_network(tmp_path, monkeypatch) -> None:
     for sat in scene["satellites"]:
         assert len(sat["ltan_h"]) == len(sat["beta_deg"]) == len(sat["eclipse"]) == n
         assert all(isinstance(x, bool) for x in sat["eclipse"])
-    # SSO-1 calibrada no Cowell completo: LTAN constante em 22h30 e eclipse de ≈ 36% (A.7)
+    # S1 é a SSO de projeto do A.7 (S4-06): LTAN constante em 22h30 e eclipse de ≈ 36%
     sso = scene["satellites"][1]
     ltan = np.array(sso["ltan_h"])
     assert np.all(np.abs(ltan - DEMO_SCENE_A7.ltan_h) <= DEMO_SCENE_A7.ltan_tol_h)
@@ -462,6 +478,37 @@ def test_build_demo_offline_without_network(tmp_path, monkeypatch) -> None:
     beta = np.array(sso["beta_deg"])
     assert DEMO_SCENE_A7.beta_range_deg[0] - 0.01 <= beta.min()
     assert beta.max() <= DEMO_SCENE_A7.beta_range_deg[1] + 0.01
+    _check_demo_constellation(scene)
+
+
+def _check_demo_constellation(scene: dict) -> None:
+    """Critérios de cena do S5-06 sobre a demo de 1 dia com a constelação no Cowell completo."""
+    ref = DEMO_SCENE_S5
+    meta = scene["meta"]["constellation"]
+    assert meta["member_ids"] == list(ref.member_ids) and meta["n_sats"] == 6
+    assert (meta["n_revs"], meta["n_days"]) == (91, 6)
+    assert meta["grid_deg"] == pytest.approx(360.0 / 91, abs=1e-6)
+    assert meta["roll_deg"] == pytest.approx(COVERAGE_A5.roll_half_grid_deg, abs=1e-4)
+    members = [s for s in scene["satellites"] if s["id"] in ref.member_ids]
+    others = [s for s in scene["satellites"] if s["id"] not in ref.member_ids]
+    # 91 nós somados em 1 dia (A.3), em ordem de tempo e dentro da janela
+    assert sum(len(s["nodes"]["t_s"]) for s in members) == ref.nodes_1d
+    for s in members:
+        t_nodes = np.array(s["nodes"]["t_s"])
+        assert len(t_nodes) == len(s["nodes"]["lon_deg"]) and np.all(np.diff(t_nodes) > 0)
+        assert 0.0 <= t_nodes[0] and t_nodes[-1] <= 24 * 3600
+    # LTAN dos seis constante em 24 h (22,500 ± 0,01 h) e iguais entre si
+    ltan = np.array([s["ltan_h"] for s in members])
+    assert np.all(np.abs(ltan - ref.ltan_h) <= ref.ltan_tol_h)
+    assert np.max(np.ptp(ltan, axis=0)) <= ref.ltan_spread_tol_h
+    # faixa de meia grade e manutenção do S5-05 em cada membro; os demais sem os campos
+    for s in members:
+        assert s["swath_deg"] == pytest.approx(180.0 / 91, rel=0.02)
+        m = s["maintenance"]
+        assert set(m) == set(MAINTENANCE_FIELDS)
+        assert m["days_to_track_correction"] == pytest.approx(6.95, rel=0.02)  # A.7
+    for s in others:
+        assert not {"nodes", "swath_deg", "maintenance"} & set(s)
 
 
 def test_s4_sun_geometry_fields_match_ephemeris() -> None:
@@ -480,6 +527,31 @@ def test_s4_sun_geometry_fields_match_ephemeris() -> None:
     assert json.loads(json.dumps(sc)) == sc
 
 
+def _fast_constellation(start: datetime) -> Constellation:
+    """Constelação 91/6 barata (J2 médio): para testes que não verificam a dinâmica (TLE,
+    tamanho do arquivo). O tamanho da cena depende do número de amostras, não do propagador."""
+    sats = [
+        Satellite(
+            f"s{j + 1}",
+            f"S{j + 1}",
+            MeanJ2Propagator(
+                KeplerianElements(
+                    SSO_ELEMENTS.a,
+                    SSO_ELEMENTS.e,
+                    SSO_ELEMENTS.i,
+                    SSO_ELEMENTS.raan,
+                    SSO_ELEMENTS.argp,
+                    float(psi),
+                ),
+                start,
+            ),
+            color=CONSTELLATION_PALETTE[j],
+        )
+        for j, psi in enumerate(constellation_phases(6))
+    ]
+    return Constellation(start, sats)
+
+
 def test_build_demo_network_failure_falls_back(tmp_path, monkeypatch) -> None:
     # sem --offline, a rede falha e get_tle cai no TLE embarcado: a demo sai igual
     def no_network(*args, **kwargs):
@@ -487,18 +559,152 @@ def test_build_demo_network_failure_falls_back(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(urllib.request, "urlopen", no_network)
     out = tmp_path / "index.html"
-    _load_build_demo().main(["--cache-dir", str(tmp_path / "cache"), "-o", str(out)])
+    demo = _load_build_demo()
+    monkeypatch.setattr(demo, "build_constellation", _fast_constellation)
+    demo.main(["--cache-dir", str(tmp_path / "cache"), "-o", str(out)])
     assert _scene_from_html(out.read_text(encoding="utf-8"))["meta"]["tle"]["source"] == "bundled"
 
 
-def test_build_demo_deterministic_tle_epoch(tmp_path) -> None:
+def test_build_demo_deterministic_tle_epoch(tmp_path, monkeypatch) -> None:
     out = tmp_path / "index.html"
     tle_file = Path(__file__).parent / "data" / "iss_sample.tle"
-    _load_build_demo().main(["--tle-file", str(tle_file), "--start", "tle-epoch", "-o", str(out)])
+    demo = _load_build_demo()
+    monkeypatch.setattr(demo, "build_constellation", _fast_constellation)
+    demo.main(["--tle-file", str(tle_file), "--start", "tle-epoch", "-o", str(out)])
     scene = _scene_from_html(out.read_text(encoding="utf-8"))
     # TLE da ISS de 2019: o do Sentinel-2A (2026) fica a anos da cena e é omitido
-    assert [s["id"] for s in scene["satellites"]] == ["iss", "sso1"]
+    assert [s["id"] for s in scene["satellites"]] == ["iss", *DEMO_SCENE_S5.member_ids]
     iss_passes = [p for p in scene["passes"] if p["sat_id"] == "iss"]
     # 24 h após a época: as passagens 1 e 2 do A.2 (AOS em 29 258,7 s e 64 638,7 s)
     assert len(iss_passes) == 2
     assert iss_passes[0]["max_el_deg"] == pytest.approx(PASSES_A2[0].max_el_deg, abs=0.05)
+
+
+# --- S5-01: Satellite e Constellation na cena ---------------------------------------------------
+
+
+def _as_satellite(sat: SceneSatellite) -> Satellite:
+    return Satellite(sat.id, sat.name, sat.propagator, color=sat.color)
+
+
+def test_s5_scene_accepts_satellite_same_contract(scene: dict) -> None:
+    # A mesma cena do fixture, montada com a classe Satellite do ADR: JSON idêntico
+    sats = [_as_satellite(s) for s in (_sso(), _example())]
+    got = build_scene(sats, [STATION], EPOCH, DURATION_S, STEP_S)
+    assert got == scene
+
+
+def test_s5_scene_accepts_constellation_and_mixed_list() -> None:
+    # Constellation (época própria, diferente da cena) e lista mista Satellite + SceneSatellite
+    sso, example = _sso(), _example()
+    constellation = Constellation(EPOCH - timedelta(hours=2), [_as_satellite(sso)])
+    from_constellation = build_scene(constellation, [STATION], EPOCH, 3600, 60)
+    from_scene_sat = build_scene([sso], [STATION], EPOCH, 3600, 60)
+    assert from_constellation == from_scene_sat
+    mixed = build_scene([_as_satellite(sso), example], [STATION], EPOCH, 3600, 60)
+    assert [s["id"] for s in mixed["satellites"]] == ["sso1", "kep1"]
+    assert [s["color"] for s in mixed["satellites"]] == ["#00e5ff", "#ffb020"]
+    assert mixed["meta"]["schema_version"] == SCHEMA_VERSION
+
+
+# --- S5-06: constelação na cena -------------------------------------------------------------------
+
+
+def _fast_info(constellation: Constellation, **kwargs) -> SceneConstellation:
+    return SceneConstellation("Constelação 91/6", 91, 6, tuple(constellation.ids), **kwargs)
+
+
+def test_s5_constellation_fields_and_meta() -> None:
+    c = _fast_constellation(EPOCH)
+    roll = math.radians(23.1957)
+    status = maintenance_status("s1", -23.71 / 86400, SSO_ELEMENTS.a, SSO_ELEMENTS.i)
+    info = _fast_info(c, roll_rad=roll, maintenance={"s1": status})
+    sc = build_scene([_example(), *c], [STATION], EPOCH, 6 * 3600, 60, constellation_info=info)
+    assert sc["meta"]["schema_version"] == SCHEMA_VERSION  # campos opcionais, mesma versão
+    assert sc["meta"]["constellation"] == {
+        "name": "Constelação 91/6", "n_revs": 91, "n_days": 6, "n_sats": 6,
+        "grid_deg": round(360 / 91, 6), "member_ids": ["s1", "s2", "s3", "s4", "s5", "s6"],
+        "roll_deg": 23.1957,
+    }  # fmt: skip
+    kep, s1, s2 = sc["satellites"][:3]
+    assert not {"nodes", "swath_deg", "maintenance"} & set(kep)  # fora da constelação
+    # nós: os mesmos de node_crossings, em segundos desde o início e graus
+    t_ref, lon_ref = node_crossings(c[0].propagator, EPOCH, 6 * 3600)
+    np.testing.assert_allclose(s1["nodes"]["t_s"], t_ref, atol=1e-3)
+    np.testing.assert_allclose(s1["nodes"]["lon_deg"], np.degrees(lon_ref), atol=1e-6)
+    assert len(s1["nodes"]["t_s"]) in (3, 4)  # ≈ 3,8 voltas em 6 h
+    # faixa: eq. 45 no raio médio da órbita nas amostras da cena
+    r, _ = c[0].propagator.propagate_utc(EPOCH, np.arange(0.0, 6 * 3600 + 1, 60.0))
+    lam = math.degrees(swath_half_angle(float(np.mean(np.linalg.norm(r, axis=1))), roll))
+    assert s1["swath_deg"] == pytest.approx(lam, abs=1e-6)
+    # manutenção só de quem tem indicador, com os campos do resumo
+    assert s1["maintenance"]["days_to_track_correction"] == pytest.approx(6.95, rel=0.02)
+    assert set(s1["maintenance"]) == set(MAINTENANCE_FIELDS) and "maintenance" not in s2
+    assert json.loads(json.dumps(sc, allow_nan=False)) == sc
+
+
+def test_s5_constellation_infinite_maintenance_and_no_roll() -> None:
+    # sem decaimento a próxima correção é infinita: vira null (JSON válido)
+    c = _fast_constellation(EPOCH)
+    status = maintenance_status("s1", 0.0, SSO_ELEMENTS.a, SSO_ELEMENTS.i)
+    sc = build_scene(c, [STATION], EPOCH, 3600, 60,
+                     constellation_info=_fast_info(c, maintenance={"s1": status}))  # fmt: skip
+    m = sc["satellites"][0]["maintenance"]
+    assert m["days_to_track_correction"] is None and m["track_delta_v_per_year_m_s"] == 0.0
+    assert sc["meta"]["constellation"]["roll_deg"] is None
+    assert "swath_deg" not in sc["satellites"][0]
+    json.dumps(sc, allow_nan=False)
+
+
+def test_s5_constellation_rejects_missing_member() -> None:
+    c = _fast_constellation(EPOCH)
+    info = SceneConstellation("x", 91, 6, ("s1", "s9"))
+    with pytest.raises(ValueError, match="s9"):
+        build_scene(c, [STATION], EPOCH, 3600, 60, constellation_info=info)
+
+
+def test_s5_old_scenes_have_no_constellation_fields(scene: dict) -> None:
+    # compatibilidade: sem constellation_info, nada novo na cena (o viewer funciona sem eles)
+    assert "constellation" not in scene["meta"]
+    for sat in scene["satellites"]:
+        assert not {"nodes", "swath_deg", "maintenance"} & set(sat)
+
+
+def test_build_demo_six_days_under_size_limit(tmp_path, monkeypatch) -> None:
+    """--days 6, offline: o ciclo inteiro abaixo de 15 MB (a constelação barata tem o mesmo
+    número de amostras que a do Cowell; a demo real de 6 dias mede 11,2 MB)."""
+
+    def no_network(*args, **kwargs):
+        raise urllib.error.URLError("sem rede (teste)")
+
+    monkeypatch.setattr(urllib.request, "urlopen", no_network)
+    out = tmp_path / "index.html"
+    demo = _load_build_demo()
+    monkeypatch.setattr(demo, "build_constellation", _fast_constellation)
+    demo.main(["--offline", "--cache-dir", str(tmp_path / "cache"), "-o", str(out),
+               "--start", DEMO_SCENE_S5.start_utc, "--days", "6"])  # fmt: skip
+    size_mb = out.stat().st_size / 1e6
+    assert size_mb < DEMO_SCENE_S5.max_file_mb
+    scene = _scene_from_html(out.read_text(encoding="utf-8"))
+    assert scene["meta"]["duration_s"] == 6 * 86400
+    assert scene["meta"]["step_s"] == DEMO_SCENE_S5.step_6d_s
+    ids = [s["id"] for s in scene["satellites"]]
+    assert ids == ["iss", *DEMO_SCENE_S5.member_ids, "s2a"]
+    # 6 dias: cada satélite dá as 91 voltas do ciclo (91 nós, ± 1 pela borda da janela)
+    for s in scene["satellites"][1:7]:
+        assert abs(len(s["nodes"]["t_s"]) - 91) <= 1
+    with pytest.raises(SystemExit):
+        demo.main(["--offline", "--days", "7"])
+
+
+def test_build_demo_constellation_recipe() -> None:
+    # a receita do script, sem propagar: 6 membros no Cowell completo, época = início da cena
+    demo = _load_build_demo()
+    start = datetime.fromisoformat(DEMO_SCENE_S5.start_utc)
+    c = demo.build_constellation(start)
+    assert c.ids == list(DEMO_SCENE_S5.member_ids) and c.epoch == start
+    assert all(len(s.propagator.models) == 5 for s in c)
+    assert demo.A_CALIBRATED_M == pytest.approx(6888108.374, abs=0.01)  # S5-02
+    assert set(demo.STEP_BY_DAYS) == set(range(1, 7))
+    for days, step in demo.STEP_BY_DAYS.items():
+        assert (days * 86400) % step == 0

@@ -1139,3 +1139,415 @@ class DemoSceneA7:
 
 
 DEMO_SCENE_A7 = DemoSceneA7()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.1 do prompt da Semana 5: constelação de referência Epic of Sun (Sem4
+#     Tabela 4, com a calibração da Semana 4). Época 2026-10-23 00:00 UTC. Experimento de
+#     referência (03/11/2026, satsim no commit 779a6d4): valores de regressão, não independentes.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class ConstellationA1:
+    epoch_utc: str = "2026-10-23T00:00:00+00:00"
+    a_design_m: float = 6888089.0  # Sem4 §7.5
+    a_repeat_calibrated_m: float = 6888108.4  # experimento (A.4)
+    e_frozen: float = 1.07721e-3  # A.5 da Semana 4; ω = 90°
+    argp_deg: float = 90.0
+    i_calibrated_deg: float = 97.46325  # A.7 da Semana 4 (Cowell J2–J4)
+    raan_deg: float = 5.0235  # A.7 da Semana 4 (LTAN 22h30)
+    ltan_h: float = 22.5
+    psi0_deg: tuple[float, ...] = (0.0, 300.0, 240.0, 180.0, 120.0, 60.0)  # Sem4 Tabela 4 / eq. 42
+    node_delay_s: tuple[float, ...] = (0.0, 949.5, 1898.9, 2848.4, 3797.8, 4747.3)  # Tabela 4
+    node_delay_tol_s: float = 2.0  # critério do card S5-01
+    # Forças do Cowell completo (A.7 da Semana 4): J2–J4 + Sol/Lua + SRP + arrasto geodésico
+    srp_cr: float = 1.3
+    srp_area_over_mass: float = 0.01
+    drag_cd_a_m: float = 0.011
+    # Experimento: 6 conversões médio → osculador com i dada
+    build_time_s: float = 0.33
+    build_time_limit_s: float = 3.0  # critério do card S5-01
+    # Primeiros nós ascendentes (Cowell completo, a de projeto) [s desde a época], S1 … S6
+    first_node_s: tuple[float, ...] = (4274.46, 5223.99, 476.60, 1426.12, 2375.65, 3324.93)
+    delay_s2_s1_s: float = 949.53
+    # Medido no satsim (S5-01, nós por interpolação linear de z_ECI com passo 10 s): 4 274,463;
+    # 5 223,988; 476,596; 1 426,122; 2 375,648; 3 324,934 s; construção dos 6 satélites 0,33 s.
+
+
+CONSTELLATION_A1 = ConstellationA1()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.2 do prompt da Semana 5: órbitas de repetição só J2 (Sem4 Tabela 3,
+#     e = 0, eqs. 27 + 37) e grade no modelo médio (Sem4 §9.2). Teoria (independente).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class RepeatOrbitA2:
+    n_revs: int
+    d_days: int
+    h_km: float
+    i_deg: float
+    tnod_s: float
+    grid_deg: float
+    grid_km: float  # no equador
+
+
+REPEAT_ORBITS_A2: tuple[RepeatOrbitA2, ...] = (
+    RepeatOrbitA2(91, 6, 509.95, 97.4396, 5696.70, 3.956, 440.4),
+    RepeatOrbitA2(106, 7, 517.19, 97.4671, 5705.66, 3.396, 378.1),
+    RepeatOrbitA2(121, 8, 522.62, 97.4879, 5712.40, 2.975, 331.2),
+    RepeatOrbitA2(89, 6, 612.99, 97.8388, 5824.72, 4.045, 450.3),
+    RepeatOrbitA2(143, 10, 786.12, 98.5446, 6041.96, 2.517, 280.2),
+    RepeatOrbitA2(233, 16, 699.59, 98.1863, 5933.05, 1.545, 172.0),
+)
+"""Medido no satsim (S5-01, ``repeat_orbit``): h 509,9523 / 517,1863 / 522,6243 / 612,9856 /
+786,1213 / 699,5852 km; i 97,43957 / 97,46711 / 97,48786 / 97,83883 / 98,54460 / 98,18629°."""
+
+
+@dataclass(frozen=True)
+class RepeatOrbitTolA2:
+    h_km: float = 0.01  # critério do card S5-01
+    i_deg: float = 0.001  # critério do card S5-01
+    tnod_s: float = 0.01  # arredondamento do A.2 (2 casas)
+
+
+REPEAT_ORBIT_TOL_A2 = RepeatOrbitTolA2()
+
+
+@dataclass(frozen=True)
+class MeanGridA2:
+    """Grade no modelo médio (Sem4 §9.2): nós a cada Tnod, longitude −(ω⊕ − Ω̇)·t."""
+
+    grid_ideal_deg: float = 3.9560
+    nodes_p1_6days: int = 91
+    nodes_p6_1day: int = 91
+    nodes_p7_1day: int = 107  # depende de onde a janela corta (Cowell, [0, 24 h): 106)
+    step_p7_min_deg: float = 0.5651
+    step_p7_max_deg: float = 3.3909
+
+
+MEAN_GRID_A2 = MeanGridA2()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.3 do prompt da Semana 5: nós ascendentes e grade no Cowell completo
+#     (experimento de referência, constelação do A.1 com o a de projeto, janela [0, 24 h) salvo
+#     indicação). Ideal: 360°/91 = 3,95604°. Afastamento ancorado no 1º nó de S1.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class NodeGridA3:
+    grid_ideal_deg: float = 3.95604
+    # P = 6, 1 dia
+    p6_nodes: int = 91
+    p6_gap_min_deg: float = 3.95173
+    p6_gap_max_deg: float = 3.96431
+    p6_gap_tol_deg: float = 0.002  # critério do card S5-02
+    p6_max_offset_deg: float = 0.0064
+    p6_max_offset_limit_deg: float = 0.01  # critério do card S5-02
+    # P = 1, 6 dias (91 primeiros nós)
+    p1_6d_nodes: int = 91
+    p1_6d_gap_min_deg: float = 3.9169
+    p1_6d_gap_max_deg: float = 3.9674
+    # P = 7 na mesma órbita (Δψ = 51,43°)
+    p7_nodes: int = 106
+    p7_gap_min_deg: float = 3.3834
+    p7_gap_max_deg: float = 3.9585
+    p7_max_offset_deg: float = 1.694
+    p7_max_offset_limit_deg: float = 1.0  # critério do card: > 1°
+    # Precisão do nó (S1, 15 nós em 24 h): interpolação linear × brentq em z_ECI = 0
+    node_err_60s_deg: float = 7.3e-5
+    node_err_60s_s: float = 1.1e-3
+    node_err_30s_deg: float = 9.3e-6
+    node_err_30s_s: float = 3e-4
+    node_err_10s_deg: float = 4.8e-7
+    node_err_30s_limit_deg: float = 2e-5  # critério do card S5-02
+    node_err_30s_limit_s: float = 1e-3  # critério do card S5-02
+    # Período nodal medido no Cowell completo em 6 dias (ajuste linear) e alvo da repetição
+    tnod_cowell_full_6d_s: float = 5696.590
+    tnod_repeat_target_s: float = 5696.704
+    # Medido no satsim (S5-02, node_crossings a 30 s): P = 6: 91 nós, 3,951728 … 3,964321°,
+    # afastamento 0,006447° (âncora S1; com a âncora no 1º nó no tempo, o de S3, 0,010672°);
+    # P = 7: 106 nós, 3,383367 … 3,958479°, afastamento 1,694° (âncora S1; 1,702° no tempo).
+    # Precisão: 60 s 7,31e-5° / 1,12e-3 s; 30 s 9,26e-6° / 2,7e-4 s; 10 s 5,17e-7° / 2,9e-5 s.
+    # Os desvios à grade têm padrão de período 3 (s1/s4, s2/s5, s3/s6; ±0,0045°): o termo de
+    # curto período de J2 em Ω e u, que a conversão médio → osculador (S4-04) não corrige.
+
+
+NODE_GRID_A3 = NodeGridA3()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.4 do prompt da Semana 5: fechamento do ciclo de 6 dias e semieixo de
+#     repetição calibrado (experimento; S1 da constelação do A.1, Cowell).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class RepeatClosureA4:
+    a_design_m: float = 6888089.0
+    # J2–J4, a de projeto
+    closure_design_j2j4_deg: float = 0.00895
+    closure_design_j2j4_km: float = 1.00
+    closure_design_tol_km: float = 0.2  # critério do card S5-02
+    residual_design_s: float = -2.197  # 91·Tnod − 6·Tdia,nod
+    tnod_design_s: float = 5696.6796
+    # J2–J4, a calibrado
+    a_calibrated_m: float = 6888108.37
+    delta_a_m: float = 19.37
+    delta_a_tol_m: float = 1.0  # critério do card S5-02
+    closure_calibrated_j2j4_deg: float = -0.00020
+    closure_calibrated_j2j4_km: float = -0.022
+    closure_calibrated_limit_km: float = 0.1  # critério do card S5-02
+    secant_residuals_s: tuple[float, float] = (1e-2, 3e-9)  # 2º ponto → secante
+    # Cowell completo (com arrasto)
+    closure_design_full_deg: float = 0.0422
+    closure_design_full_km: float = 4.69
+    closure_calibrated_full_deg: float = 0.0330
+    closure_calibrated_full_km: float = 3.68
+    # Ω medido (6 dias, 60 s) e dia nodal
+    raan_dot_design_deg_day: float = 0.985632
+    raan_dot_calibrated_deg_day: float = 0.985622
+    t_day_nod_s: float = 86400.0065
+    # Sem4 eq. 32: efeito de +19 m no LTAN
+    ltan_drift_delta_a_min_year: float = -0.014
+    # Medido no satsim (S5-02): ver o relatório reports/s5_constelacao/relatorio.md e o teste
+    # tests/test_repeat_grid.py. J2–J4: a calibrado 6 888 108,374 m (Δa +19,374 m em relação a
+    # 6 888 089 m), f: −2,1686 s (a0 = repeat_orbit, 6 888 089,253 m) → 1,0e-2 s → 1,4e-8 s;
+    # fechamento +0,008952° (0,996 km) com o a de projeto e −0,000201° (−0,022 km) com o
+    # calibrado. A maior parte do resíduo do calibrado vem de ω⊕ = 7,292115e-5 rad/s (usado em
+    # Tdia,nod, como no card) ser 8,55e-12 rad/s menor que a taxa real do GMST que gira o ECEF
+    # (7,2921158553e-5): em 6 dias, −2,54e-4° (−28 m) previstos; o resto (≈ +0,5e-4°) é o
+    # ruído do ajuste de Tnod contra o nó 91 medido.
+
+
+REPEAT_CLOSURE_A4 = RepeatClosureA4()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.5 do prompt da Semana 5: cobertura (Sem4 eq. 45 e experimento: Cowell
+#     completo, a de projeto, η = 23,2°, alvos em |lat| ≤ 80°, grade 1°, passo 10 s; acessos a
+#     menos de 30 min contam como uma passagem; o intervalo inclui as bordas da janela).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class CoverageA5:
+    a_m: float = 6888089.0
+    # Sem4 eq. 45: rolagem η [°] → λ [°] e alcance transversal [km]
+    roll_deg: tuple[float, ...] = (10.0, 20.0, 23.2, 30.0)
+    swath_half_angle_deg: tuple[float, ...] = (0.8088, 1.6765, 1.9784, 2.6820)
+    swath_km: tuple[float, ...] = (90.0, 186.6, 220.2, 298.6)
+    swath_km_sem4: tuple[float, ...] = (90.0, 187.0, 220.0, 299.0)  # Sem4 §8.6
+    swath_km_tol: float = 1.0  # critério do card S5-03
+    roll_half_grid_deg: float = 23.1957
+    roll_half_grid_tol_deg: float = 0.01  # critério do card S5-03
+    # Experimento (grade 1°)
+    roll_coverage_deg: float = 23.2
+    fraction_p6_1d: float = 1.0
+    fraction_p1_1d: float = 0.4848
+    fraction_p1_1d_tol: float = 0.02  # critério do card S5-03
+    fraction_p1_6d: float = 1.0
+    revisit_p6_3d_lat60_h: float = 13.97
+    revisit_p6_3d_lat60_limit_h: float = 15.0  # critério do card S5-03
+    revisit_p6_3d_lat80_h: float = 19.04
+    fraction_p6_3d_sun10: float = 0.9255
+    revisit_p6_3d_sun10_lat60_h: float = 24.26
+    revisit_p6_3d_sun10_lat60_limit_h: float = 25.0  # critério do card S5-03
+    min_sun_elevation_deg: float = 10.0
+    gap_merge_s: float = 1800.0
+    # Medido no satsim (S5-03), grade 1°: λ 0,808783 / 1,676505 / 1,978441 / 2,682043°; meia
+    # grade 23,195673°; P = 1 em 1 dia 48,82% (A.5: 48,48%); P = 6 3 dias: revisita 13,97 h
+    # (|lat| ≤ 60°) e 19,04 h (≤ 80°); com Sol ≥ 10°: 92,55% e 24,26 h. O A.5 se reproduz
+    # medindo o intervalo entre os INÍCIOS de passagens sucessivas (coverage_stats(...,
+    # interval="revisit")); do fim de uma ao início da seguinte (interval="blackout") dá 13,69 h /
+    # 16,68 h / 24,00 h: a diferença é a duração da passagem, que em latitude alta junta vários
+    # satélites do trem (15,8 min entre eles).
+
+
+COVERAGE_A5 = CoverageA5()
+
+
+@dataclass(frozen=True)
+class CoverageTestS5:
+    """Referência própria dos testes de cobertura (S5-03): janelas de 3 e 6 dias com o Cowell
+    só J2–J4 (≈ 7× mais rápido que o completo) e grade de 2°.
+
+    Medido no satsim (S5-03): em 3 dias a cobertura no Cowell J2–J4 é idêntica à do completo a
+    menos de 0,01 h (grade 1°: 13,97 / 19,04 / 24,26 h e 92,55% nos dois).
+    """
+
+    grid_deg: float = 2.0
+    revisit_p6_3d_lat60_h: float = 13.967
+    revisit_p6_3d_lat80_h: float = 19.039
+    blackout_p6_3d_lat60_h: float = 13.694
+    fraction_p6_3d_sun10: float = 0.9259
+    revisit_p6_3d_sun10_lat60_h: float = 24.258
+    regression_tol_h: float = 0.02  # ≈ 7 amostras de 10 s
+    fraction_p1_1d_full_2deg: float = 0.4922
+
+
+COVERAGE_TEST_S5 = CoverageTestS5()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.6 do prompt da Semana 5: passagens da constelação do A.1 (a de projeto,
+#     Cowell completo) sobre São Bento do Sapucaí, 2026-10-23 00:00 UTC + 24 h, el ≥ 10°,
+#     find_passes (experimento de referência).
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class ContactPassA6:
+    sat: str
+    aos_utc: str  # HH:MM:SS em 2026-10-23
+    max_el_deg: float
+    duration_s: float
+
+
+CONTACT_PASSES_A6: tuple[ContactPassA6, ...] = (
+    ContactPassA6("S5", "00:32:20", 12.83, 209.9),
+    ContactPassA6("S6", "00:46:51", 21.42, 351.3),
+    ContactPassA6("S1", "01:01:59", 36.04, 418.5),
+    ContactPassA6("S2", "01:17:23", 65.20, 448.4),
+    ContactPassA6("S3", "01:33:01", 69.55, 449.3),
+    ContactPassA6("S4", "01:48:51", 38.48, 422.2),
+    ContactPassA6("S5", "02:04:57", 22.98, 361.5),
+    ContactPassA6("S6", "02:21:30", 14.08, 242.8),
+    ContactPassA6("S3", "12:05:18", 12.27, 188.7),
+    ContactPassA6("S4", "12:19:37", 20.13, 337.0),
+    ContactPassA6("S5", "12:34:35", 33.21, 409.5),
+    ContactPassA6("S6", "12:49:54", 59.02, 444.8),
+    ContactPassA6("S1", "13:05:28", 76.87, 451.3),
+    ContactPassA6("S2", "13:21:18", 42.03, 429.8),
+    ContactPassA6("S3", "13:37:26", 24.53, 374.1),
+    ContactPassA6("S4", "13:54:05", 14.80, 261.5),
+)
+
+
+@dataclass(frozen=True)
+class ContactPlanA6:
+    start_utc: str = "2026-10-23T00:00:00+00:00"
+    duration_s: float = 86400.0
+    el_min_deg: float = 10.0
+    n_passes: int = 16
+    n_passes_tol: int = 1  # critério do card S5-04
+    passes_per_sat: tuple[int, ...] = (2, 2, 3, 3, 3, 3)  # S1 … S6
+    total_contact_min: float = 96.68
+    total_contact_tol_min: float = 3.0  # critério do card S5-04
+    max_elevation_deg: float = 76.87
+    n_overlaps: int = 0
+    n_trains: int = 2
+    # Trens (BRT = UTC−3): noturno 00:32–02:25 UTC = 21h32–23h25 BRT;
+    # diurno 12:05–13:58 UTC = 9h05–10h58 BRT
+    night_train_utc: tuple[str, str] = ("00:32", "02:25")
+    day_train_utc: tuple[str, str] = ("12:05", "13:58")
+    # Dentro de um trem: AOS consecutivos a 14–17 min (≈ Tnod/6 = 15,8 min + geometria)
+    train_aos_spacing_min: tuple[float, float] = (14.0, 17.0)  # critério do card S5-04
+    # Medido no satsim (S5-04, contact_plan): as 16 passagens idênticas ao A.6 (AOS no segundo,
+    # el máx a 0,005°, duração a 0,05 s); contato total 96,68 min; trens 21:32–23:25 e
+    # 09:05–10:58 BRT; Sol no TCA de −42,9° a −55,5° (noite) e de 50,2° a 73,5° (dia); maior
+    # intervalo sem contato 10,03 h (do último LOS ao fim da janela).
+
+
+CONTACT_PLAN_A6 = ContactPlanA6()
+
+# ===============================================================================================
+# Semana 5 — Apêndice A.7 do prompt da Semana 5: manutenção (Sem4 §6.1, §7.6 e experimento).
+#     λ(t) = 3π|ȧ|t²/(2a) (Sem4 §7.6); v = 7 607,1 m/s; Δv = v·δa/(2a). Banda do traço ±5 km.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class TrackMaintenanceRow:
+    a_dot_m_day: float
+    days_to_5km: float
+    delta_a_m: float
+    delta_v_per_maneuver_m_s: float
+    maneuvers_per_year: float
+    delta_v_per_year_m_s: float
+    source: str
+
+
+TRACK_MAINTENANCE_A7: tuple[TrackMaintenanceRow, ...] = (
+    TrackMaintenanceRow(-23.71, 6.95, 164.8, 0.0910, 52.5, 4.78, "Cowell (A.7 da Semana 4)"),
+    TrackMaintenanceRow(-25.47, 6.71, 170.8, 0.0943, 54.5, 5.14, "modelo médio, mesmo caso"),
+    TrackMaintenanceRow(-35.0, 5.72, 200.3, 0.1106, 63.8, 7.06, "Sem4 §6.2"),
+)
+
+
+@dataclass(frozen=True)
+class MaintenanceA7:
+    a_m: float = 6888089.0
+    i_deg: float = 97.46325
+    v_m_s: float = 7607.1
+    deadband_km: float = 5.0
+    rel_tol: float = 0.02  # critério do card S5-05 ("A.7, rel 2%")
+    # Verificação no Cowell: a calibrado + arrasto, fechamento de 6 dias (A.4) × fórmula
+    closure_cowell_6d_km: float = 3.68
+    closure_formula_6d_km: float = 3.72
+    closure_formula_tol: float = 0.10  # critério do card S5-05: fórmula a ≤ 10% do Cowell
+    # LTAN (Sem4 eq. 32)
+    ltan_per_di_001deg_min_year: float = 1.92  # Sem4: +1,9
+    ltan_per_dh_1km_min_year: float = -0.73
+    di_dt_sun_deg_day: float = -9.8e-5  # S4-02
+    di_dt_sun_deg_year: float = -0.0358
+    ltan_accel_min_year2: float = -6.87  # → −3,43·t² min (t em anos)
+    ltan_quadratic_coeff_min: float = -3.43
+    ltan_band_min: float = 5.0
+    years_to_ltan_band: float = 1.21
+    inclination_delta_v_per_year_m_s: float = 4.75
+    # Medido no satsim (S5-05): fórmulas idênticas ao A.7 (6,95 d, 164,8 m, 0,0910 m/s, 52,5/ano,
+    # 4,78 m/s/ano; −6,867 min/ano², 1,207 ano, 4,752 m/s/ano; 1,919 e −0,732 min/ano).
+    # ȧ da constelação de referência por janelas nodais (Cowell completo): −23,95 m/dia em 1 dia,
+    # −24,01 em 6 dias (A.7: −23,71; 1,0–1,3%). Fechamento de 6 dias com o a calibrado e arrasto:
+    # Cowell completo 3,673 km × fórmula 3,772 km (2,7%). Validação do LTAN no Cowell J2–J4 + Sol
+    # (60 dias): di/dt −9,82e-5 °/d, aceleração do LTAN −7,13 min/ano² × fórmula −6,88 (4%).
+
+
+MAINTENANCE_A7 = MaintenanceA7()
+
+
+@dataclass(frozen=True)
+class MaintenanceTestS5:
+    """Referência própria do teste Cowell × fórmula (S5-05): S1 com o a calibrado, Cowell só
+    J2–J4 + arrasto (≈ 2× mais rápido que o completo), 6 dias.
+
+    Medido no satsim (S5-05): fechamento 3,838 km; ȧ em 6 dias −24,03 m/dia; fórmula 3,774 km
+    (1,7%). No Cowell completo: 3,673 km e 3,772 km (2,7%).
+    """
+
+    a_calibrated_m: float = 6888108.374
+    closure_6d_km: float = 3.838
+    formula_6d_km: float = 3.774
+    regression_tol_km: float = 0.01
+    a_dot_6d_m_day: float = -24.03
+
+
+MAINTENANCE_TEST_S5 = MaintenanceTestS5()
+
+
+@dataclass(frozen=True)
+class DemoSceneS5:
+    """Constelação na cena da demo (S5-06): critérios do card e medidas de regressão.
+
+    Critérios do card S5-06: 6 membros em ``meta.constellation``; 91 nós somados em 1 dia (A.3,
+    ``NODE_GRID_A3.p6_nodes``); LTAN dos 6 satélites constante em 24 h, 22,500 ± 0,01 h, e iguais
+    entre si (mesma tolerância); ``--days 6`` com arquivo < 15 MB.
+
+    Medido no satsim (S5-06, build_demo --offline, 2026-10-23 00:00 UTC, Cowell completo, a
+    calibrado): LTAN 22,4994 … 22,5029 h nos seis, diferença máxima entre eles 0,0006 h; 15 ou 16
+    nós por satélite (91 no total); faixa λ = 1,9955° (rolagem de meia grade do A.5, 23,1957°, no
+    raio médio da órbita); ȧ −23,94 … −24,01 m/dia. Arquivo: 1 dia (passo 20 s) 6,7 MB; 6 dias
+    (passo 60 s) 11,2 MB, 8 641 amostras por satélite, 40 s para gerar.
+    """
+
+    start_utc: str = "2026-10-23T00:00:00Z"
+    member_ids: tuple[str, ...] = ("s1", "s2", "s3", "s4", "s5", "s6")
+    nodes_1d: int = 91  # A.3
+    ltan_h: float = 22.5
+    ltan_tol_h: float = 0.01  # critério do card
+    ltan_spread_tol_h: float = 0.01  # critério do card ("iguais entre si")
+    max_file_mb: float = 15.0  # critério do card
+    step_6d_s: float = 60.0
+
+
+DEMO_SCENE_S5 = DemoSceneS5()
