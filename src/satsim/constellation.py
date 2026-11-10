@@ -16,16 +16,26 @@ num único plano heliossíncrono, que compartilham a, e, i, Ω e ω médios e di
    (``mean_osc.conversion_models``) e propagação no Cowell com todas as forças.
 
 É a única forma de criar a constelação nos scripts e na demo.
+
+Desenho da constelação (card S6-01)
+-----------------------------------
+``ConstellationDesign`` guarda (N, D, P) e as grandezas do Sem4 §8.2–8.3 (m = P/D, uniformidade,
+trilhas por dia, grade diária, atraso entre nós de vizinhos, famílias, rolagem para cobertura
+diária). ``CONSTELLATION_DESIGNS`` registra os presets da órbita 91/6 com 6 e 18 satélites: é a
+única fonte de P para scripts e demo; ``ConstellationDesign.build`` cria a constelação com
+``sso_constellation`` e a paleta por família (``constellation_palette``).
 """
 
 import math
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from satsim.astrotime import datetime_to_jd
+from satsim.coverage import roll_for_half_grid
 from satsim.elements import KeplerianElements
 from satsim.forces import AccelerationModel, DragAcceleration
 from satsim.mean_osc import conversion_models, mean_to_osculating
@@ -192,3 +202,173 @@ def sso_constellation(
             )
         )
     return Constellation(epoch, satellites)
+
+
+# --- Desenho da constelação (S6-01) ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConstellationDesign:
+    """Constelação de P satélites igualmente faseados num plano, na órbita de repetição N/D.
+
+    Grandezas do Sem4 §8.2–8.3 (eqs. 42 e 43): o satélite j (j = 0 … P − 1, id ``s{j+1}``)
+    tem fase ψ0_j = −j·360°/P, cruza o nó Tnod/P depois do satélite j − 1 e deposita o seu nó
+    D/P passos de grade a oeste. O padrão de nós é uniforme quando P | D ou D | P.
+
+    Attributes:
+        n_revs: N, revoluções do ciclo de repetição.
+        n_days: D, dias do ciclo.
+        n_sats: P, número de satélites.
+        name: nome legível (ex.: "91/6 · 18 satélites").
+    """
+
+    n_revs: int
+    n_days: int
+    n_sats: int
+    name: str
+
+    def __post_init__(self) -> None:
+        if min(self.n_revs, self.n_days, self.n_sats) < 1:
+            raise ValueError("n_revs, n_days e n_sats devem ser ≥ 1")
+
+    @property
+    def m(self) -> float:
+        """m = P/D, satélites por dia do ciclo (Sem4 §8.3)."""
+        return self.n_sats / self.n_days
+
+    @property
+    def is_uniform(self) -> bool:
+        """Padrão de nós uniforme: P | D ou D | P (Sem4 §8.3)."""
+        return self.n_days % self.n_sats == 0 or self.n_sats % self.n_days == 0
+
+    @property
+    def n_families(self) -> int:
+        """Número de famílias: m quando D | P (cada família é uma constelação N/D com P = D);
+        1 nos outros casos."""
+        return self.n_sats // self.n_days if self.n_sats % self.n_days == 0 else 1
+
+    @property
+    def tracks_per_day(self) -> int | None:
+        """Trilhas distintas por dia, N·P/D, quando D | P (Sem4 §8.3); ``None`` se não."""
+        if self.n_sats % self.n_days:
+            return None
+        return self.n_revs * self.n_sats // self.n_days
+
+    @property
+    def grid_deg(self) -> float:
+        """Grade do ciclo, 360°/N."""
+        return 360.0 / self.n_revs
+
+    @property
+    def daily_grid_deg(self) -> float | None:
+        """Grade diária, 360°·D/(N·P), quando D | P (Sem4 eq. 43); ``None`` se não."""
+        tracks = self.tracks_per_day
+        return None if tracks is None else 360.0 / tracks
+
+    @property
+    def full_grid_days(self) -> int | None:
+        """Dias para os P satélites depositarem a grade completa de N trilhas: 1 se D | P,
+        D/P se P | D (revisita da grade); ``None`` se o padrão não for uniforme."""
+        if self.n_sats % self.n_days == 0:
+            return 1
+        if self.n_days % self.n_sats == 0:
+            return self.n_days // self.n_sats
+        return None
+
+    @property
+    def phase_step_deg(self) -> float:
+        """Δu entre satélites vizinhos, 360°/P (Sem4 eq. 42)."""
+        return 360.0 / self.n_sats
+
+    @property
+    def ids(self) -> tuple[str, ...]:
+        """Ids ``s1`` … ``sP``, em ordem de fase."""
+        return tuple(f"s{j + 1}" for j in range(self.n_sats))
+
+    def node_delay_s(self, t_nod: float) -> float:
+        """Atraso entre os nós de satélites vizinhos, Tnod/P [s] (Sem4 eq. 42)."""
+        return t_nod / self.n_sats
+
+    def family(self, j: int) -> int:
+        """Família do satélite j (0-based): j mod m quando D | P; 0 nos outros casos.
+
+        A família f reúne s_{f+1}, s_{f+1+m}, …: uma constelação N/D completa com P = D,
+        deslocada f/m de passo de grade (Apêndice A.1 do prompt da Semana 6).
+        """
+        if not 0 <= j < self.n_sats:
+            raise ValueError(f"j fora de 0 … {self.n_sats - 1}: {j}")
+        return j % self.n_families
+
+    def roll_for_daily_coverage(self, a: float) -> float:
+        """Rolagem η [rad] que fecha a grade diária: meia grade de N·P/D trilhas (Sem4 eq. 45).
+
+        91/6: 23,1957° com P = 6 e 8,1835° com P = 18 (a = 6 888,089 km; Apêndice A.2 do prompt
+        da Semana 6).
+
+        Raises:
+            ValueError: se D não dividir P (sem grade diária).
+        """
+        tracks = self.tracks_per_day
+        if tracks is None:
+            raise ValueError("sem grade diária: D não divide P")
+        return roll_for_half_grid(a, tracks)
+
+    def build(
+        self,
+        epoch: datetime,
+        models: Sequence[AccelerationModel],
+        a: float = DESIGN_SEMI_MAJOR_AXIS_M,
+        ltan_h: float = DESIGN_LTAN_H,
+        i: float | None = None,
+        e: float | None = None,
+    ) -> Constellation:
+        """A constelação deste desenho por ``sso_constellation`` (receita das Semanas 4–5), com
+        ``n_sats = P`` e a paleta ``constellation_palette(self)``.
+
+        O ``a`` padrão é o de projeto da órbita 91/6; para outro N/D, passe o a da órbita.
+        """
+        return sso_constellation(
+            epoch, models, n_sats=self.n_sats, a=a, ltan_h=ltan_h, i=i, e=e,
+            color_palette=constellation_palette(self),
+        )  # fmt: skip
+
+
+DESIGN_91_6_P6 = ConstellationDesign(91, 6, 6, "91/6 · 6 satélites")
+"""Constelação Epic of Sun da Semana 5 (Sem4 Tabela 4): P = D, Δu = 60°, 91 trilhas por dia."""
+
+DESIGN_91_6_P18 = ConstellationDesign(91, 6, 18, "91/6 · 18 satélites")
+"""P = 3·D (Sem4 §8.3): Δu = 20°, 273 trilhas por dia; s1, s4, …, s16 são a constelação de 6."""
+
+CONSTELLATION_DESIGNS: dict[int, ConstellationDesign] = {6: DESIGN_91_6_P6, 18: DESIGN_91_6_P18}
+"""Registro dos desenhos por P: a única fonte para scripts e demo."""
+
+_TONE_MIX = 0.42
+"""Fração de mistura com branco/preto que diferencia as famílias 1, 2, … na paleta."""
+
+
+def _mix(color: str, target: float, frac: float) -> str:
+    """Mistura a cor CSS ``#rrggbb`` com cinza ``target`` (0 = preto, 255 = branco)."""
+    rgb = [int(color[k : k + 2], 16) for k in (1, 3, 5)]
+    out = [round(c + (target - c) * frac) for c in rgb]
+    return "#" + "".join(f"{c:02x}" for c in out)
+
+
+def constellation_palette(design: ConstellationDesign) -> tuple[str, ...]:
+    """Cores dos P satélites do desenho, agrupadas por família (S6-01).
+
+    Quando D | P, o matiz vem da posição k = j // m no ciclo (``CONSTELLATION_PALETTE[k]``,
+    ciclando se D > 6) e a tonalidade da família f = j mod m: f = 0 usa a cor base (s1, s4, …,
+    s16 têm as cores de S1 … S6 da Semana 5); f ímpar escurece e f par clareia, cada vez mais.
+    Com P = 6 devolve exatamente ``CONSTELLATION_PALETTE``. Fora de D | P, as cores base ciclam.
+    """
+    m = design.n_families
+    base = CONSTELLATION_PALETTE
+    colors = []
+    for j in range(design.n_sats):
+        k, f = (j // m, j % m) if m > 1 else (j, 0)
+        color = base[k % len(base)]
+        if f:
+            frac = min(_TONE_MIX * ((f + 1) // 2), 0.8)
+            color = _mix(color, 0.0 if f % 2 else 255.0, frac)
+        colors.append(color)
+    return tuple(colors)

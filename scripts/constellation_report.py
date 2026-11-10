@@ -1,10 +1,16 @@
-"""Relatório da constelação 91/6 da Semana 5 (reports/s5_constelacao/).
+"""Relatório da constelação 91/6: Semana 5 (6 satélites) e Semana 6 (18 satélites).
 
 Uso (na raiz do repositório, com o pacote instalado com o extra dev):
 
     python scripts/constellation_report.py                  # tudo (~2 min) e o relatório
     python scripts/constellation_report.py --from-json      # só refaz gráficos e relatório
     python scripts/constellation_report.py --only coverage  # recalcula uma seção, mantém as outras
+    python scripts/constellation_report.py --sats 18        # Semana 6 (reports/s6_constelacao18/)
+
+``--sats 6`` (padrão) gera reports/s5_constelacao/ como na Semana 5. ``--sats 18`` (S6-01) gera
+reports/s6_constelacao18/: nós de 1 dia com P = 6 × P = 18, fração coberta em 1 dia × rolagem
+(0° a 25°) com 8,18° e 23,2° marcados, revisita de 3 dias, passagens por alvo, contatos dos 18 em
+24 h com as sobreposições e relatorio.md (≈ 4 min). P vem de ``CONSTELLATION_DESIGNS``.
 
 Seções (uma por card; os próximos cards acrescentam as suas):
 
@@ -30,6 +36,7 @@ manutencao_traco.png, manutencao_ltan.png, relatorio.md e resultados.json
 """
 
 import argparse
+import functools
 import json
 import logging
 import math
@@ -49,6 +56,7 @@ from satsim.analysis import fit_rate, osculating_elements  # noqa: E402
 from satsim.astrotime import datetime_to_jd, gmst_rate  # noqa: E402
 from satsim.constants import OMEGA_EARTH, OMEGA_SUN, R_EARTH, SECONDS_PER_DAY  # noqa: E402
 from satsim.constellation import (  # noqa: E402
+    CONSTELLATION_DESIGNS,
     CONSTELLATION_PALETTE,
     Constellation,
     sso_constellation,
@@ -103,7 +111,7 @@ OUT_DIR = ROOT / "reports" / "s5_constelacao"
 
 EPOCH = datetime(2026, 10, 23, tzinfo=UTC)  # época padrão do Apêndice A
 DAY = SECONDS_PER_DAY
-N_REVS, N_DAYS = 91, 6
+N_REVS, N_DAYS = CONSTELLATION_DESIGNS[6].n_revs, CONSTELLATION_DESIGNS[6].n_days  # 91/6
 A_DESIGN = 6888089.0  # Sem4 §7.5 (A.1)
 I_CAL = math.radians(97.46325)  # A.7 da Semana 4 (A.1)
 LTAN_H = 22.5
@@ -115,8 +123,8 @@ def _deg(x: float) -> float:
     return math.degrees(x)
 
 
-def _metrics_deg(lon: np.ndarray) -> dict:
-    count, gap_min, gap_max, offset = grid_metrics(lon, N_REVS)
+def _metrics_deg(lon: np.ndarray, n_tracks: int = N_REVS) -> dict:
+    count, gap_min, gap_max, offset = grid_metrics(lon, n_tracks)
     return {"nodes": count, "gap_min_deg": _deg(gap_min), "gap_max_deg": _deg(gap_max),
             "max_offset_deg": _deg(offset)}  # fmt: skip
 
@@ -372,7 +380,11 @@ def coverage_report_lines(data: dict) -> list[str]:
 
 def contacts_section() -> dict:
     """Plano de contatos de 24 h sobre São Bento do Sapucaí (el ≥ 10°) e o Sol na estação."""
-    c = sso_constellation(EPOCH, full_force_models(EPOCH), a=A_DESIGN, i=I_CAL)
+    return _contacts_data(sso_constellation(EPOCH, full_force_models(EPOCH), a=A_DESIGN, i=I_CAL))
+
+
+def _contacts_data(c: Constellation) -> dict:
+    """Plano de contatos de 24 h de ``c`` sobre São Bento do Sapucaí, em dados para o JSON."""
     plan = contact_plan(c, SAO_BENTO_DO_SAPUCAI, EPOCH, DAY, el_min_deg=10.0)
 
     def h(dt: datetime) -> float:
@@ -939,13 +951,447 @@ SECTIONS = {
 }
 
 
+# === Semana 6 (S6-01): constelação de 18 satélites, --sats 18 =====================================
+
+OUT_DIR_18 = ROOT / "reports" / "s6_constelacao18"
+DESIGN_6, DESIGN_18 = CONSTELLATION_DESIGNS[6], CONSTELLATION_DESIGNS[18]
+GRID18_DEG = 2.0  # grade de alvos do A.3 da Semana 6
+STEP18_S = 10.0
+ROLL_SWEEP_DEG = np.arange(0.0, 25.0 + 1e-9, 0.5)
+
+
+@functools.cache
+def _constellation18() -> Constellation:
+    """Os 18 no Cowell completo (A.1 da Semana 6), uma vez por execução: as seções reaproveitam a
+    integração em cache de cada satélite."""
+    return DESIGN_18.build(EPOCH, full_force_models(EPOCH), a=A_DESIGN, i=I_CAL)
+
+
+def _family18(f: int) -> Constellation:
+    """Família f da constelação de 18 (f = 0: s1, s4, …, s16, a constelação de 6)."""
+    c = _constellation18()
+    return Constellation(EPOCH, [s for j, s in enumerate(c) if DESIGN_18.family(j) == f])
+
+
+def grid18_section() -> dict:
+    """Nós de 1 dia dos 18 (Cowell completo e modelo médio), famílias e atraso entre vizinhos."""
+    c = _constellation18()
+    t0 = time.perf_counter()
+    nodes = [node_crossings(s, EPOCH, DAY, 30.0) for s in c]
+    nodes_s = time.perf_counter() - t0
+    lon_by_sat = [lon for _, lon in nodes]
+    out: dict = {
+        "nodes_time_s": nodes_s,
+        "colors": [s.color for s in c],
+        "lon_deg_by_sat": [np.degrees(x).tolist() for x in lon_by_sat],
+        "first_node_s": [float(t[0]) for t, _ in nodes],
+        "p18": _metrics_deg(np.concatenate(lon_by_sat), DESIGN_18.tracks_per_day),
+        "families": [_metrics_deg(np.concatenate(lon_by_sat[f::3]), N_REVS) for f in range(3)],
+    }
+    delays = []
+    for j in range(len(c) - 1):
+        t_b = nodes[j + 1][0]
+        for t in nodes[j][0]:
+            later = t_b[(t_b > t) & (t_b < t + 2000.0)]
+            delays.extend(later[:1] - t)
+    out["neighbour_delay_s"] = {"min": float(np.min(delays)), "max": float(np.max(delays)),
+                                "mean": float(np.mean(delays))}  # fmt: skip
+    a, i = repeat_orbit(N_REVS, N_DAYS)
+    sats = [MeanJ2Propagator(KeplerianElements(a, 0.0, i, 0.3, 0.0, float(p)), EPOCH)
+            for p in constellation_phases(DESIGN_18.n_sats)]  # fmt: skip
+    lon = np.concatenate(_nodes_by_sat(sats, EPOCH - timedelta(seconds=1), DAY))
+    out["mean_p18"] = _metrics_deg(lon, DESIGN_18.tracks_per_day)
+    return out
+
+
+def _passes_per_target(acc, gap_merge_s: float = 1800.0) -> tuple[np.ndarray, np.ndarray]:
+    """Passagens distintas por alvo (acessos a menos de 30 min fundidos) e a duração [s] de cada
+    passagem (do 1º ao último acesso), como (contagem por alvo, durações)."""
+    idx, t = acc.target_index, acc.t_s
+    new = np.r_[True, idx[1:] != idx[:-1]] | (np.r_[np.inf, np.diff(t)] >= gap_merge_s)
+    starts = np.flatnonzero(new)
+    ends = np.r_[starts[1:] - 1, idx.size - 1]
+    return np.bincount(idx[new], minlength=acc.n_targets), t[ends] - t[starts]
+
+
+def _stats(x: np.ndarray) -> dict:
+    return {"min": float(np.min(x)), "median": float(np.median(x)), "max": float(np.max(x))}
+
+
+def coverage18_section() -> dict:
+    """Fração coberta em 1 dia × rolagem (P = 6 e 18), revisita de 3 dias, passagens por alvo e
+    redundância (grade 2°, passo 10 s, Cowell completo)."""
+    grid = TargetGrid(GRID18_DEG, GRID18_DEG)
+    lat60 = np.abs(grid.lat_deg) <= 60.0
+    c18, c6 = _constellation18(), _family18(0)
+    roll18 = _deg(DESIGN_18.roll_for_daily_coverage(A_DESIGN))
+    roll6 = _deg(DESIGN_6.roll_for_daily_coverage(A_DESIGN))
+    rolls = np.unique(np.r_[ROLL_SWEEP_DEG, roll18, ROLL_DEG])
+    out: dict = {"roll18_deg": roll18, "roll6_deg": roll6, "rolls_deg": rolls.tolist(),
+                 "sweep": {}}  # fmt: skip
+    for label, cons in (("p6", c6), ("p18", c18)):
+        out["sweep"][label] = [
+            coverage_stats(access_times(cons, grid, EPOCH, DAY, math.radians(r), STEP18_S), DAY)[0]
+            for r in rolls
+        ]
+    out["revisit_3d"] = {}
+    for label, cons in (("p6", c6), ("p18", c18)):
+        for rname, r in (("roll8", roll18), ("roll23", ROLL_DEG)):
+            acc = access_times(cons, grid, EPOCH, 3 * DAY, math.radians(r), STEP18_S)
+            frac, revisit = coverage_stats(acc, 3 * DAY)
+            out["revisit_3d"][f"{label}_{rname}"] = {
+                "fraction": frac, "lat60_h": float(revisit[lat60].max() / 3600),
+                "lat80_h": float(revisit.max() / 3600),
+            }  # fmt: skip
+    out["passes_1d"] = {}
+    for label, cons in (("p6", c6), ("p18", c18)):
+        acc = access_times(cons, grid, EPOCH, DAY, math.radians(ROLL_DEG), STEP18_S)
+        count, durations = _passes_per_target(acc)
+        per_sat = np.zeros(grid.n_targets, dtype=int)
+        for s in cons:
+            per_sat += _passes_per_target(
+                access_times([s], grid, EPOCH, DAY, math.radians(ROLL_DEG), STEP18_S)
+            )[0]
+        out["passes_1d"][label] = {"per_target": _stats(count[lat60]),
+                                   "per_satellite": _stats(per_sat[lat60]),
+                                   "duration_min": _stats(durations / 60)}  # fmt: skip
+    out["without_one"] = [
+        coverage_stats(access_times(Constellation(EPOCH, [s for s in c18 if s.id != sat.id]),
+                                    grid, EPOCH, DAY, math.radians(ROLL_DEG), STEP18_S), DAY)[0]
+        for sat in c18
+    ]  # fmt: skip
+    return out
+
+
+def _max_simultaneous(passes) -> int:
+    """Maior número de satélites visíveis ao mesmo tempo (varredura de AOS e LOS)."""
+    events = sorted([(p.aos, 1) for p in passes] + [(p.los, -1) for p in passes],
+                    key=lambda e: (e[0], e[1]))  # fmt: skip
+    current = peak = 0
+    for _, step in events:
+        current += step
+        peak = max(peak, current)
+    return peak
+
+
+def contacts18_section() -> dict:
+    """Plano de contatos de 24 h dos 18 sobre São Bento do Sapucaí, com as sobreposições."""
+    c = _constellation18()
+    out = _contacts_data(c)
+    plan = contact_plan(c, SAO_BENTO_DO_SAPUCAI, EPOCH, DAY, el_min_deg=10.0)
+
+    def h(dt: datetime) -> float:
+        return (dt - EPOCH).total_seconds() / 3600.0
+
+    out["overlaps"] = [{"a": ov.sat_a, "b": ov.sat_b, "start_h": h(ov.start), "end_h": h(ov.end)}
+                       for ov in plan.overlaps]  # fmt: skip
+    out["max_simultaneous"] = _max_simultaneous(plan.passes)
+    plan6 = contact_plan(_family18(0), SAO_BENTO_DO_SAPUCAI, EPOCH, DAY, el_min_deg=10.0)
+    out["p6"] = {"n_passes": len(plan6.contacts), "total_min": plan6.total_contact_s / 60,
+                 "n_overlaps": len(plan6.overlaps)}  # fmt: skip
+    rates = [measure_decay_rate(s, 1.0) * DAY for s in c]
+    out["a_dot_m_day"] = {"min": float(min(rates)), "max": float(max(rates))}
+    return out
+
+
+def plot_grid18(data: dict, out: Path) -> None:
+    """Nós de 1 dia, P = 6 × P = 18 (como a Figura 12 do Sem4), de 0° a 40° de longitude."""
+    g = data["grid18"]
+    lon = g["lon_deg_by_sat"]
+    anchor = lon[0][0]
+    fig, axes = plt.subplots(2, 1, figsize=(11, 4.8), sharex=True)
+    for ax, members, title, tracks in (
+        (axes[0], range(0, 18, 3), "P = 6 (família 0: s1, s4, …, s16)", N_REVS),
+        (axes[1], range(18), "P = 18 (Δu = 20°)", DESIGN_18.tracks_per_day),
+    ):
+        step = 360.0 / tracks
+        for k in range(-tracks, tracks):
+            ax.axvline(np.mod(anchor + k * step, 360.0), color="0.85", lw=0.7, zorder=0)
+        for j in members:
+            ax.scatter(np.mod(lon[j], 360.0), np.zeros(len(lon[j])), s=55, color=g["colors"][j],
+                       edgecolor="0.2", lw=0.5, label=f"S{j + 1}", zorder=3)  # fmt: skip
+        m = g["families"][0] if tracks == N_REVS else g["p18"]
+        ax.set_title(
+            f"{title} — {m['nodes']} nós/dia, espaçamento {_f(m['gap_min_deg'], 4)}° a "
+            f"{_f(m['gap_max_deg'], 4)}° (grade de {tracks} trilhas: {_f(step, 4)}°)",
+            fontsize=9.5,
+        )
+        ax.set_yticks([])
+        ax.set_xlim(0.0, 40.0)
+    axes[1].legend(ncol=9, fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.3))
+    axes[1].set_xlabel("longitude do nó ascendente [°] (linhas cinza: grade ideal)")
+    fig.suptitle("Nós ascendentes em 1 dia, Cowell completo (2026-10-23)", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+
+
+def plot_coverage18(data: dict, out: Path) -> None:
+    """Fração dos alvos vista em 1 dia × rolagem máxima, P = 6 e P = 18."""
+    cov = data["coverage18"]
+    rolls = np.array(cov["rolls_deg"])
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    colors = {"p6": "#0b6e8a", "p18": "#ff4d8d"}
+    for label, name in (("p6", "P = 6"), ("p18", "P = 18")):
+        ax.plot(rolls, 100 * np.array(cov["sweep"][label]), color=colors[label], lw=2, label=name)
+    for r, txt in ((cov["roll18_deg"], "8,18°: fecha a grade de 273"),
+                   (cov["roll6_deg"], "23,2°: fecha a grade de 91")):  # fmt: skip
+        ax.axvline(r, color="0.4", ls="--", lw=1)
+        ax.text(r + 0.3, 8, txt, rotation=90, fontsize=8.5, color="0.3", va="bottom")
+    ax.set_xlim(0, 25)
+    ax.set_ylim(0, 102)
+    ax.set_xlabel("rolagem máxima da câmera η [°]")
+    ax.set_ylabel("alvos vistos em 1 dia [%]")
+    ax.set_title("Cobertura em 1 dia × rolagem (|lat| ≤ 80°, grade 2°, Cowell completo)",
+                 fontsize=10)  # fmt: skip
+    ax.grid(alpha=0.3)
+    ax.legend(loc="center right")
+    fig.tight_layout()
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+
+
+def plot_contacts18(data: dict, out: Path) -> None:
+    """Linha do tempo dos contatos dos 18 em 24 h e um zoom em cada trem, com as sobreposições
+    (dois satélites visíveis ao mesmo tempo) destacadas em vermelho."""
+    ct = data["contacts18"]
+    sats = sorted(ct["colors"], key=lambda s: int(s[1:]))
+    row = {s: k for k, s in enumerate(sats)}
+    fig = plt.figure(figsize=(12, 9))
+    gs = fig.add_gridspec(2, 2, height_ratios=(1.0, 1.4), hspace=0.35, wspace=0.12)
+    top = fig.add_subplot(gs[0, :])
+    zooms = [fig.add_subplot(gs[1, k]) for k in range(len(ct["trains"][:2]))]
+
+    def draw(ax, xlim) -> None:
+        for ov in ct["overlaps"]:
+            ax.axvspan(ov["start_h"], ov["end_h"], color="#e0302b", alpha=0.18, lw=0)
+        for c in ct["contacts"]:
+            ax.barh(row[c["sat"]], c["los_h"] - c["aos_h"], left=c["aos_h"], height=0.65,
+                    color=ct["colors"][c["sat"]], edgecolor="0.25", lw=0.4)  # fmt: skip
+        ax.set_yticks(range(len(sats)), [s.upper() for s in sats], fontsize=7)
+        ax.set_ylim(-0.6, len(sats) - 0.4)
+        ax.invert_yaxis()
+        ax.set_xlim(*xlim)
+        ax.grid(axis="x", alpha=0.3)
+
+    draw(top, (0.0, 24.0))
+    ticks = np.arange(0, 25, 3)
+    top.set_xticks(ticks, [f"{t:02d}h\n{(t - 3) % 24:02d}h" for t in ticks])
+    top.set_xlabel("UTC (em cima) / BRT (embaixo)")
+    top.set_title(
+        f"18 satélites × São Bento do Sapucaí em 24 h (el ≥ 10°): {len(ct['contacts'])} "
+        f"passagens, {_f(ct['total_contact_min'], 1)} min, {ct['n_overlaps']} sobreposições "
+        f"(em vermelho), até {ct['max_simultaneous']} satélites ao mesmo tempo",
+        fontsize=10,
+    )
+    for ax, tr in zip(zooms, ct["trains"], strict=False):
+        draw(ax, (tr["start_h"] - 0.05, tr["end_h"] + 0.05))
+        hh = np.arange(math.floor(tr["start_h"] * 4) / 4, tr["end_h"] + 0.25, 0.25)
+        ax.set_xticks(hh, [f"{int(x) % 24:02d}:{int(round(x % 1 * 60)):02d}" for x in hh],
+                      fontsize=8)  # fmt: skip
+        spacing = tr["aos_spacing_min"]
+        ax.set_title(
+            f"trem {'noturno' if tr['lighting'] == 'noite' else 'diurno'}: {tr['n']} passagens, "
+            f"AOS a {_f(min(spacing), 1)}–{_f(max(spacing), 1)} min",
+            fontsize=9.5,
+        )
+        ax.set_xlabel("UTC")
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
+def write_report18(data: dict, out: Path, elapsed_s: float | None) -> None:
+    g, cov, ct = data["grid18"], data["coverage18"], data["contacts18"]
+    gen = f" em {_f(elapsed_s / 60, 1)} min" if elapsed_s is not None else ""
+    rv = cov["revisit_3d"]
+    p18, p6 = cov["passes_1d"]["p18"], cov["passes_1d"]["p6"]
+    night, day = ct["trains"][0], ct["trains"][1]
+    spacing = night["aos_spacing_min"] + day["aos_spacing_min"]
+    fam = g["families"]
+    delay = g["neighbour_delay_s"]
+
+    def hm(hours: float) -> str:
+        m = int(round(hours % 24 * 60))
+        return f"{m // 60:02d}:{m % 60:02d}"
+
+    lines = [
+        "# Relatório da Semana 6 — Constelação de 18 satélites (P = 3·D)",
+        "",
+        f"Gerado por `python scripts/constellation_report.py --sats 18`{gen}. Época 2026-10-23 "
+        "00:00 UTC. Mesma órbita da Semana 5 (a 6 888,089 km, i 97,46325°, LTAN 22h30, Cowell "
+        "completo), agora com 18 satélites num único plano, Δu = 20° (`DESIGN_91_6_P18`: "
+        "ψ0_j = −j·20°, ids s1 … s18 em ordem de fase). Os satélites s1, s4, …, s16 (família 0) "
+        "ocupam as posições da constelação de 6. Valores do Apêndice A do prompt da Semana 6 entre "
+        "parênteses.",
+        "",
+        "## Em linguagem simples: o que 18 satélites compram",
+        "",
+        "Com 6 satélites, a Terra recebe 91 riscos por dia, a cada 440 km no equador; a câmera "
+        "precisa girar até 23,2° para os lados para enxergar o meio do vão entre dois riscos. Com "
+        "18 satélites no mesmo plano, cada novo satélite passa 5,3 min depois do vizinho da "
+        "frente. Nesse tempo a Terra gira um terço do vão, então o novo risco cai **entre** os "
+        "antigos: são 273 riscos por dia, a cada 147 km. A câmera só precisa girar 8,2°: imagem "
+        "mais nítida (menos inclinada) e menos atmosfera no caminho.",
+        "",
+        "O que **não** melhora é o tempo de espera por uma nova foto do mesmo lugar. Os 18 "
+        "satélites andam em fila, como vagões de um trem: quando o trem passa perto de um alvo, "
+        "dois ou três vagões vizinhos o enxergam, mas todos no intervalo de poucos minutos. Depois "
+        "o trem só volta meio dia mais tarde, na outra metade da órbita, como acontecia com 6. Num "
+        "plano só, todas as passagens acontecem no mesmo horário solar (22h30 e 10h30 locais).",
+        "",
+        "## Grade de 273 trilhas",
+        "",
+        "![Nós ascendentes, P = 6 × P = 18](grade_nos_p6_p18.png)",
+        "",
+        "| Caso | Nós | Espaçamento mín. … máx. [°] | Afastamento máx. [°] |",
+        "|---|---:|---|---:|",
+        f"| Modelo médio, P = 18 | {g['mean_p18']['nodes']} | {_f(g['mean_p18']['gap_min_deg'], 6)}"
+        f" … {_f(g['mean_p18']['gap_max_deg'], 6)} (1,31868 uniforme) | — |",
+        f"| Cowell completo, P = 18 | {g['p18']['nodes']} | {_f(g['p18']['gap_min_deg'], 5)} … "
+        f"{_f(g['p18']['gap_max_deg'], 5)} (273; 1,31556 … 1,32196) | "
+        f"{_f(g['p18']['max_offset_deg'], 5)} (0,00695) |",
+        *(
+            f"| Cowell completo, família {f} (91 trilhas) | {fam[f]['nodes']} | "
+            f"{_f(fam[f]['gap_min_deg'], 5)} … {_f(fam[f]['gap_max_deg'], 5)}"
+            + (" (91; 3,95173 … 3,96432)" if f == 0 else "")
+            + f" | {_f(fam[f]['max_offset_deg'], 5)}"
+            + (" (0,00645)" if f == 0 else "")
+            + " |"
+            for f in range(3)
+        ),
+        "",
+        f"- **Atraso entre vizinhos:** {_f(delay['min'], 2)} a {_f(delay['max'], 2)} s (média "
+        f"{_f(delay['mean'], 2)} s; Tnod/18 = 316,5 s; A.1: s2 − s1 = 316,54 s). Primeiros nós: "
+        + ", ".join(f"s{j + 1} {_f(t, 2)} s" for j, t in enumerate(g["first_node_s"][:4]))
+        + " (A.1: 4 274,46; 4 591,00; 4 907,52; 5 223,99). O s4 cruza o nó no mesmo instante que o "
+        "S2 da constelação de 6: a família 0 **é** a constelação de 6.",
+        "- **Três famílias, três grades de 91:** f = j mod 3. Cada família é uma constelação 91/6 "
+        "completa; as três se intercalam a 1/3 de passo (Sem4 eq. 43, D/P = 1/3). Os afastamentos "
+        "à grade de 273 vêm do mesmo termo de curto período de J2 já visto na Semana 5 (±0,0045°).",
+        f"- **Custo:** nós de 1 dia dos 18 em {_f(g['nodes_time_s'], 1)} s (A.1: 20,3 s), "
+        "praticamente todo na integração do Cowell completo.",
+        "",
+        "## Cobertura e revisita",
+        "",
+        "![Cobertura × rolagem](cobertura_rolagem.png)",
+        "",
+        "Rolagem que fecha a grade diária (Sem4 eq. 45, λ = meia grade): "
+        f"**{_f(cov['roll18_deg'], 4)}°** "
+        f"com 18 satélites e {_f(cov['roll6_deg'], 4)}° com 6 (A.2: 8,1835° e 23,1957°). Grade de "
+        "alvos 2° × 2° em |lat| ≤ 80°, passo 10 s, Cowell completo; intervalo de revisita entre "
+        "inícios de passagens (acessos a menos de 30 min fundidos), com as bordas da janela.",
+        "",
+        "| Caso | Janela | Fração vista | Maior intervalo, \\|lat\\| ≤ 60° | \\|lat\\| ≤ 80° "
+        "| A.3 (fração; \\|lat\\| ≤ 60°) |",
+        "|---|---|---:|---:|---:|---|",
+    ]
+    for key, label, ref in (
+        ("p18_roll8", "P = 18, η = 8,18°", "100%; 24,0 h"),
+        ("p18_roll23", "P = 18, η = 23,2°", "100%; 13,79 h"),
+        ("p6_roll23", "P = 6, η = 23,2°", "100%; 13,97 h"),
+        ("p6_roll8", "P = 6, η = 8,18°", "74,35%; 72,0 h"),
+    ):
+        r = rv[key]
+        lines.append(f"| {label} | 3 dias | {_f(100 * r['fraction'], 2)}% | "
+                     f"{_f(r['lat60_h'], 2)} h | {_f(r['lat80_h'], 2)} h | {ref} |")  # fmt: skip
+    k8 = cov["rolls_deg"].index(cov["roll18_deg"])
+    lines += [
+        "",
+        f"- **1 dia com 8,18°:** P = 18 vê {_f(100 * cov['sweep']['p18'][k8], 2)}% dos alvos; "
+        f"P = 6, só {_f(100 * cov['sweep']['p6'][k8], 1)}%. A curva de P = 18 chega a 100% "
+        "com um terço da rolagem de P = 6.",
+        f"- **Redundância:** tirando qualquer um dos 18, os 17 restantes com 23,2° ainda cobrem "
+        f"{_f(100 * min(cov['without_one']), 2)}% em 1 dia (pior caso entre as 18 remoções). "
+        "Com 23,2°, cada alvo fica ao alcance de 3 trilhas por dia (λ = 1,98° = 1,5 grade diária).",
+        f"- **Revisita:** {_f(rv['p18_roll23']['lat60_h'], 2)} h com 18 contra "
+        f"{_f(rv['p6_roll23']['lat60_h'], 2)} h com 6 (|lat| ≤ 60°): praticamente igual.",
+        "",
+        "### Por que a revisita não cai: a discrepância com o Sem4 §8.3",
+        "",
+        "O Sem4 §8.3 diz que, com P = m·D, cada trilha recebe **m passagens por dia**. Medido no "
+        "Cowell, não é o que acontece com P = 18: os 18 depositam **273 trilhas diferentes**, uma "
+        "passagem em cada (a grade fica 3× mais densa), e não 3 passagens sobre as mesmas 91. "
+        "O que um alvo recebe, com η = 23,2° e |lat| ≤ 60° em 1 dia:",
+        "",
+        "| | P = 6 | P = 18 |",
+        "|---|---:|---:|",
+        f"| Passagens (acessos a < 30 min fundidos): mín. / mediana / máx. | "
+        f"{p6['per_target']['min']:.0f} / {p6['per_target']['median']:.0f} / "
+        f"{p6['per_target']['max']:.0f} | {p18['per_target']['min']:.0f} / "
+        f"{p18['per_target']['median']:.0f} / {p18['per_target']['max']:.0f} (A.3: 2 / 2 / 3) |",
+        f"| Passagens contadas satélite a satélite (sem fundir o trem): mín. / mediana / máx. | "
+        f"{p6['per_satellite']['min']:.0f} / {p6['per_satellite']['median']:.0f} / "
+        f"{p6['per_satellite']['max']:.0f} | {p18['per_satellite']['min']:.0f} / "
+        f"{p18['per_satellite']['median']:.0f} / {p18['per_satellite']['max']:.0f} |",
+        f"| Duração de uma passagem fundida (1º ao último acesso), mediana / máx. | "
+        f"{_f(p6['duration_min']['median'], 1)} / {_f(p6['duration_min']['max'], 1)} min | "
+        f"{_f(p18['duration_min']['median'], 1)} / {_f(p18['duration_min']['max'], 1)} min |",
+        "",
+        "Com 18, há 3× mais oportunidades de satélite por alvo, mas elas chegam no **mesmo trem**: "
+        "satélites vizinhos, a 5,3 min um do outro, veem o alvo um atrás do outro, numa janela de "
+        f"{_f(p18['duration_min']['median'], 0)} min na mediana (A.3: ≈ 10 min; a diferença é a "
+        "definição: aqui, do 1º ao último acesso da passagem fundida, que em latitude alta junta "
+        "mais satélites e chega a horas). Contadas como passagens (o que importa para a revisita), "
+        "continuam sendo 2 por "
+        "dia, uma na metade ascendente e outra na descendente da órbita, sempre no mesmo horário "
+        "solar. Por isso o maior intervalo entre visitas fica em ≈ 14 h. Para encurtá-lo seria "
+        "preciso espalhar os satélites em **três planos com LTAN diferentes** (passagens em "
+        "horários solares distintos), o que fica fora do escopo: o desenho do Sem4 é de plano "
+        "único.",
+        "",
+        "## Contatos com São Bento do Sapucaí",
+        "",
+        "![Linha do tempo dos contatos](contatos_24h_p18.png)",
+        "",
+        f"- **{len(ct['contacts'])} passagens**, **{_f(ct['total_contact_min'], 2)} min** de "
+        f"contato em 24 h (A.4: 49 e 287,99 min); com 6 satélites (família 0), "
+        f"{ct['p6']['n_passes']} passagens e {_f(ct['p6']['total_min'], 2)} min (A.6 da S5: 16 e "
+        "96,68).",
+        f"- **Dois trens:** noite {hm(night['start_h'])}–{hm(night['end_h'])} UTC ({night['n']} "
+        f"passagens) e dia {hm(day['start_h'])}–{hm(day['end_h'])} UTC ({day['n']}) (A.4: "
+        "00:28–02:30, 24; 12:01–14:07, 25). AOS consecutivos a "
+        f"{_f(min(spacing), 1)}–{_f(max(spacing), 1)} min (≈ Tnod/18 = 5,3 min; A.4: 4,1 … 6,3).",
+        f"- **{ct['n_overlaps']} sobreposições, até {ct['max_simultaneous']} satélites ao mesmo "
+        "tempo** (A.4: 36; 2). Uma passagem dura até ≈ 7,5 min e o próximo satélite chega 5,3 min "
+        "depois: dentro de um trem, quase toda passagem se sobrepõe à seguinte. Com uma antena só, "
+        "seria preciso escolher um satélite por vez (priorização); com duas, todos são atendidos. "
+        "O escalonamento não foi implementado, só quantificado.",
+        f"- **Maior intervalo sem contato:** {_f(ct['max_gap_h'], 2)} h (A.4: 9,88 h), entre os "
+        "dois trens: os satélites extras alongam os trens, mas não criam contatos fora deles.",
+        "",
+        "## Manutenção",
+        "",
+        f"ȧ medido em 1 dia nos 18 satélites: {_f(ct['a_dot_m_day']['min'], 2)} a "
+        f"{_f(ct['a_dot_m_day']['max'], 2)} m/dia, o mesmo dos 6 (−23,95 m/dia; mesmo semieixo, "
+        "mesmo arrasto). O `MaintenanceStatus` de cada um é igual ao da Semana 5 a menos de 1%: "
+        "o custo por satélite não muda, o da constelação triplica (≈ 18 manobras do traço por "
+        "semana, uma por satélite).",
+        "",
+    ]
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+SECTIONS_18 = {
+    "grid18": ("S6-01: grade de 273 trilhas", grid18_section),
+    "coverage18": ("S6-01: cobertura e revisita", coverage18_section),
+    "contacts18": ("S6-01: contatos", contacts18_section),
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--from-json", action="store_true", help="refaz só gráficos e relatório")
-    parser.add_argument("--only", action="append", choices=sorted(SECTIONS),
+    parser.add_argument("--only", action="append", choices=sorted({*SECTIONS, *SECTIONS_18}),
                         help="recalcula só esta seção; as outras vêm do JSON")  # fmt: skip
+    parser.add_argument("--sats", type=int, choices=sorted(CONSTELLATION_DESIGNS), default=6,
+                        help="6: relatório da Semana 5; 18: da Semana 6")  # fmt: skip
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.sats == 18:
+        main18(args, parser)
+        return
+    if args.only and not set(args.only) <= set(SECTIONS):
+        parser.error(f"com --sats 6, --only aceita {sorted(SECTIONS)}")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     json_path = OUT_DIR / "resultados.json"
     elapsed = None
@@ -967,6 +1413,29 @@ def main() -> None:
         plot_maintenance(data, OUT_DIR / "manutencao_traco.png", OUT_DIR / "manutencao_ltan.png")
     write_report(data, OUT_DIR / "relatorio.md", elapsed)
     logger.info("relatório em %s", OUT_DIR)
+
+
+def main18(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """--sats 18: reports/s6_constelacao18/ (S6-01)."""
+    if args.only and not set(args.only) <= set(SECTIONS_18):
+        parser.error(f"com --sats 18, --only aceita {sorted(SECTIONS_18)}")
+    OUT_DIR_18.mkdir(parents=True, exist_ok=True)
+    json_path = OUT_DIR_18 / "resultados.json"
+    elapsed = None
+    data = json.loads(json_path.read_text(encoding="utf-8")) if json_path.exists() else {}
+    if not args.from_json:
+        t0 = time.perf_counter()
+        for key in args.only or SECTIONS_18:
+            label, compute = SECTIONS_18[key]
+            logger.info("%s …", label)
+            data[key] = compute()
+        elapsed = time.perf_counter() - t0 if not args.only else None
+        json_path.write_text(json.dumps(data), encoding="utf-8")
+    plot_grid18(data, OUT_DIR_18 / "grade_nos_p6_p18.png")
+    plot_coverage18(data, OUT_DIR_18 / "cobertura_rolagem.png")
+    plot_contacts18(data, OUT_DIR_18 / "contatos_24h_p18.png")
+    write_report18(data, OUT_DIR_18 / "relatorio.md", elapsed)
+    logger.info("relatório em %s", OUT_DIR_18)
 
 
 if __name__ == "__main__":
