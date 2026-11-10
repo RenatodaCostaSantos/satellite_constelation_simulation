@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Prompt Semana 6</title>
+<style>
+  @page { size: A4; margin: 16mm 16mm 16mm 16mm; }
+  :root { --ink: #1a2233; --accent: #0b6e99; --muted: #5b6577; --warn: #9a5b00; }
+  body { font-family: "DejaVu Serif", Georgia, serif; font-size: 10pt; line-height: 1.42;
+         color: var(--ink); margin: 0; }
+  h1, h2, h3 { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--ink); }
+  h1 { font-size: 19pt; margin: 0 0 4pt; }
+  h2 { font-size: 13pt; margin: 16pt 0 6pt; padding-bottom: 3pt;
+       border-bottom: 2px solid var(--accent); page-break-after: avoid; }
+  h3 { font-size: 11pt; margin: 10pt 0 4pt; page-break-after: avoid; }
+  .subtitle { color: var(--muted); margin-bottom: 10pt; }
+  ul, ol { margin: 3pt 0 3pt 0; padding-left: 18pt; }
+  li { margin-bottom: 3pt; }
+  code { font-family: "DejaVu Sans Mono", Menlo, monospace; font-size: 8.6pt; color: #6a1b4d; }
+  pre { font-family: "DejaVu Sans Mono", Menlo, monospace; font-size: 8.4pt; background: #f4f6f9;
+        padding: 6pt 8pt; border-radius: 3pt; white-space: pre-wrap; }
+  .box { border-left: 3px solid var(--accent); background: #eef6fa; padding: 6pt 10pt;
+         margin: 8pt 0; }
+  .warn { border-left: 3px solid var(--warn); background: #fdf5e8; padding: 6pt 10pt; margin: 8pt 0; }
+  .card { border: 1.5px solid var(--accent); border-radius: 4pt; padding: 8pt 12pt; margin: 12pt 0; }
+  .card h2 { border: 0; margin-top: 0; display: flex; justify-content: space-between; }
+  .pts { color: var(--muted); font-size: 10pt; }
+  .stop { background: #f4f6f9; padding: 6pt 10pt; margin-top: 8pt; }
+  .final { font-family: "DejaVu Sans Mono", monospace; font-weight: bold; font-size: 9pt; }
+  table { border-collapse: collapse; margin: 6pt 0; font-size: 9pt; }
+  th, td { border: 1px solid #c9d1dc; padding: 2pt 6pt; text-align: left; vertical-align: top; }
+  th { background: #eef2f6; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .src { color: var(--muted); font-size: 8.6pt; }
+  .pb { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>Prompt de implementação — Semana 6</h1>
+<div class="subtitle">Simulador de posicionamento de satélites (satsim) · Cards S6-01 a S6-03 ·
+Constelação de 18 satélites (P = 3·D), visualizador com escolha 6 ou 18 satélites e publicação web.
+Última semana do projeto.</div>
+
+<div class="box">
+<b>Como usar (para você, humano)</b>
+<ol>
+  <li>Pré-requisito: Semana 5 aprovada, com <code>docs/semana5_fechamento.md</code> escrito e a
+      branch <code>semana-5</code> mergeada na <code>main</code>. Os testes não usam rede.</li>
+  <li>Este arquivo fica em <code>docs/</code>. Abra uma nova sessão do Claude Code e envie: “Leia o
+      arquivo docs/PROMPT_SEMANA6_claude_code.pdf inteiro e siga as instruções. Comece pelo card
+      S6-01.”</li>
+  <li>O Claude Code executa um card e para com um relatório. Confira com <code>git show</code>, rode
+      os comandos sugeridos e responda “aprovado” ou peça ajustes.</li>
+  <li>No S6-02 você avalia o visual: o viewer ganha um seletor “6 satélites | 18 satélites”.</li>
+  <li>No S6-03 você publica: o Claude Code prepara o site e o workflow do GitHub Pages; o
+      <code>git push</code> e a ativação do Pages são com você.</li>
+</ol>
+</div>
+
+<p><b>A partir daqui, o texto é dirigido ao Claude Code.</b></p>
+
+<h2>1. Visão do produto (lembrete)</h2>
+<p>O produto final é um simulador com interface gráfica: uma pessoa leiga abre o simulador e vê os
+satélites em movimento sobre o globo, com globo 3D, mapa 2D e controles de tempo sincronizados. O
+requisito R7 do ADR pede <b>escala 1 → 6 → 18 satélites sem mudar o código do viewer</b>:
+satélites entram por dados. Esta semana fecha esse requisito e publica o simulador na web.</p>
+
+<p><b>Por que 18 satélites, e o que eles realmente compram.</b> O Sem4 §8.3 generaliza o teorema
+P = D: com P = m·D satélites igualmente faseados num único plano, o padrão continua uniforme. Para a
+órbita 91/6, 18 = 3 × 6. O experimento de referência deste prompt (Apêndice A) mostra o que isso
+significa no Cowell completo, e há uma sutileza que o Sem4 não explicita:</p>
+<ul>
+  <li>O satélite vizinho fica 20° atrás e cruza o equador Tnod/18 ≈ 316,5 s depois, um terço de
+      passo de grade a oeste (eq. 43: D/P = 1/3). Em 1 dia, os 18 depositam <b>273 trilhas
+      uniformes</b>, de 1,3187° (≈ 147 km), e não três passagens sobre as mesmas 91 trilhas.</li>
+  <li>Com a mesma rolagem de ±23,2°, cada alvo tem 2 a 3 oportunidades por dia, mas elas chegam
+      <b>no mesmo trem</b>, a poucos minutos umas das outras. O maior intervalo entre visitas mal muda:
+      13,79 h com 18 satélites contra 13,97 h com 6 (A.3). Num só plano heliossíncrono, todas as
+      passagens ocorrem no mesmo horário solar.</li>
+  <li>O ganho real é a <b>grade 3 vezes mais densa</b>: a cobertura diária completa passa a exigir só
+      <b>±8,18°</b> de rolagem, no lugar de ±23,2°. Isso dá melhor resolução e menos atmosfera
+      atravessada. Há também redundância: perder um satélite não quebra a cobertura diária com
+      ±23,2°.</li>
+  <li>O custo aparece na estação: com 18 satélites, os trens têm passagens a cada ≈ 5,3 min, mais
+      curtas que uma passagem (até ≈ 7,5 min). São 36 sobreposições por dia e até 2 satélites
+      visíveis ao mesmo tempo, o que exige duas antenas ou priorização (A.4).</li>
+</ul>
+<p>O desenho desta semana é o do Sem4: um plano, 18 satélites, Δu = 20°. Três planos com LTAN
+diferentes (que dariam revisita em horários solares distintos) ficam fora do escopo; cite-os como
+alternativa no fechamento.</p>
+
+<h2>2. Papel e contexto</h2>
+<p>Você é um(a) engenheiro(a) Python sênior concluindo o satsim. Plano: (1–3) núcleo, ISS,
+arrasto, estação, passagens e GUI; (4) propagador de alta fidelidade; (5) constelação 91/6 de 6
+satélites, cobertura, contatos, manutenção e GUI da constelação; (6) <b>18 satélites, escolha 6/18
+no viewer e deploy web — esta semana</b>.</p>
+
+<h3>O que já existe (Semanas 1–5) — verifique, não presuma</h3>
+<ul>
+  <li><code>satellite.py</code> (<code>Satellite</code>), <code>constellation.py</code>
+      (<code>Constellation</code> (P, N, 3), <code>sso_constellation(…, n_sats=6, …)</code>,
+      <code>CONSTELLATION_PALETTE</code>).</li>
+  <li><code>orbit_design.py</code>: <code>repeat_orbit</code>, <code>constellation_phases</code>,
+      <code>repeat_semi_major_axis_calibrated</code>. <code>groundtrack.py</code>:
+      <code>node_crossings</code>, <code>grid_metrics</code>, <code>repeat_closure</code>.</li>
+  <li><code>coverage.py</code>: <code>swath_half_angle</code>, <code>roll_for_half_grid</code>,
+      <code>TargetGrid</code>, <code>access_times</code>, <code>coverage_stats</code>.
+      <code>passes.py</code>: <code>contact_plan</code>. <code>maintenance.py</code>: deriva do traço e
+      do LTAN, <code>MaintenanceStatus</code>.</li>
+  <li><code>app/scene_export.py</code>: <code>SceneConstellation</code>,
+      <code>meta.constellation</code>, <code>nodes</code>, <code>swath_deg</code>,
+      <code>maintenance</code>. <code>app/static/viewer.js</code>: legenda agrupada, camadas “grade do
+      dia” e “faixa”, painel com fase, correção e Δv.</li>
+  <li><code>scripts/build_demo.py</code> (<code>--days</code> 1–6, <code>STEP_BY_DAYS</code>,
+      constantes da constelação 91/6), <code>scripts/constellation_report.py</code>,
+      <code>scripts/list_passes.py --constellation</code>, <code>reports/s5_constelacao/</code>.</li>
+  <li><code>docs/semana5_fechamento.md</code>: dívida técnica e o que a Semana 6 recebe. Leia
+      antes de começar.</li>
+</ul>
+
+<h3>Lições da Semana 5 que definem esta semana</h3>
+<ol>
+  <li><b>O código já é quase todo paramétrico em P.</b> <code>sso_constellation(n_sats=18)</code>
+      funciona hoje. O que está fixo em 6 ou 91 está nos scripts (<code>N_REVS</code>,
+      <code>N_DAYS</code>, nomes, paleta de 6 cores) e nos testes. Generalize por dados, não por
+      cópias.</li>
+  <li><b>O custo escala com P.</b> No Cowell completo, construir 18 satélites leva ≈ 1 s e os nós de
+      1 dia ≈ 20 s (A.1). Construa a constelação de 18 uma vez por sessão de teste e reaproveite.</li>
+  <li><b>A cena é o gargalo da demo.</b> Com 6 satélites, 1 dia ocupou 6,7 MB e 6 dias 11,2 MB. Com
+      18, a estimativa é ≈ 17 MB para 1 dia com passo de 20 s: acima do limite de 15 MB por arquivo.
+      Meça antes de escolher o passo.</li>
+  <li><b>A interpolação do viewer é linear.</b> A flecha da corda entre amostras é ≈ r·θ²/8: 0,9 km com
+      passo de 30 s, 3,8 km com 60 s e 15 km com 120 s. Isso limita quanto o passo pode crescer.</li>
+</ol>
+
+<p><b>Fonte de verdade numérica:</b> <code>tests/golden/reference_values.py</code> e o Apêndice A
+deste prompt. Os valores do Apêndice A vêm de um <b>experimento de referência</b> feito em
+09/11/2026 com o satsim no commit <code>e423447</code> (fim da S5-06). Não são independentes:
+servem de regressão e de ordem de grandeza. Os valores de teoria (Sem4 eqs. 42, 43 e 45) são
+independentes. Se o seu código divergir, investigue e reporte com os números. Nunca invente
+números de referência: valores novos entram no golden file, com a fonte.</p>
+
+<p><b>Convenção da constelação de 18:</b> a mesma do Sem4 eq. 42, com P = 18: ψ0<sub>j</sub> =
+−j·20° (mod 360°), ids <code>s1</code> … <code>s18</code> em ordem de fase. Os satélites com
+j ≡ 0 (mod 3), isto é, <code>s1, s4, …, s16</code>, ocupam exatamente as posições da constelação de
+6 e reproduzem a grade de 91 trilhas da S5. As três “famílias” f = j mod 3 são três constelações
+91/6 completas, deslocadas de 1/3 de passo de grade.</p>
+
+<h2>3. Protocolo de trabalho (inegociável)</h2>
+<ol>
+  <li>Um card por vez, na ordem S6-01 → S6-03. Não antecipe cards nem refatore além do escopo.</li>
+  <li>Ao concluir um card, rode <code>ruff check .</code>, <code>ruff format --check .</code> e
+      <code>pytest</code>, e confira cada critério de aceite.</li>
+  <li><b>PARE.</b> Depois do relatório, não escreva mais código. Aguarde “aprovado” ou “próximo”. Se
+      eu pedir ajustes, corrija no mesmo card, refaça o relatório e pare de novo.</li>
+  <li>Git: branch <code>semana-6</code>, criada a partir da <code>main</code> atualizada (se a
+      <code>semana-5</code> ainda não foi mergeada, pergunte antes). Um commit por card, mensagem
+      <code>S6-0X: &lt;título do card&gt;</code>; ajustes viram <code>S6-0X: ajustes de revisão</code>.
+      <b>Nunca faça push, merge, rebase nem force push.</b></li>
+  <li>Código das semanas anteriores: só altere quando o card pedir ou for indispensável; mantenha
+      os testes antigos passando e registre a mudança no relatório. <b>Com P = 6, todo resultado da
+      Semana 5 deve continuar idêntico.</b></li>
+  <li>Ambiguidade: escolha a opção mais simples, declare-a e faça no máximo 1–2 perguntas
+      objetivas.</li>
+  <li>Dependências: nenhuma nova no runtime (numpy, scipy, sgp4). matplotlib só em
+      <code>scripts/</code>. O workflow do GitHub usa apenas actions oficiais
+      (<code>actions/*</code>).</li>
+  <li>Rede nos testes: nenhum teste pode acessar a internet.</li>
+  <li>Honestidade nos testes: nunca afrouxe uma tolerância nem apague um teste para “passar”. Se
+      um número deste prompt divergir do código, reporte com os valores obtidos.</li>
+  <li><b>Tempo de teste: a suíte inteira deve ficar abaixo de ~3 min</b> (limite elevado de 2 para
+      3 min em 06/11/2026). Integrações longas (6 dias × 18 satélites, grade de 1°) ficam nos scripts
+      de relatório; os testes usam janelas curtas, grades grossas e fixtures de sessão.</li>
+</ol>
+
+<h3>Formato fixo do relatório de encerramento de cada card</h3>
+<ol>
+  <li>Resumo em 3–5 linhas.</li>
+  <li>Arquivos criados e alterados (destacando código de semanas anteriores).</li>
+  <li>Comandos rodados e resultado (saída resumida de <code>pytest</code> e <code>ruff</code>,
+      com o tempo da suíte).</li>
+  <li>Checklist dos critérios de aceite, item a item, com [OK] ou [FALHA] e a evidência.</li>
+  <li>Como verificar manualmente: comandos exatos para copiar e colar.</li>
+  <li>Decisões, desvios e dúvidas em aberto.</li>
+  <li>Commit feito (hash curto + mensagem).</li>
+  <li>Linha final exata indicada no card.</li>
+</ol>
+
+<h2>4. Convenções técnicas (continuam valendo)</h2>
+<ul>
+  <li>Python ≥ 3.11, layout <code>src/satsim</code>; SI internamente, ângulos em radianos (graus só em
+      E/S e em nomes <code>_deg</code>); tempo UTC tz-aware; shapes (N,), (N, 3), (P, N, 3).</li>
+  <li>Notação: N = revoluções do ciclo, D = dias do ciclo, P = número de satélites, m = P/D;
+      grade do ciclo 360°/N; grade diária 360°·D/(N·P) quando D | P.</li>
+  <li>Identificadores em inglês; docstrings, comentários e docs em português; docstrings citam a
+      equação de origem (ex.: “Sem4 eq. 43”, “Apêndice A.2 do prompt da Semana 6”).</li>
+  <li>GUI: a física sai de Python como cena; o viewer só desenha; campos novos da cena são
+      opcionais e <code>schema_version</code> continua 1; cenas antigas abrem como antes.</li>
+</ul>
+
+<h2>5. Estrutura-alvo do repositório</h2>
+<pre>
+satsim/
+├─ src/satsim/
+│  ├─ constellation.py        ● ConstellationDesign (N, D, P), presets 6 e 18, paleta por família  (S6-01)
+│  └─ app/scene_export.py     ● meta.constellation ampliado; meta.variants (opcional)              (S6-01, S6-02)
+├─ src/satsim/app/static/     ● seletor 6/18, legenda por família, desempenho com 20 objetos       (S6-02)
+├─ scripts/constellation_report.py ● --sats 6|18; seção de 18 satélites                           (S6-01)
+├─ scripts/build_demo.py      ● --sats 6|18; passo por (P, dias); arquivos irmãos                 (S6-02)
+├─ scripts/build_site.py      ● site estático: página inicial + cenas 6/18                        (S6-03)
+├─ .github/workflows/pages.yml ● testes + build do site + GitHub Pages                            (S6-03)
+├─ reports/s6_constelacao18/  ● PNG + relatorio.md (versionados)                                  (S6-01)
+├─ docs/adr/0001-arquitetura.md ● R7 concluído; contrato; deploy                                   (S6-02, S6-03)
+└─ tests/
+   ├─ test_constellation18.py ●                                                                     (S6-01)
+   ├─ test_scene_export.py (atualizado) · test_build_site.py ●                                      (S6-02, S6-03)
+   └─ golden/reference_values.py (ampliado)                                                         ●
+</pre>
+
+<h2 class="pb">6. Cards da Semana 6</h2>
+
+<div class="card">
+<h2><span>CARD S6-01 · Constelação de 18 satélites: P = 3·D no Cowell completo</span><span class="pts">5 pts</span></h2>
+<p><b>Objetivo.</b> Generalizar a constelação e as análises da Semana 5 de P = 6 para P = m·D, e
+medir no Cowell completo o que 18 satélites num plano entregam: grade de 273 trilhas, cobertura
+diária com rolagem de 8,2°, revisita praticamente igual e conflitos na estação.</p>
+<p><b>Passos</b></p>
+<ol>
+  <li>Verificação inicial: <code>git status</code>; crie a branch <code>semana-6</code> (regra do
+      protocolo); leia o ADR, o README, <code>docs/semana5_fechamento.md</code>, o golden e o Sem4
+      §8; rode <code>pytest</code> e <code>ruff</code>. Se algo não estiver verde, pare e reporte.</li>
+  <li>Em <code>constellation.py</code>, crie <code>ConstellationDesign(n_revs, n_days, n_sats,
+      name)</code> (frozen dataclass) com as grandezas do Sem4 §8.2–8.3:
+      <ul>
+        <li><code>m</code> = P/D; <code>is_uniform</code> (P | D ou D | P);
+            <code>tracks_per_day</code> = N·P/D quando D | P; <code>grid_deg</code> = 360/N;
+            <code>daily_grid_deg</code> = 360·D/(N·P);</li>
+        <li><code>node_delay_s(t_nod)</code> = Tnod/P; <code>family(j)</code> = j mod m;</li>
+        <li><code>roll_for_daily_coverage(a)</code> = <code>roll_for_half_grid(a,
+            tracks_per_day)</code>.</li>
+      </ul>
+      Presets <code>DESIGN_91_6_P6</code> e <code>DESIGN_91_6_P18</code> e um registro
+      <code>CONSTELLATION_DESIGNS = {6: …, 18: …}</code>, que será a única fonte para scripts e
+      demo.</li>
+  <li>Paleta: <code>constellation_palette(design)</code>. Com P = 6 ela devolve exatamente a
+      <code>CONSTELLATION_PALETTE</code> atual. Com P = 18, o matiz vem da posição k = j // m e a
+      tonalidade da família f = j mod m, de modo que <code>s1, s4, …, s16</code> têm as cores de S1…S6
+      da Semana 5. <code>sso_constellation</code> continua aceitando <code>n_sats</code>; não mude o
+      padrão.</li>
+  <li><code>scripts/constellation_report.py --sats 6|18</code> (padrão 6, saída da S5 inalterada).
+      Com 18, gere <code>reports/s6_constelacao18/</code>:
+      <ul>
+        <li>nós em 1 dia, P = 6 × P = 18 (como a Figura 12 do Sem4);</li>
+        <li>fração coberta em 1 dia × rolagem (0° a 25°) para P = 6 e P = 18, com 8,18° e 23,2°
+            marcados;</li>
+        <li>linha do tempo dos contatos de 18 satélites em 24 h, com as sobreposições destacadas;</li>
+        <li><code>relatorio.md</code> com a explicação, em linguagem simples, de por que 18 satélites
+            num plano densificam a grade mas não encurtam a revisita.</li>
+      </ul></li>
+  <li>Acrescente o A.1 a A.4 ao golden (<code>CONSTELLATION18_S6</code> ou nomes equivalentes, com
+      a fonte) e escreva <code>tests/test_constellation18.py</code>. A constelação de 18 no Cowell
+      completo (época 2026-10-23, a de projeto, i do A.1 da S5) vira fixture de <b>sessão</b> no
+      <code>conftest.py</code>, junto com os nós de 1 dia, porque o S6-02 também a usa.</li>
+</ol>
+<p><b>Testes exigidos</b></p>
+<ul>
+  <li><b>Desenho (teoria):</b> P = 18 → m = 3, uniforme, 273 trilhas/dia, grade diária 1,31868°;
+      P = 7 → não uniforme; P = 3 → uniforme (D | P falha, P | D vale: revisita de 2 dias). Rolagem
+      para cobertura diária: 23,1957° (P = 6) e 8,1835° ± 0,01° (P = 18) (A.2).</li>
+  <li><b>Modelo médio:</b> MeanJ2, P = 18, 1 dia: 273 nós com passo uniforme de 1,31868°.</li>
+  <li><b>Cowell completo, 1 dia (A.1):</b> 273 nós, espaçamentos entre 1,31556° e 1,32196°
+      (±0,002°), maior afastamento da grade ≤ 0,01° (referência 0,00695°). Atraso entre nós de
+      vizinhos 316,5 s ± 1 s. A família 0 (<code>s1, s4, …, s16</code>) reproduz o A.3 da Semana 5:
+      91 nós, 3,95173° a 3,96432°.</li>
+  <li><b>Cobertura (grade de 2°, A.3):</b>
+      <ul>
+        <li>P = 18 com 8,18°: 100% em 1 dia;</li>
+        <li>P = 6 com 8,18°: 74,35% ± 2% em 3 dias;</li>
+        <li>P = 18 com 23,2°: revisita máxima em |lat| ≤ 60° de 13,79 h ± 0,5 h, a menos de 0,5 h da
+            de P = 6 (13,97 h);</li>
+        <li>17 satélites (um removido) com 23,2°: 100% em 1 dia (redundância).</li>
+      </ul></li>
+  <li><b>Contatos (A.4):</b> 18 satélites, São Bento do Sapucaí, 24 h, el ≥ 10°: 49 ± 2 passagens,
+      288 ± 6 min de contato, 2 trens, 36 ± 3 sobreposições, no máximo 2 satélites simultâneos; AOS
+      consecutivos dentro de um trem entre 4 e 6,5 min.</li>
+  <li><b>Manutenção:</b> o <code>MaintenanceStatus</code> dos 18 é igual ao dos 6 (mesmo a, mesmo
+      arrasto), dentro de 1% (medido em 1 dia).</li>
+  <li><b>Compatibilidade:</b> todos os testes da Semana 5 passam sem mudança de tolerância; com
+      P = 6, paleta, ids e resultados idênticos.</li>
+</ul>
+<p><b>Critérios de aceite</b></p>
+<ul>
+  <li>[ ] <code>ConstellationDesign</code> e presets 6/18 como fonte única; 18 satélites com a
+      receita da Semana 4/5.</li>
+  <li>[ ] Grade de 273 trilhas, cobertura com 8,18°, revisita e contatos medidos no Cowell e
+      registrados no golden; discrepância com o Sem4 §8.3 (“m passagens por dia”) explicada no
+      relatório com os números.</li>
+  <li>[ ] Relatório <code>reports/s6_constelacao18/</code> gerado; suíte &lt; 3 min; ruff limpo.</li>
+</ul>
+<p><b>Notas</b></p>
+<ul>
+  <li>Não calibre de novo a nem i: são os da constelação de 6 (mesma órbita). A calibração da
+      Semana 5 vale para os 18.</li>
+  <li>O plano de contatos já detecta sobreposições; esta é a primeira vez que elas aparecem. Não
+      implemente escalonamento de antenas: só quantifique.</li>
+</ul>
+<div class="stop">PARE AQUI. Rode lint e testes, faça o commit do card, envie o relatório de
+encerramento (seção 3) e termine sua resposta com esta linha exata:<br>
+<span class="final">CARD S6-01 CONCLUÍDO — aguardando sua aprovação para iniciar o S6-02.</span><br>
+Não inicie o próximo card enquanto eu não escrever “aprovado” ou “próximo”.</div>
+</div>
+
+<div class="card">
+<h2><span>CARD S6-02 · Visualizador com escolha 6 ou 18 satélites</span><span class="pts">5 pts</span></h2>
+<p><b>Objetivo.</b> O visualizador final abre com a constelação de 6 satélites e tem um seletor
+“6 satélites | 18 satélites” que troca a cena sem perder o instante, a velocidade e as camadas.
+Tudo continua offline e abre com um clique.</p>
+<p><b>Passos</b></p>
+<ol>
+  <li><code>scripts/build_demo.py</code>:
+      <ul>
+        <li><code>--sats {6,18}</code> (padrão 6), via <code>CONSTELLATION_DESIGNS</code>; nomes de
+            saída padrão <code>demo/index.html</code> (6) e <code>demo/constelacao18.html</code> (18);
+            com <code>--days 6</code>, <code>demo/ciclo_6dias.html</code> e
+            <code>demo/ciclo_6dias_18.html</code>;</li>
+        <li><code>--all</code> gera os quatro arquivos e os liga como variantes (passo 3);</li>
+        <li>passo por (P, dias) numa tabela <code>STEP_BY_SATS_DAYS</code>, escolhida pelo tamanho
+            medido: <b>cada arquivo &lt; 15 MB</b>. Antes de aumentar o passo, reduza o custo por
+            amostra (casas decimais redundantes na cena), sem quebrar os testes antigos. A flecha da
+            interpolação linear (≈ r·θ²/8) deve ficar ≤ 5 km; se não couber, implemente
+            interpolação melhor no viewer (ex.: Hermite cúbica com a velocidade derivada das
+            amostras) e meça o erro.</li>
+      </ul></li>
+  <li><code>scene_export</code>: <code>meta.constellation</code> ganha, como campos opcionais,
+      <code>tracks_per_day</code>, <code>daily_grid_deg</code>, <code>families</code> (m) e, por
+      membro, <code>family</code>. A rolagem da faixa passa a ser a de cobertura diária do desenho
+      (23,1957° com 6; 8,1835° com 18). <code>meta.variants = [{id, label, href}]</code> (opcional)
+      lista as cenas irmãs, com caminhos relativos.</li>
+  <li>Viewer:
+      <ul>
+        <li>seletor “6 satélites | 18 satélites” no cabeçalho (só aparece com
+            <code>meta.variants</code>); a troca navega para o arquivo irmão e preserva instante,
+            velocidade, camadas e satélite selecionado (pelo hash da URL, que funciona em
+            <code>file://</code>);</li>
+        <li>legenda escalável: “Constelação” com caixa para todos e, com 18, subgrupos por família
+            (A, B, C) recolhíveis; as 18 cores seguem a paleta por família;</li>
+        <li>mapa: contador “grade: X de 273”; com 18, a camada “faixa” usa a rolagem de 8,18° e o
+            painel mostra “rolagem para cobertura diária”;</li>
+        <li>painel: fase Δu em relação a S1 (passos de 20°), família e os campos de manutenção;</li>
+        <li>desempenho: com 20 objetos (18 + ISS + Sentinel-2A), animação fluida e linha do tempo sem
+            travar ao ser arrastada; meça o tempo do quadro 2D (referência S5-06: 0,7 ms com 8
+            objetos).</li>
+      </ul></li>
+  <li>Atualize o ADR (R7 concluído, contrato com <code>variants</code> e os campos novos) e o
+      README (seção “Demo visual”: como gerar e trocar entre 6 e 18; nova imagem
+      <code>docs/img/demo_constelacao18.png</code>).</li>
+  <li>Atualize <code>tests/test_scene_export.py</code>. Use a constelação barata (J2 médio) quando o
+      teste só verifica tamanho e contrato, e a fixture de sessão do S6-01 quando verifica
+      nós.</li>
+</ol>
+<p><b>Testes exigidos</b></p>
+<ul>
+  <li><b>Cena de 18:</b> 18 membros, <code>tracks_per_day</code> = 273, <code>family</code> 0/1/2
+      com 6 membros cada; 273 nós somados em 1 dia (Cowell da fixture); faixa coerente com 8,1835°.</li>
+  <li><b>Cena de 6:</b> continua idêntica à da S5-06, exceto pelos campos opcionais novos.</li>
+  <li><b>Variantes:</b> <code>--all --offline</code> gera os quatro arquivos com
+      <code>meta.variants</code> cruzadas e caminhos relativos; cada arquivo &lt; 15 MB;
+      <code>--sats 7</code> → erro de argumento.</li>
+  <li><b>Interpolação:</b> com o passo escolhido para cada caso, o erro de posição do método do viewer
+      (reimplementado em Python no teste, ou verificado por amostras intermediárias) fica ≤ 5 km.</li>
+  <li><b>Compatibilidade:</b> cenas sem <code>variants</code> nem <code>families</code> abrem como
+      antes; os testes antigos passam.</li>
+</ul>
+<p><b>Critérios de aceite</b></p>
+<ul>
+  <li>[ ] O viewer abre com 6 satélites e troca para 18 (e de volta) pelo seletor, offline,
+      preservando o instante.</li>
+  <li>[ ] Com 18: 273 trilhas por dia no contador, faixa de 8,18°, legenda por família, animação
+      fluida; cada arquivo &lt; 15 MB.</li>
+  <li>[ ] Contrato compatível; ADR e README atualizados; testes passando (&lt; 3 min); ruff limpo.</li>
+  <li>[ ] No relatório, descreva o que o usuário verá e diga que ele vai avaliar visualmente;
+      iterações dentro deste card são possíveis.</li>
+</ul>
+<p><b>Notas</b></p>
+<ul>
+  <li>Dois arquivos irmãos, e não um arquivo com as duas cenas: juntas passariam de 15 MB, e
+      navegar entre arquivos locais funciona offline sem servidor.</li>
+  <li>A melhor demonstração da semana: com a camada “grade do dia” ligada, alternar entre 6 e 18 no
+      mesmo instante e ver as trilhas triplicarem, enquanto a faixa encolhe de 23,2° para 8,2°.</li>
+</ul>
+<div class="stop">PARE AQUI. Rode lint e testes, faça o commit do card, envie o relatório de
+encerramento (seção 3) e termine sua resposta com esta linha exata:<br>
+<span class="final">CARD S6-02 CONCLUÍDO — aguardando sua aprovação para iniciar o S6-03.</span><br>
+Não inicie o próximo card enquanto eu não escrever “aprovado” ou “próximo”.</div>
+</div>
+
+<div class="card">
+<h2><span>CARD S6-03 · Site estático e deploy web</span><span class="pts">3 pts</span></h2>
+<p><b>Objetivo.</b> Publicar o simulador: um site estático com uma página inicial em linguagem
+simples e as cenas de 6 e 18 satélites, construído e publicado no GitHub Pages por um workflow,
+sem servidor.</p>
+<p><b>Passos</b></p>
+<ol>
+  <li><code>scripts/build_site.py [--offline] [-o site/]</code>:
+      <ul>
+        <li>chama o <code>build_demo</code> (<code>--all</code>) e monta <code>site/</code>
+            (ignorado pelo git) com <code>index.html</code> e as quatro cenas;</li>
+        <li>a página inicial é leve (sem a cena embutida) e explica em poucas frases o projeto, a
+            órbita 91/6 e a diferença entre 6 e 18 satélites; tem quatro botões (6 ou 18 × 1 dia ou
+            ciclo de 6 dias), a imagem da demo e a data/fonte dos TLEs;</li>
+        <li>todos os links são relativos; nenhum recurso externo é carregado (fontes, scripts e
+            texturas embutidos, como na demo);</li>
+        <li>imprime o tamanho de cada arquivo e o total.</li>
+      </ul></li>
+  <li><code>.github/workflows/pages.yml</code> (actions oficiais; Python 3.11):
+      <ul>
+        <li>job <code>test</code>: <code>pip install -e .[dev]</code>, <code>ruff check .</code>,
+            <code>ruff format --check .</code>, <code>pytest</code>;</li>
+        <li>job <code>deploy</code> (depende de <code>test</code>; em push na <code>main</code> e
+            manual): <code>build_site.py</code> com TLE da rede e fallback para os embutidos (o
+            fallback já existe), <code>actions/upload-pages-artifact</code> e
+            <code>actions/deploy-pages</code>;</li>
+        <li>se a rede ao CelesTrak falhar no CI, o build continua com os TLEs embutidos e a página
+            inicial avisa.</li>
+      </ul></li>
+  <li>Verificação local sem rede: <code>python scripts/build_site.py --offline</code> e
+      <code>python -m http.server -d site</code>; confira no Chrome headless que a página inicial abre,
+      que os quatro botões levam às cenas e que o seletor 6/18 funciona servido por HTTP (não só em
+      <code>file://</code>).</li>
+  <li>Documentação: README com o link previsto do site
+      (<code>https://&lt;usuário&gt;.github.io/&lt;repositório&gt;/</code>), como publicar (ativar Pages
+      com a origem “GitHub Actions” e fazer push) e como gerar localmente; ADR com a seção de deploy.
+      Atualize <code>docs/cards_summary/cards_summary.html</code> com os cards da Semana 6.</li>
+  <li>Escreva <code>tests/test_build_site.py</code> (offline, com a constelação barata via
+      monkeypatch, em <code>tmp_path</code>).</li>
+</ol>
+<p><b>Testes exigidos</b></p>
+<ul>
+  <li>O site tem <code>index.html</code> e as quatro cenas; todos os <code>href</code> internos
+      apontam para arquivos existentes; nenhum <code>src</code>/<code>href</code> absoluto
+      (<code>http</code>, <code>//</code>, <code>/</code>) para recursos.</li>
+  <li>Cada cena &lt; 15 MB; a página inicial &lt; 1 MB.</li>
+  <li>O workflow roda os testes antes do deploy (<code>needs: test</code>), usa só actions
+      <code>actions/*</code> e não exige segredos. O ambiente não tem PyYAML e não se adiciona
+      dependência: verifique por texto (chaves e passos esperados).</li>
+</ul>
+<p><b>Critérios de aceite</b></p>
+<ul>
+  <li>[ ] <code>site/</code> gerado offline, navegável por HTTP local, com a escolha 6/18 e o ciclo
+      de 6 dias.</li>
+  <li>[ ] Workflow pronto para o GitHub Pages; instruções de publicação no README; nenhum push
+      feito.</li>
+  <li>[ ] Testes passando (&lt; 3 min); ruff limpo; resumo dos cards atualizado.</li>
+</ul>
+<p><b>Notas</b></p>
+<ul>
+  <li>O GitHub Pages aceita arquivos de até 100 MB e serve com compressão: as cenas de ≈ 15 MB
+      chegam ao navegador bem menores.</li>
+  <li>Fora do escopo: servidor de aplicação, propagação no navegador, contas de usuário e domínio
+      próprio.</li>
+</ul>
+<div class="stop">PARE AQUI. Rode lint e testes, faça o commit do card, envie o relatório de
+encerramento (seção 3) e termine sua resposta com esta linha exata:<br>
+<span class="final">CARD S6-03 CONCLUÍDO — aguardando sua aprovação para fechar a Semana 6 e o projeto.</span><br>
+Não inicie mais nada enquanto eu não escrever “aprovado”.</div>
+</div>
+
+<h2>7. Fechamento da Semana 6 e do projeto</h2>
+<p>Depois que eu aprovar o S6-03, escreva <code>docs/semana6_fechamento.md</code> e pare:</p>
+<ul>
+  <li>Resumo do que foi entregue e status dos 3 cards (com os commits).</li>
+  <li>Saída completa de <code>pytest --cov=satsim</code> (com o tempo) e de <code>ruff check .</code>.</li>
+  <li>Discrepâncias entre os PDFs/este prompt e o código, com os números (em especial o Sem4 §8.3
+      e as passagens por dia com P = m·D).</li>
+  <li>Alterações em código de semanas anteriores.</li>
+  <li><b>Fechamento do projeto (Semanas 1–6):</b> o que o simulador faz, em uma página para leigos;
+      tabela das validações principais (ISS × SGP4, Sentinel-2A, repetição, grade, cobertura,
+      contatos, manutenção) com os erros obtidos; limitações conhecidas (esfera na cobertura,
+      manobras não simuladas, interpolação do viewer, tamanho das cenas, um único plano) e
+      próximos passos possíveis (três planos/LTAN, manobras simuladas, apontamento real da
+      câmera).</li>
+  <li>Lembrete: <code>git push</code> da branch <code>semana-6</code>, o PR e a ativação do GitHub
+      Pages são comigo.</li>
+</ul>
+
+<h2 class="pb">Apêndice A — Valores de referência da Semana 6</h2>
+<p class="src">Experimento de referência em 09/11/2026 com o satsim no commit <code>e423447</code>
+(fim da S5-06). Constelação: <code>sso_constellation(2026-10-23 00:00 UTC, Cowell completo do
+build_demo, n_sats=18, a = 6 888 089 m (projeto), i = 97,46325°)</code>, LTAN 22h30. Esses valores
+não são independentes do satsim: são regressão e ordem de grandeza. Devem ir para
+<code>tests/golden/reference_values.py</code> com esta fonte.</p>
+
+<h3>A.1 Constelação de 18 e grade no Cowell completo (experimento)</h3>
+<table>
+  <tr><th>Grandeza</th><th>Valor</th></tr>
+  <tr><td>Construir os 18 satélites (i dada)</td><td class="n">0,98 s</td></tr>
+  <tr><td>Nós ascendentes de 1 dia, 18 satélites (<code>node_crossings</code>, passo 30 s)</td><td class="n">20,3 s</td></tr>
+  <tr><td>Atraso entre os nós de S1 e S2</td><td class="n">316,54 s (Tnod/18)</td></tr>
+  <tr><td>Primeiros nós (s desde a época): s1, s2, s3, s4</td><td class="n">4 274,46; 4 591,00; 4 907,52; 5 223,99</td></tr>
+  <tr><td>P = 18, 1 dia: nós; espaçamento mín. … máx.; maior afastamento da grade de 273</td><td class="n">273; 1,31556° … 1,32196°; 0,00695°</td></tr>
+  <tr><td>Família 0 (s1, s4, …, s16): nós; espaçamento; afastamento da grade de 91</td><td class="n">91; 3,95173° … 3,96432°; 0,00645°</td></tr>
+</table>
+<p class="src">O s4 cruza o nó em 5 223,99 s, o mesmo instante do S2 da constelação de 6 (A.1 da
+Semana 5): a família 0 é a constelação de 6.</p>
+
+<h3>A.2 Desenho (teoria: Sem4 eqs. 42, 43 e 45)</h3>
+<table>
+  <tr><th>P</th><th>Δu</th><th>Trilhas/dia</th><th>Grade diária</th><th>No equador</th><th>Rolagem para cobertura diária</th><th>Uniforme</th></tr>
+  <tr><td>6</td><td class="n">60°</td><td class="n">91</td><td class="n">3,95604°</td><td class="n">440 km</td><td class="n">23,1957°</td><td>sim (P = D)</td></tr>
+  <tr><td>18</td><td class="n">20°</td><td class="n">273</td><td class="n">1,31868°</td><td class="n">147 km</td><td class="n">8,1835°</td><td>sim (P = 3D)</td></tr>
+  <tr><td>7</td><td class="n">51,43°</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td>não (A.2/A.3 da S5)</td></tr>
+</table>
+<p class="src">Rolagem pela eq. 45 com a = 6 888,089 km e λ = π/273 (<code>roll_for_half_grid</code>).
+Com η = 23,2°, λ = 1,9784° = 1,5 grade diária de 18: cada alvo fica ao alcance de 3 trilhas por dia.</p>
+
+<h3>A.3 Cobertura e revisita (experimento; grade de 2° × 2°, |lat| ≤ 80°, passo 10 s)</h3>
+<table>
+  <tr><th>Caso</th><th>Janela</th><th>Fração vista</th><th>Maior intervalo, |lat| ≤ 60°</th></tr>
+  <tr><td>P = 18, η = 8,1835°</td><td>1 dia</td><td class="n">100%</td><td class="n">—</td></tr>
+  <tr><td>P = 18, η = 8,1835°</td><td>3 dias</td><td class="n">100%</td><td class="n">24,0 h</td></tr>
+  <tr><td>P = 18, η = 23,2°</td><td>3 dias</td><td class="n">100%</td><td class="n">13,79 h</td></tr>
+  <tr><td>P = 6, η = 23,2°</td><td>3 dias</td><td class="n">100%</td><td class="n">13,97 h</td></tr>
+  <tr><td>P = 6, η = 8,1835°</td><td>3 dias</td><td class="n">74,35%</td><td class="n">72,0 h (borda da janela)</td></tr>
+</table>
+<p class="src">Passagens por alvo em 1 dia com P = 18 e η = 23,2° (acessos a menos de 30 min
+contam como uma): mínimo 2, mediana 2, máximo 3 em |lat| ≤ 60°. As 3 oportunidades de uma mesma
+passagem chegam em ≈ 10 min (satélites vizinhos do trem): por isso a revisita não melhora.</p>
+
+<h3>A.4 Contatos com São Bento do Sapucaí (experimento; 24 h, el ≥ 10°)</h3>
+<table>
+  <tr><th>Grandeza</th><th>P = 18</th><th>P = 6 (A.6 da S5)</th></tr>
+  <tr><td>Passagens</td><td class="n">49</td><td class="n">16</td></tr>
+  <tr><td>Contato total</td><td class="n">287,99 min</td><td class="n">96,68 min</td></tr>
+  <tr><td>Trens</td><td class="n">2 (noite 00:28–02:30 UTC, 24 passagens; dia 12:01–14:07 UTC, 25)</td><td class="n">2</td></tr>
+  <tr><td>Intervalo entre AOS dentro do trem</td><td class="n">4,1 … 6,3 min (≈ Tnod/18 = 5,3 min)</td><td class="n">14–17 min</td></tr>
+  <tr><td>Sobreposições; máximo simultâneo</td><td class="n">36; 2 satélites</td><td class="n">0; 1</td></tr>
+  <tr><td>Maior intervalo sem contato</td><td class="n">9,88 h</td><td class="n">—</td></tr>
+</table>
+<p class="src"><code>contact_plan</code> no <code>step_s</code> padrão (20 s), 0,3 s de cálculo.
+Passagens por satélite: 2 a 4.</p>
+
+<h3>A.5 Tamanho da cena (estimativa, a confirmar no S6-02)</h3>
+<p class="src">Medido na S5-06 com 8 objetos (6 + ISS + Sentinel-2A): 1 dia, passo 20 s → 6,7 MB;
+6 dias, passo 60 s → 11,2 MB (≈ 0,84 e 1,4 MB por objeto). Com 20 objetos, por proporção:
+1 dia a 20 s ≈ 17 MB e a 30 s ≈ 11 MB; 6 dias a 60 s ≈ 28 MB e a 120 s ≈ 14 MB. Flecha da
+interpolação linear (r·θ²/8, r = 6 888 km): 30 s → 0,9 km; 60 s → 3,8 km; 120 s → 15 km.</p>
+
+</body>
+</html>
