@@ -12,9 +12,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 from golden.reference_values import (
+    CONSTELLATION18_A1_S6,
+    CONSTELLATION_A1,
     COVERAGE_A5,
     DEMO_SCENE_A7,
     DEMO_SCENE_S5,
+    DEMO_SCENE_S6,
     DESIGN_ORBIT,
     FOOTPRINT_A6,
     PASSES_A2,
@@ -23,21 +26,29 @@ from golden.reference_values import (
 )
 
 from satsim.app.scene_export import (
+    COMPACT_PRECISION,
+    FULL_PRECISION,
     MAINTENANCE_FIELDS,
     SCHEMA_VERSION,
     SceneConstellation,
     SceneSatellite,
     SceneStation,
     build_scene,
+    subpoint_geodetic,
 )
 from satsim.astrotime import datetime_to_jd
 from satsim.constants import R_EARTH
-from satsim.constellation import CONSTELLATION_PALETTE, Constellation
-from satsim.coverage import swath_half_angle
+from satsim.constellation import (
+    CONSTELLATION_DESIGNS,
+    DESIGN_91_6_P18,
+    Constellation,
+    constellation_palette,
+)
+from satsim.coverage import roll_for_half_grid, swath_half_angle
 from satsim.elements import KeplerianElements, state_to_elements
 from satsim.ephemeris import beta_angle, ltan_hours
-from satsim.frames import eci_to_ecef
-from satsim.geodesy import ecef_to_geodetic, ecef_to_spherical
+from satsim.frames import eci_to_ecef, gmst_at
+from satsim.geodesy import ecef_to_geodetic, ecef_to_spherical, geodetic_to_ecef
 from satsim.groundtrack import node_crossings
 from satsim.maintenance import maintenance_status
 from satsim.observer import SAO_BENTO_DO_SAPUCAI, footprint_half_angle, observe
@@ -448,7 +459,9 @@ def test_build_demo_offline_without_network(tmp_path, monkeypatch, reference_con
     demo = _load_build_demo()
     # A constelação de referência do conftest (mesma época, Cowell completo já integrado na
     # sessão) no lugar da do script, que difere só pelo a calibrado (+19 m): poupa ≈ 7 s
-    monkeypatch.setattr(demo, "build_constellation", lambda start: reference_constellation)
+    monkeypatch.setattr(
+        demo, "build_constellation", lambda start, n_sats=6: reference_constellation
+    )
     # Início fixo na data do A.7: os dois TLEs embarcados (ISS e Sentinel-2A) servem
     demo.main(["--offline", "--cache-dir", str(tmp_path / "cache"), "-o", str(out),
                "--start", DEMO_SCENE_A7.start_utc])  # fmt: skip
@@ -527,9 +540,11 @@ def test_s4_sun_geometry_fields_match_ephemeris() -> None:
     assert json.loads(json.dumps(sc)) == sc
 
 
-def _fast_constellation(start: datetime) -> Constellation:
+def _fast_constellation(start: datetime, n_sats: int = 6) -> Constellation:
     """Constelação 91/6 barata (J2 médio): para testes que não verificam a dinâmica (TLE,
-    tamanho do arquivo). O tamanho da cena depende do número de amostras, não do propagador."""
+    tamanho do arquivo). O tamanho da cena depende do número de amostras, não do propagador.
+    Com ``n_sats`` (S6-02), a de 18 com a paleta por família."""
+    palette = constellation_palette(CONSTELLATION_DESIGNS[n_sats])
     sats = [
         Satellite(
             f"s{j + 1}",
@@ -545,9 +560,9 @@ def _fast_constellation(start: datetime) -> Constellation:
                 ),
                 start,
             ),
-            color=CONSTELLATION_PALETTE[j],
+            color=palette[j],
         )
-        for j, psi in enumerate(constellation_phases(6))
+        for j, psi in enumerate(constellation_phases(n_sats))
     ]
     return Constellation(start, sats)
 
@@ -708,3 +723,229 @@ def test_build_demo_constellation_recipe() -> None:
     assert set(demo.STEP_BY_DAYS) == set(range(1, 7))
     for days, step in demo.STEP_BY_DAYS.items():
         assert (days * 86400) % step == 0
+
+
+# --- S6-02: cenas de 6 e 18 satélites, variantes e interpolação do viewer -------------------------
+
+S6 = DEMO_SCENE_S6
+A1_EPOCH = datetime.fromisoformat(CONSTELLATION_A1.epoch_utc)
+A_DESIGN = CONSTELLATION_A1.a_design_m
+NEW_META_FIELDS = {"tracks_per_day", "daily_grid_deg", "families"}
+
+
+def _info18(constellation: Constellation) -> SceneConstellation:
+    roll = DESIGN_91_6_P18.roll_for_daily_coverage(A_DESIGN)
+    return SceneConstellation.from_design(DESIGN_91_6_P18, "Constelação 91/6",
+                                          constellation.ids, roll_rad=roll)  # fmt: skip
+
+
+def test_s6_scene_18_members_families_and_nodes(constellation18) -> None:
+    """Cena de 18 (Cowell da fixture): 18 membros, 273 trilhas/dia, famílias 0/1/2 com 6 cada,
+    273 nós somados em 1 dia e faixa coerente com a rolagem de 8,1835°."""
+    sc = build_scene(constellation18, [STATION], A1_EPOCH, 86400, 60,
+                     constellation_info=_info18(constellation18))  # fmt: skip
+    meta = sc["meta"]["constellation"]
+    assert meta["n_sats"] == 18 and meta["member_ids"] == list(DESIGN_91_6_P18.ids)
+    assert meta["tracks_per_day"] == 273 and meta["families"] == 3
+    assert meta["daily_grid_deg"] == pytest.approx(360 / 273, abs=1e-6)
+    assert meta["roll_deg"] == pytest.approx(S6.roll18_deg, abs=1e-4)
+    families = [s["family"] for s in sc["satellites"]]
+    assert families == [0, 1, 2] * 6 and all(families.count(f) == 6 for f in range(3))
+    assert sum(len(s["nodes"]["t_s"]) for s in sc["satellites"]) == CONSTELLATION18_A1_S6.p18_nodes
+    roll = DESIGN_91_6_P18.roll_for_daily_coverage(A_DESIGN)  # a da cena (8,18348°)
+    for sat, s in zip(constellation18, sc["satellites"], strict=True):
+        r, _ = sat.propagate_utc(A1_EPOCH, np.arange(0.0, 86400 + 1, 60.0))
+        lam = math.degrees(swath_half_angle(float(np.mean(np.linalg.norm(r, axis=1))), roll))
+        assert s["swath_deg"] == pytest.approx(lam, abs=1e-6)
+        assert s["swath_deg"] == pytest.approx(180 / 273, rel=0.02)  # meia grade diária
+    assert json.loads(json.dumps(sc, allow_nan=False)) == sc
+
+
+def _strip_s6_fields(scene: dict) -> dict:
+    out = json.loads(json.dumps(scene))
+    for key in NEW_META_FIELDS:
+        out["meta"]["constellation"].pop(key, None)
+    for sat in out["satellites"]:
+        sat.pop("family", None)
+    return out
+
+
+def test_s6_scene_6_identical_except_new_optional_fields() -> None:
+    """A cena de 6 da demo é a da S5-06 (mesma rolagem, passo e precisão) mais os campos
+    opcionais novos."""
+    demo = _load_build_demo()
+    c = _fast_constellation(EPOCH)
+    info_new = demo.constellation_info(c)
+    info_s5 = SceneConstellation("Constelação 91/6", 91, 6, tuple(c.ids),
+                                 roll_rad=roll_for_half_grid(A_DESIGN, 91),
+                                 maintenance=info_new.maintenance)  # fmt: skip
+    sats = [_example(), *c]
+    kwargs = {"el_min_deg": 10.0, "sun_geometry": True}
+    step = demo.STEP_BY_SATS_DAYS[(6, 1)]
+    new = build_scene(sats, [STATION], EPOCH, 3 * 3600, step, constellation_info=info_new,
+                      precision=demo.PRECISION_BY_SATS[6], **kwargs)  # fmt: skip
+    s5 = build_scene(sats, [STATION], EPOCH, 3 * 3600, step, constellation_info=info_s5, **kwargs)
+    assert NEW_META_FIELDS <= set(new["meta"]["constellation"])
+    assert new["meta"]["constellation"]["tracks_per_day"] == 91
+    assert new["meta"]["constellation"]["families"] == 1
+    assert _strip_s6_fields(new) == s5
+    assert demo.PRECISION_BY_SATS[6] == FULL_PRECISION
+    assert {d: demo.STEP_BY_SATS_DAYS[(6, d)] for d in range(1, 7)} == demo.STEP_BY_DAYS
+
+
+def test_s6_compact_precision_and_variants_contract() -> None:
+    c = _fast_constellation(EPOCH, n_sats=18)
+    variants = [{"id": "p6", "label": "6 satélites", "href": "index.html"},
+                {"id": "p18", "label": "18 satélites", "href": "constelacao18.html"}]  # fmt: skip
+    sc = build_scene(c, [STATION], EPOCH, 3600, 60, el_min_deg=10.0, constellation_info=_info18(c),
+                     variants=variants, precision=COMPACT_PRECISION)  # fmt: skip
+    assert sc["meta"]["variants"] == variants and sc["meta"]["schema_version"] == SCHEMA_VERSION
+    full = build_scene(c, [STATION], EPOCH, 3600, 60, el_min_deg=10.0)
+    # mesma posição a menos do arredondamento: 1 m em ECI, 1e-5° em lat/lon
+    for a, b in zip(sc["satellites"], full["satellites"], strict=True):
+        np.testing.assert_allclose(a["eci_km"], b["eci_km"], atol=5e-4 + 1e-12)
+        np.testing.assert_allclose(a["lla"], b["lla"], atol=5e-4)
+    assert len(json.dumps(sc)) < 0.85 * len(json.dumps(full))
+    for bad in ({"id": "x", "label": "x", "href": "/demo/x.html"},
+                {"id": "x", "label": "x", "href": "https://example.org/x.html"},
+                {"id": "x", "href": "x.html"}):  # fmt: skip
+        with pytest.raises(ValueError):
+            build_scene(c, [STATION], EPOCH, 60, 60, variants=[bad])
+    with pytest.raises(ValueError, match="18 satélites"):
+        SceneConstellation.from_design(DESIGN_91_6_P18, "x", ("s1", "s2"))
+    # cenas antigas: sem variants nem families (o viewer abre como antes)
+    old = build_scene(c, [STATION], EPOCH, 60, 60,
+                      constellation_info=SceneConstellation("x", 91, 6, tuple(c.ids)))  # fmt: skip
+    assert "variants" not in old["meta"]
+    assert not NEW_META_FIELDS & set(old["meta"]["constellation"])
+    assert all("family" not in s for s in old["satellites"])
+
+
+def test_s6_build_demo_all_variants(tmp_path, monkeypatch) -> None:
+    """--all --offline: os quatro arquivos, com meta.variants cruzadas e relativas, < 15 MB cada
+    (constelação barata: o tamanho depende do número de amostras, não do propagador)."""
+
+    def no_network(*args, **kwargs):
+        raise urllib.error.URLError("sem rede (teste)")
+
+    monkeypatch.setattr(urllib.request, "urlopen", no_network)
+    demo = _load_build_demo()
+    monkeypatch.setattr(demo, "build_constellation", _fast_constellation)
+    demo.main(["--all", "--offline", "--cache-dir", str(tmp_path / "cache"),
+               "--out-dir", str(tmp_path), "--start", DEMO_SCENE_S5.start_utc])  # fmt: skip
+    names = {(6, 1): "index.html", (18, 1): "constelacao18.html",
+             (6, 6): "ciclo_6dias.html", (18, 6): "ciclo_6dias_18.html"}  # fmt: skip
+    assert sorted(p.name for p in tmp_path.glob("*.html")) == sorted(names.values())
+    for (n_sats, days), name in names.items():
+        path = tmp_path / name
+        assert path.stat().st_size / 1e6 < S6.max_file_mb, name
+        sc = _scene_from_html(path.read_text(encoding="utf-8"))
+        meta = sc["meta"]
+        assert meta["constellation"]["n_sats"] == n_sats and meta["duration_s"] == days * 86400
+        assert meta["step_s"] == demo.STEP_BY_SATS_DAYS[(n_sats, days)]
+        assert meta["epoch_utc"] == "2026-10-23T00:00:00Z"  # mesma época: o instante se preserva
+        variants = meta["variants"]
+        assert [v["id"] for v in variants] == ["p6", "p18"]
+        assert [v["label"] for v in variants] == ["6 satélites", "18 satélites"]
+        for v in variants:
+            href = v["href"]
+            assert "/" not in href and ":" not in href  # relativo, na mesma pasta
+            assert (tmp_path / href).exists()
+            sibling = _scene_from_html((tmp_path / href).read_text(encoding="utf-8"))
+            assert sibling["meta"]["duration_s"] == meta["duration_s"]  # irmão de mesma duração
+        assert meta["constellation"]["roll_deg"] == pytest.approx(
+            S6.roll18_deg if n_sats == 18 else COVERAGE_A5.roll_half_grid_deg, abs=1e-4
+        )
+    with pytest.raises(SystemExit):
+        demo.main(["--offline", "--sats", "7"])
+    with pytest.raises(SystemExit):
+        demo.main(["--all", "--offline", "-o", str(tmp_path / "x.html")])
+
+
+def test_s6_default_output_names() -> None:
+    demo = _load_build_demo()
+    assert demo.default_output(6, 1).name == "index.html"
+    assert demo.default_output(18, 1).name == "constelacao18.html"
+    assert demo.default_output(6, 6).name == "ciclo_6dias.html"
+    assert demo.default_output(18, 6).name == "ciclo_6dias_18.html"
+    assert demo.default_output(18, 3).name == "ciclo_3dias_18.html"
+    assert set(demo.STEP_BY_SATS_DAYS) == {(p, d) for p in (6, 18) for d in range(1, 7)}
+    for (_, days), step in demo.STEP_BY_SATS_DAYS.items():
+        assert (days * 86400) % step == 0
+
+
+# --- Interpolação do viewer (reimplementada em Python) ---------------------------------------
+
+
+def _viewer_sample(lla: np.ndarray, step: float, t: np.ndarray) -> np.ndarray:
+    """O ``sampleAt`` do viewer (S6-02): Hermite cúbica (Catmull-Rom) no vetor unitário de
+    (lat, lon) e na altitude, tangentes por diferença central (unilateral nas pontas)."""
+    n = len(lla)
+    f = np.clip(t / step, 0.0, n - 1 - 1e-12)
+    k = np.floor(f).astype(int)
+    u = (f - k)[:, None]
+    i0, i3 = np.maximum(k - 1, 0), np.minimum(k + 2, n - 1)
+    d1, d2 = (k + 1 - i0)[:, None], (i3 - k)[:, None]
+    lat, lon = np.radians(lla[:, 0]), np.radians(lla[:, 1])
+    unit = np.column_stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)])
+    vals = np.column_stack([unit, lla[:, 2]])
+    p0, p1, p2, p3 = vals[i0], vals[k], vals[k + 1], vals[i3]
+    h00, h10 = 2 * u**3 - 3 * u**2 + 1, u**3 - 2 * u**2 + u
+    h01, h11 = -2 * u**3 + 3 * u**2, u**3 - u**2
+    v = h00 * p1 + h10 * (p2 - p0) / d1 + h01 * p2 + h11 * (p3 - p1) / d2
+    xyz, alt = v[:, :3], v[:, 3]
+    r = np.linalg.norm(xyz, axis=1)
+    return np.column_stack([np.degrees(np.arcsin(xyz[:, 2] / r)),
+                            np.degrees(np.arctan2(xyz[:, 1], xyz[:, 0])), alt])  # fmt: skip
+
+
+def _linear_lla(lla: np.ndarray, step: float, t: np.ndarray) -> np.ndarray:
+    """O ``sampleAt`` linear em lat/lon das Semanas 3–5 (para comparação)."""
+    k = np.minimum(np.floor(t / step).astype(int), len(lla) - 2)
+    u = (t / step - k)[:, None]
+    a, b = lla[k], lla[k + 1]
+    d = b - a
+    d[:, 1] = np.mod(d[:, 1] + 180.0, 360.0) - 180.0
+    return a + u * d
+
+
+def _position_error_km(sat, step: float, method, decimals) -> float:
+    """Maior erro de posição [km] do método de interpolação entre amostras da cena (1 dia)."""
+    t_samples = np.arange(0.0, 86400.0 + 1.0, step)
+    r, _ = sat.propagate_utc(A1_EPOCH, t_samples)
+    lla = subpoint_geodetic(eci_to_ecef(r, gmst_at(A1_EPOCH, t_samples)))
+    lla = np.column_stack([np.round(lla[:, :2], decimals.angle), np.round(lla[:, 2], decimals.alt)])
+    t = np.concatenate([t_samples[:-1] + q * step for q in (0.1, 0.25, 0.5, 0.75, 0.9)])
+    r_true, _ = sat.propagate_utc(A1_EPOCH, t)
+    truth = eci_to_ecef(r_true, gmst_at(A1_EPOCH, t))
+    est = method(lla, step, t)
+    pos = geodetic_to_ecef(np.radians(est[:, 0]), np.radians(est[:, 1]), est[:, 2] * 1e3)
+    return float(np.max(np.linalg.norm(pos - truth, axis=1)) / 1e3)
+
+
+def test_s6_viewer_interpolation_error_per_step(reference_constellation) -> None:
+    """Com o passo de cada (P, dias), o erro de posição do método do viewer fica ≤ 5 km."""
+    demo = _load_build_demo()
+    sat = reference_constellation[0]  # Cowell completo, 1 dia já integrado na sessão
+    errors = {}
+    for (n_sats, _), step in sorted(demo.STEP_BY_SATS_DAYS.items(), key=lambda kv: kv[1]):
+        if step in errors:
+            continue
+        errors[step] = _position_error_km(sat, step, _viewer_sample,
+                                          demo.PRECISION_BY_SATS[n_sats])  # fmt: skip
+    assert max(errors.values()) <= S6.interp_limit_km, errors
+    assert errors[120] == pytest.approx(S6.interp_error_120s_km, abs=0.05)
+    # o método antigo (linear em lat/lon) passa de 5 km já com 60 s, perto da latitude máxima
+    assert _position_error_km(sat, 60.0, _linear_lla, FULL_PRECISION) > S6.interp_limit_km
+
+
+def test_s6_viewer_implements_the_tested_interpolation() -> None:
+    """O viewer usa o método reimplementado acima (vetor unitário + Hermite) e o seletor."""
+    static = Path(__file__).resolve().parents[1] / "src" / "satsim" / "app" / "static"
+    js = (static / "viewer.js").read_text(encoding="utf-8")
+    for snippet in ("function unitsOf(lla)", "var h00 = 2 * u3 - 3 * u2 + 1;",
+                    "((p2 - p0) / d1)", "((p3 - p1) / d2)", "Math.asin(v[2] / r)",
+                    "meta.variants", "function readHash()", "tracks_per_day"):  # fmt: skip
+        assert snippet in js, snippet
+    html = (static / "viewer.html").read_text(encoding="utf-8")
+    assert 'id="variants"' in html and "info-family" in html

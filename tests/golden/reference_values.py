@@ -1709,3 +1709,39 @@ class Maintenance18S6:
 
 
 MAINTENANCE18_S6 = Maintenance18S6()
+
+
+@dataclass(frozen=True)
+class DemoSceneS6:
+    """Demo com 6 ou 18 satélites e variantes (S6-02): critérios do card e medidas.
+
+    Critérios do card S6-02: cada arquivo < 15 MB; flecha da interpolação do viewer ≤ 5 km;
+    faixa da cena de 18 com a rolagem de cobertura diária, 8,1835° (A.2 da Semana 6).
+
+    Medido no satsim (S6-02, ``build_demo --all --offline``, Cowell completo, 20 objetos com 18):
+    index.html 6,7 MB (20 s); ciclo_6dias.html 11,2 MB (60 s); constelacao18.html 11,4 MB (20 s,
+    precisão compacta); ciclo_6dias_18.html 11,6 MB (120 s, compacta); 2 min 45 s para os quatro.
+    Com precisão completa, 18 satélites a 20 s em 1 dia: 13,4 MB; 6 dias a 60 s: 24,5 MB (compacta:
+    20,6 MB; a 90 s, 14,5 MB). A estimativa do A.5 (17 MB em 1 dia a 20 s) é proporcional a 8
+    objetos e ignora a parte fixa (2,3 MB de globe.gl e textura).
+    Interpolação, S1 no Cowell completo, 1 dia, erro máximo entre amostras: linear em lat/lon (o
+    método das Semanas 3–5) 3,28 / 7,37 / 13,06 / 29,16 / 51,3 / 79,1 / 112,1 km a 20 / 30 / 40 /
+    60 / 80 / 100 / 120 s, concentrado perto da latitude máxima (a flecha r·θ²/8 do A.5 vale para a
+    corda em ECI, não para lat/lon); Hermite cúbica no vetor unitário (S6-02): 0,031 / 0,070 /
+    0,124 / 0,279 / 0,497 / 0,778 / 1,127 km (o máximo vem das pontas da janela, com tangente
+    unilateral; no meio da janela, 0,27 km a 120 s).
+    """
+
+    max_file_mb: float = 15.0  # critério do card
+    interp_limit_km: float = 5.0  # critério do card
+    roll18_deg: float = 8.1835  # A.2 da Semana 6
+    file_mb: tuple[tuple[str, float], ...] = (
+        ("index.html", 6.7),
+        ("ciclo_6dias.html", 11.2),
+        ("constelacao18.html", 11.4),
+        ("ciclo_6dias_18.html", 11.6),
+    )
+    interp_error_120s_km: float = 1.127
+
+
+DEMO_SCENE_S6 = DemoSceneS6()

@@ -3,7 +3,9 @@
 ## Status
 
 Proposto — 2026-09-29. Atualizado na S5-06 (2026-11-06): `Satellite` e `Constellation`
-implementados (S5-01); constelação na cena (S5-06).
+implementados (S5-01); constelação na cena (S5-06). Atualizado na S6-02 (2026-11-10):
+`ConstellationDesign` (S6-01), R7 concluído (6 ou 18 satélites pelo seletor do viewer), variantes
+e famílias na cena, interpolação Hermite no viewer.
 
 ## Contexto
 
@@ -187,7 +189,7 @@ todas as etapas sem laços explícitos.
 | R4 | Sincronia: uma única fonte de tempo (`simTime`) comanda 3D e 2D; arrastar a linha do tempo atualiza os dois painéis. |
 | R5 | Controles: play/pause, velocidade (1x, 10x, 60x, 300x, 1000x), linha do tempo, relógio UTC visível, botão "agora/início", mostrar/ocultar cada satélite. |
 | R6 | Estação de solo (São Bento do Sapucaí, ≈ −22,69°, −45,73°) marcada nos dois painéis; a partir da Semana 4, destaque quando o satélite estiver visível. |
-| R7 | Escala 1 → 6 → 18 satélites sem alterar o código do viewer: satélites entram por dados/configuração. |
+| R7 | Escala 1 → 6 → 18 satélites sem alterar o código do viewer: satélites entram por dados/configuração. **Concluído (S6-02):** `CONSTELLATION_DESIGNS` (6 e 18) é a única fonte de P; a demo gera as cenas de 6 e 18 e o viewer troca entre elas pelo seletor, desenhando qualquer número de membros e famílias a partir do JSON. |
 | R8 | Impacto visual: tema escuro, cores vivas, animação fluida, tipografia limpa; layout responsivo (3D e 2D lado a lado em tela larga, empilhados em tela estreita). |
 | R9 | Uso simples: abre com um comando ou duplo clique, sem configuração; legenda e dicas na tela. |
 | R10 | Offline após clonar: bibliotecas JS e texturas versionadas (`static/vendor`, `static/textures`), com créditos e licenças em `docs/creditos.md`. |
@@ -212,7 +214,8 @@ todas as etapas sem laços explícitos.
 
 Python calcula; o viewer só desenha. Gerado por `satsim.app.scene_export.build_scene` (S1-08;
 subponto geodésico WGS84 desde a S2-07; estação, footprint, passagens e TLE desde a S3-06; LTAN,
-β e eclipse desde a S4-06; constelação, nós, faixa e manutenção desde a S5-06). Aceita
+β e eclipse desde a S4-06; constelação, nós, faixa e manutenção desde a S5-06; famílias,
+grade diária, variantes e precisão compacta desde a S6-02). Aceita
 `Satellite`, `SceneSatellite` ou uma `Constellation` inteira (S5-01).
 Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua época.
 
@@ -229,7 +232,12 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
            "constellation": {"name": "Constelação 91/6",                 // S5-06 (opcional)
                              "n_revs": 91, "n_days": 6, "n_sats": 6, "grid_deg": 3.956044,
                              "member_ids": ["s1", "s2", "s3", "s4", "s5", "s6"],
-                             "roll_deg": 23.1957}},                     // null sem faixa
+                             "roll_deg": 23.1957,                       // null sem faixa
+                             "tracks_per_day": 91, "daily_grid_deg": 3.956044,  // S6-02
+                             "families": 1},                            //   (opcionais)
+           "variants": [{"id": "p6", "label": "6 satélites", "href": "index.html"},  // S6-02
+                        {"id": "p18", "label": "18 satélites",                       // (opcional)
+                         "href": "constelacao18.html"}]},
   "earth": {"gmst0_rad": 1.234, "gmst_rate_rad_s": 7.2921158553e-5},
   "satellites": [
     {"id": "sso1", "name": "SSO-1", "color": "#00e5ff",
@@ -242,6 +250,7 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
      "nodes": {"t_s": [1234.567, ...],            // S5-06 (opcional, só membros): nós
                "lon_deg": [-12.345678, ...]},     //   ascendentes na janela
      "swath_deg": 1.9955,                         // S5-06 (opcional): λ da faixa (eq. 45)
+     "family": 0,                                 // S6-02 (opcional, só membros): j mod m
      "maintenance": {"a_dot_m_day": -23.95,       // S5-06 (opcional): resumo do
                      "days_to_track_correction": 6.92, ...}}  //   MaintenanceStatus (S5-05)
   ],
@@ -305,6 +314,37 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
     sem as camadas do mapa e com "—" nas linhas da constelação. Com ela, o viewer agrupa a
     legenda, desliga os não membros no início, desenha a grade do dia (nós com `t_s` ≤ t) e a
     faixa (polígono a ±λ do traço recente) e calcula a fase Δu a partir de `eci_km`.
+- **S6-02 (compatível, `schema_version` continua 1; campos opcionais):**
+  - com `SceneConstellation.families` (via `SceneConstellation.from_design`, a partir de um
+    `ConstellationDesign`), `meta.constellation` ganha `tracks_per_day` (N·P/D; `null` se D não
+    divide P), `daily_grid_deg` (360°·D/(N·P)) e `families` (m = P/D), e cada membro ganha
+    `family` (j mod m). A rolagem da faixa da demo passa a ser a de cobertura diária do desenho
+    (`ConstellationDesign.roll_for_daily_coverage`): 23,1957° com 6 (a mesma da S5-06) e
+    8,1835° com 18;
+  - `meta.variants = [{id, label, href}]`: as cenas irmãs, com `href` relativo (na mesma pasta;
+    `build_scene` recusa caminho absoluto ou URL). Com elas, o viewer mostra o seletor
+    "6 satélites | 18 satélites"; a troca navega para o irmão levando no hash da URL o instante
+    (UTC absoluto), a velocidade, as camadas, os satélites fora da constelação ligados e o
+    selecionado (`#t=…&v=…&grid=…&swath=…&play=…&on=…&sel=…&p=…`; um membro vai para o de fase
+    mais próxima na outra cena: s4 de 18 ↔ S2 de 6). Funciona em `file://` e por HTTP;
+  - `build_scene(..., precision=ScenePrecision)`: casas decimais das séries por amostra. O
+    padrão, `FULL_PRECISION`, é o das semanas anteriores (a cena de 6 da demo não muda);
+    `COMPACT_PRECISION` (1 m em posição, 0,01° em az/el; ≈ 18% menos bytes) é usado nas cenas de
+    18 para cada arquivo ficar abaixo de 15 MB;
+  - sem os campos, o viewer se comporta como antes: legenda da constelação sem subdivisões,
+    contador "X de N" com a grade de 360°/N e sem seletor.
+- **Interpolação no viewer (S6-02):** a posição entre amostras é uma Hermite cúbica
+  (Catmull-Rom, tangentes por diferença central das amostras vizinhas) no vetor unitário de
+  (lat, lon) e na altitude, projetada de volta para lat/lon: geometria de desenho, sem equação
+  orbital. A interpolação linear em lat/lon das semanas anteriores erra muito mais que a flecha
+  da corda (r·θ²/8), porque a longitude varia rápido perto da latitude máxima: 3,3 km a 20 s e
+  29 km a 60 s no Cowell completo. Com Hermite no vetor unitário: 0,03 km a 20 s, 0,28 km a 60 s
+  e 1,1 km a 120 s (o passo da cena de 6 dias com 18). Com passo > 30 s, os traços ganham pontos
+  interpolados a cada 30 s. `tests/test_scene_export.py` reimplementa o método e mede o erro.
+- **Desempenho (S6-02, Chrome headless, rasterização por software, `#bench=300`):** quadro 2D
+  com tudo ligado de 3,0 ms (8 objetos) e 6,3 ms (20 objetos, 1 dia) a 9,1 ms (20 objetos,
+  6 dias), máximo 14 ms; só o JavaScript do quadro 2D, 0,47 ms (8) e 3,9 ms (20); montagem dos
+  dados do globo ≤ 0,13 ms. O globo WebGL não roda no headless deste ambiente e não foi medido.
 
 ### Decisão de stack
 
@@ -319,7 +359,10 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
 **Decisão:** viewer HTML/JS estático e autocontido: **globe.gl (UMD, versão fixada)** no 3D e
 **canvas 2D** no mapa equiretangular com a mesma textura, alimentados pelo JSON do Python. É a
 única opção que atende R1, R2 e R9–R10 juntos, sem servidor nem token. Na **Semana 6**, um
-serviço Python (Streamlit ou FastAPI) hospeda o mesmo viewer, sem mudá-lo.
+serviço Python (Streamlit ou FastAPI) hospeda o mesmo viewer, sem mudá-lo. **Atualização
+S6-02:** as cenas de 6 e 18 satélites são **arquivos irmãos**, não um arquivo com as duas (juntas
+passariam de 15 MB), ligados por `meta.variants` e links relativos; navegar entre arquivos
+locais funciona offline, sem servidor.
 **Restrição de `file://`:** navegadores bloqueiam módulos ES e recursos carregados de `file://`;
 usamos scripts clássicos (UMD) e embutimos textura (data URI) e cena (`<script>`) no
 `demo/index.html`. **Vista 3D:** Terra fixa (ECEF) a partir de `lla` nesta fase; modo inercial

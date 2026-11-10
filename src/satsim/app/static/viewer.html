@@ -15,6 +15,7 @@
 <header class="topbar">
   <div class="brand">satsim <span>simulador de satélites</span></div>
   <div class="clock" id="clock" title="Relógio da simulação (UTC)">UTC —</div>
+  <div class="variants" id="variants" role="group" aria-label="Constelação" hidden></div>
   <div class="controls">
     <button id="btn-play" class="btn btn-play" title="Reproduzir / pausar (barra de espaço)">❚❚</button>
     <div class="speeds" id="speeds" role="group" aria-label="Velocidade"></div>
@@ -63,6 +64,8 @@
           <dt title="Ângulo entre o plano da órbita e a direção do Sol">β</dt><dd id="info-beta">—</dd>
           <dt>Sol</dt><dd id="info-light">—</dd>
           <dt class="k-const" hidden title="Ângulo ao longo da órbita em relação a S1 (argumento de latitude)">Fase Δu</dt><dd class="k-const" id="info-phase" hidden>—</dd>
+          <dt class="k-fam" hidden title="Família f = j mod m: cada família é uma constelação 91/6 completa, deslocada de f/m de passo de grade">Família</dt><dd class="k-fam" id="info-family" hidden>—</dd>
+          <dt class="k-const" hidden title="Rolagem da câmera que fecha a grade diária (meia grade, Sem4 eq. 45)">Rolagem para cobertura diária</dt><dd class="k-const" id="info-roll" hidden>—</dd>
           <dt class="k-const" hidden title="Quando o traço sai da banda de ±5 km por causa do arrasto (S5-05)">Correção</dt><dd class="k-const" id="info-maint" hidden>—</dd>
           <dt class="k-const" hidden title="Δv anual de manutenção: traço (arrasto) + inclinação (Sol)">Δv/ano</dt><dd class="k-const" id="info-dv" hidden>—</dd>
         </dl>

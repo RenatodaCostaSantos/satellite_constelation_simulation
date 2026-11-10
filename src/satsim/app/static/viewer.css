@@ -156,6 +156,33 @@ body {
 .layers input { accent-color: var(--accent); cursor: pointer; }
 .k-node { width: 2px; height: 12px; background: var(--ink); }
 .k-swath { width: 22px; height: 10px; background: rgba(0, 229, 255, 0.25); }
+/* S6-02: seletor de variantes (6 | 18 satélites) e legenda por família */
+.variants { display: flex; gap: 0; border: 1px solid #33507a; border-radius: 8px; overflow: hidden; }
+.variants[hidden] { display: none; }
+.variants .btn { border: 0; border-radius: 0; }
+.variants .btn + .btn { border-left: 1px solid #33507a; }
+.variants .btn.active { cursor: default; }
+.legend li.subgroup {
+  grid-template-columns: auto auto 1fr;
+  margin-top: 2px;
+  padding-left: 14px;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.legend li.subgroup .fam-toggle {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  width: 16px;
+}
+.legend li.subgroup .fam-note { grid-column: 3; color: var(--muted); font-size: 11px; font-weight: 400; }
+.legend li.member.fam-item { padding-left: 30px; }
+.legend li[hidden] { display: none; }
 .frame-note { margin-top: 8px; font-size: 11px; color: #5d6a80; }
 
 /* --- painel de informações do satélite selecionado ---------------------------------------- */
