@@ -1551,3 +1551,197 @@ class DemoSceneS5:
 
 
 DEMO_SCENE_S5 = DemoSceneS5()
+
+# ===============================================================================================
+# Semana 6 — Apêndice A do prompt da Semana 6: constelação de 18 satélites (P = 3·D) na órbita
+#     91/6. Experimento de referência em 09/11/2026 com o satsim no commit e423447 (fim da S5-06):
+#     sso_constellation(2026-10-23 00:00 UTC, Cowell completo do build_demo, n_sats=18,
+#     a = 6 888 089 m de projeto, i = 97,46325°), LTAN 22h30. Valores de regressão e de ordem de
+#     grandeza, não independentes do satsim; os da teoria (A.2: Sem4 eqs. 42, 43, 45) são.
+#     Convenção: ψ0_j = −j·20°, ids s1 … s18 em ordem de fase; família f = j mod 3.
+# ===============================================================================================
+
+
+@dataclass(frozen=True)
+class DesignRowA2S6:
+    n_sats: int
+    delta_u_deg: float
+    tracks_per_day: int | None
+    daily_grid_deg: float | None
+    daily_grid_km: float | None  # no equador
+    roll_daily_coverage_deg: float | None
+    uniform: bool
+
+
+DESIGN_A2_S6: tuple[DesignRowA2S6, ...] = (
+    DesignRowA2S6(6, 60.0, 91, 3.95604, 440.0, 23.1957, True),  # P = D
+    DesignRowA2S6(18, 20.0, 273, 1.31868, 147.0, 8.1835, True),  # P = 3D
+    DesignRowA2S6(7, 51.43, None, None, None, None, False),  # A.2/A.3 da S5
+)
+"""A.2 do prompt da Semana 6 (teoria, Sem4 eqs. 42, 43 e 45; rolagem pela eq. 45 com
+a = 6 888,089 km e λ = π/273). Critérios do card S6-01: rolagem 23,1957° (P = 6) e 8,1835° ±
+0,01° (P = 18); P = 3 uniforme por P | D, com revisita da grade em 2 dias. Com η = 23,2°,
+λ = 1,9784° = 1,5 grade diária de 18. Medido no satsim (S6-01, ``ConstellationDesign``):
+23,195673° e 8,183479°."""
+
+ROLL_DAILY_COVERAGE_TOL_DEG_S6 = 0.01  # critério do card S6-01
+
+
+@dataclass(frozen=True)
+class Constellation18A1S6:
+    """A.1 do prompt da Semana 6: constelação de 18 e grade no Cowell completo (experimento).
+
+    Medido no satsim (S6-01, ``DESIGN_91_6_P18.build``, nós por ``node_crossings`` a 30 s):
+    construção 1,02 s; nós de 1 dia 21,3 s; 1ºs nós 4 274,46 / 4 591,00 / 4 907,52 / 5 223,99 s;
+    atraso s2 − s1 316,542 s (vizinhos: 316,42 … 316,54 s); P = 18: 273 nós, 1,31556 …
+    1,32196°, afastamento 0,00695° (âncora no 1º nó de s1); família 0: 91 nós, 3,95173 …
+    3,96432°, afastamento 0,00645°; famílias 1 e 2: 91 nós cada, 3,9482 … 3,9625°.
+    Modelo médio (MeanJ2, e = 0, a e i de ``repeat_orbit(91, 6)``, janela [−1 s, 1 dia)): 273 nós,
+    1,318641 … 1,318698° (ideal 1,318681°).
+    """
+
+    n_sats: int = 18
+    build_time_s: float = 0.98
+    nodes_1d_time_s: float = 20.3
+    node_delay_s2_s1_s: float = 316.54  # Tnod/18
+    node_delay_tol_s: float = 1.0  # critério do card S6-01
+    first_node_s: tuple[float, ...] = (4274.46, 4591.00, 4907.52, 5223.99)  # s1 … s4
+    p18_nodes: int = 273
+    p18_gap_min_deg: float = 1.31556
+    p18_gap_max_deg: float = 1.32196
+    gap_tol_deg: float = 0.002  # critério do card S6-01
+    p18_max_offset_deg: float = 0.00695
+    p18_max_offset_limit_deg: float = 0.01  # critério do card S6-01
+    family0_nodes: int = 91  # = A.3 da Semana 5
+    family0_gap_min_deg: float = 3.95173
+    family0_gap_max_deg: float = 3.96432
+    family0_max_offset_deg: float = 0.00645
+    mean_grid_tol_deg: float = 1e-4  # arredondamento (5e-5°) + deriva do GMST em 1 dia (4,2e-5°)
+
+
+CONSTELLATION18_A1_S6 = Constellation18A1S6()
+
+
+@dataclass(frozen=True)
+class Coverage18A3S6:
+    """A.3 do prompt da Semana 6: cobertura e revisita (experimento; grade de 2° × 2°,
+    |lat| ≤ 80°, passo 10 s; acessos a menos de 30 min contam como uma passagem; intervalo de
+    início a início, com as bordas da janela).
+
+    Medido no satsim (S6-01, grade 2°, passo 10 s), Cowell completo: P = 18 com 8,1835°: 100% em
+    1 dia, 100% e 24,00 h em 3 dias; P = 18 com 23,2° em 3 dias: 100%, 13,794 h (|lat| ≤ 60°) e
+    18,953 h (≤ 80°); P = 6 (família 0) com 23,2°: 13,967 h e 19,039 h; P = 6 com 8,1835° em 3 dias:
+    74,348%, 72,0 h. No Cowell só J2–J4 (o dos testes de 3 dias): os mesmos valores, exceto P = 6
+    com 8,1835°: 73,896%. 17 satélites (sem s1 ou sem s5) com 23,2°: 100% em 1 dia. Passagens por
+    alvo em 1 dia (P = 18, 23,2°, |lat| ≤ 60°, fusão de 30 min): mín. 2, mediana 2, máx. 3;
+    passagens por satélite (sem fundir satélites do trem): mín. 6, mediana 7, máx. 13.
+    """
+
+    grid_deg: float = 2.0
+    step_s: float = 10.0
+    gap_merge_s: float = 1800.0
+    roll_p18_deg: float = 8.1835
+    roll_p6_deg: float = 23.2
+    fraction_p18_roll8_1d: float = 1.0
+    fraction_p18_roll8_3d: float = 1.0
+    revisit_p18_roll8_3d_lat60_h: float = 24.0
+    revisit_p18_roll23_3d_lat60_h: float = 13.79
+    revisit_p6_roll23_3d_lat60_h: float = 13.97
+    revisit_tol_h: float = 0.5  # critério do card S6-01 (e diferença P = 18 × P = 6 < 0,5 h)
+    fraction_p6_roll8_3d: float = 0.7435
+    fraction_p6_roll8_3d_tol: float = 0.02  # critério do card S6-01
+    fraction_p17_roll23_1d: float = 1.0
+    passes_per_target_1d_min: int = 2
+    passes_per_target_1d_median: int = 2
+    passes_per_target_1d_max: int = 3
+    train_opportunities_window_min: float = 10.0
+
+
+COVERAGE18_A3_S6 = Coverage18A3S6()
+
+
+@dataclass(frozen=True)
+class Contacts18A4S6:
+    """A.4 do prompt da Semana 6: contatos com São Bento do Sapucaí (experimento; 24 h desde
+    2026-10-23 00:00 UTC, el ≥ 10°, ``contact_plan`` com step_s = 20 s).
+
+    Medido no satsim (S6-01): 49 passagens (2 a 4 por satélite), 287,99 min, 2 trens (noite
+    00:27:58–02:30:08 UTC, 24 passagens; dia 12:01:10–14:07:20 UTC, 25), AOS consecutivos a
+    4,37–5,77 min (noite) e 4,14–6,28 min (dia), 36 sobreposições, no máximo 2 satélites
+    simultâneos, maior intervalo sem contato 9,878 h, el. máx. 87,57°; 0,3 s de cálculo.
+    """
+
+    n_passes: int = 49
+    n_passes_tol: int = 2  # critério do card S6-01
+    total_contact_min: float = 287.99
+    total_contact_tol_min: float = 6.0  # critério do card S6-01
+    n_trains: int = 2
+    night_train_utc: tuple[str, str] = ("00:28", "02:30")
+    day_train_utc: tuple[str, str] = ("12:01", "14:07")
+    night_train_passes: int = 24
+    day_train_passes: int = 25
+    train_aos_spacing_min: tuple[float, float] = (4.0, 6.5)  # critério do card S6-01
+    a4_aos_spacing_min: tuple[float, float] = (4.1, 6.3)  # A.4 (≈ Tnod/18 = 5,3 min)
+    n_overlaps: int = 36
+    n_overlaps_tol: int = 3  # critério do card S6-01
+    max_simultaneous: int = 2
+    max_gap_h: float = 9.88
+    passes_per_sat_range: tuple[int, int] = (2, 4)
+    p6_n_passes: int = 16  # A.6 da Semana 5
+    p6_total_contact_min: float = 96.68
+
+
+CONTACTS18_A4_S6 = Contacts18A4S6()
+
+
+@dataclass(frozen=True)
+class Maintenance18S6:
+    """Manutenção dos 18 (critério do card S6-01): mesmo a, mesmo arrasto → ``MaintenanceStatus``
+    igual ao dos 6 a menos de 1% (ȧ medido em 1 dia).
+
+    Medido no satsim (S6-01, ``measure_decay_rate`` em 1 dia, Cowell completo): ȧ dos 18 de
+    −24,022 a −23,945 m/dia (dispersão 0,077 m/dia, 0,3%), contra −23,95 dos 6 (A.7 da S5).
+    """
+
+    rel_tol: float = 0.01  # critério do card S6-01
+    a_dot_min_m_day: float = -24.022
+    a_dot_max_m_day: float = -23.945
+
+
+MAINTENANCE18_S6 = Maintenance18S6()
+
+
+@dataclass(frozen=True)
+class DemoSceneS6:
+    """Demo com 6 ou 18 satélites e variantes (S6-02): critérios do card e medidas.
+
+    Critérios do card S6-02: cada arquivo < 15 MB; flecha da interpolação do viewer ≤ 5 km;
+    faixa da cena de 18 com a rolagem de cobertura diária, 8,1835° (A.2 da Semana 6).
+
+    Medido no satsim (S6-02, ``build_demo --all --offline``, Cowell completo, 20 objetos com 18):
+    index.html 6,7 MB (20 s); ciclo_6dias.html 11,2 MB (60 s); constelacao18.html 11,4 MB (20 s,
+    precisão compacta); ciclo_6dias_18.html 11,6 MB (120 s, compacta); 2 min 45 s para os quatro.
+    Com precisão completa, 18 satélites a 20 s em 1 dia: 13,4 MB; 6 dias a 60 s: 24,5 MB (compacta:
+    20,6 MB; a 90 s, 14,5 MB). A estimativa do A.5 (17 MB em 1 dia a 20 s) é proporcional a 8
+    objetos e ignora a parte fixa (2,3 MB de globe.gl e textura).
+    Interpolação, S1 no Cowell completo, 1 dia, erro máximo entre amostras: linear em lat/lon (o
+    método das Semanas 3–5) 3,28 / 7,37 / 13,06 / 29,16 / 51,3 / 79,1 / 112,1 km a 20 / 30 / 40 /
+    60 / 80 / 100 / 120 s, concentrado perto da latitude máxima (a flecha r·θ²/8 do A.5 vale para a
+    corda em ECI, não para lat/lon); Hermite cúbica no vetor unitário (S6-02): 0,031 / 0,070 /
+    0,124 / 0,279 / 0,497 / 0,778 / 1,127 km (o máximo vem das pontas da janela, com tangente
+    unilateral; no meio da janela, 0,27 km a 120 s).
+    """
+
+    max_file_mb: float = 15.0  # critério do card
+    interp_limit_km: float = 5.0  # critério do card
+    roll18_deg: float = 8.1835  # A.2 da Semana 6
+    file_mb: tuple[tuple[str, float], ...] = (
+        ("index.html", 6.7),
+        ("ciclo_6dias.html", 11.2),
+        ("constelacao18.html", 11.4),
+        ("ciclo_6dias_18.html", 11.6),
+    )
+    interp_error_120s_km: float = 1.127
+
+
+DEMO_SCENE_S6 = DemoSceneS6()

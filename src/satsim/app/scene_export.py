@@ -57,6 +57,19 @@ Com ``constellation_info`` (um ``SceneConstellation``), a cena ganha, ainda sem 
   com ``null`` no lugar de valores infinitos (sem decaimento, nunca sai da banda).
 
 Satélites fora de ``member_ids`` (ISS, Sentinel-2A) não ganham esses campos.
+
+Constelação de 6 ou 18, variantes e precisão (S6-02, campos opcionais)
+----------------------------------------------------------------------
+- Com ``SceneConstellation.families`` (via ``SceneConstellation.from_design``),
+  ``meta.constellation`` ganha ``tracks_per_day`` (N·P/D), ``daily_grid_deg`` (360°·D/(N·P)) e
+  ``families`` (m = P/D), e cada membro ganha ``family`` (j mod m; Sem4 §8.3, card S6-01);
+- ``variants``: ``meta.variants = [{id, label, href}]``, as cenas irmãs (ex.: 6 e 18 satélites)
+  com caminhos relativos, para o seletor do viewer;
+- ``precision``: casas decimais das séries por amostra (``ScenePrecision``). O padrão,
+  ``FULL_PRECISION``, é o das semanas anteriores; ``COMPACT_PRECISION`` corta as casas que não
+  aparecem na tela (1 m em posição, 0,01° em az/el), ≈ 20% menos bytes por amostra.
+
+O ``schema_version`` continua 1: cenas sem esses campos abrem como antes.
 """
 
 import math
@@ -69,7 +82,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from satsim.astrotime import datetime_to_jd, gmst, gmst_rate, jd_from_epoch
-from satsim.constellation import Constellation
+from satsim.constellation import Constellation, ConstellationDesign
 from satsim.coverage import swath_half_angle
 from satsim.elements import state_to_elements
 from satsim.ephemeris import beta_angle, in_shadow_cylindrical, ltan_hours, sun_direction
@@ -132,6 +145,34 @@ MAINTENANCE_FIELDS: tuple[str, ...] = (
 )
 """Campos do ``MaintenanceStatus`` (S5-05) que entram no resumo ``satellites[i].maintenance``."""
 
+
+@dataclass(frozen=True)
+class ScenePrecision:
+    """Casas decimais das séries por amostra da cena (S6-02).
+
+    O tamanho do arquivo cresce com o número de casas: as séries por amostra são quase todo o
+    JSON. ``FULL_PRECISION`` reproduz as constantes acima (cenas das Semanas 1–5).
+    """
+
+    eci: int = ECI_DECIMALS
+    angle: int = ANGLE_DECIMALS
+    alt: int = ALT_DECIMALS
+    look: int = LOOK_DECIMALS
+    range: int = RANGE_DECIMALS
+    footprint: int = FOOTPRINT_DECIMALS
+    ltan: int = LTAN_DECIMALS
+    beta: int = BETA_DECIMALS
+
+
+FULL_PRECISION = ScenePrecision()
+"""Precisão das cenas das Semanas 1–5 (padrão de ``build_scene``)."""
+
+COMPACT_PRECISION = ScenePrecision(eci=3, angle=5, alt=3, look=2, range=1, footprint=4, ltan=3,
+                                   beta=2)  # fmt: skip
+"""Precisão de exibição (S6-02): eci 1 m, lat/lon 1e-5° (≈ 1 m), altitude 1 m, az/el 0,01°,
+distância 100 m, footprint 1e-4° (≈ 11 m), LTAN 3,6 s, β 0,01°: muito abaixo do que o viewer
+mostra (0,001° nas coordenadas, 0,1° nos ângulos) e do erro da interpolação entre amostras."""
+
 _FRAME = "ECI simplificado (x -> equinócio vernal)"
 _GEODESY = "WGS84"
 
@@ -186,6 +227,8 @@ class SceneConstellation:
         roll_rad: rolagem da câmera [rad] para a faixa (``swath_deg``); ``None``, sem faixa.
         maintenance: ``MaintenanceStatus`` por id de satélite (os que faltarem ficam sem o campo).
         node_step_s: passo da amostragem dos nós ascendentes [s] (``node_crossings``).
+        families: m = P/D, número de famílias (S6-02); ``None`` (padrão) deixa de fora
+            ``tracks_per_day``, ``daily_grid_deg``, ``families`` e o ``family`` de cada membro.
     """
 
     name: str
@@ -195,15 +238,43 @@ class SceneConstellation:
     roll_rad: float | None = None
     maintenance: Mapping[str, MaintenanceStatus] = field(default_factory=dict)
     node_step_s: float = 30.0
+    families: int | None = None
+
+    @classmethod
+    def from_design(
+        cls,
+        design: ConstellationDesign,
+        name: str,
+        member_ids: Sequence[str],
+        roll_rad: float | None = None,
+        maintenance: Mapping[str, MaintenanceStatus] | None = None,
+    ) -> "SceneConstellation":
+        """``SceneConstellation`` de um ``ConstellationDesign`` (S6-02), com as famílias."""
+        if len(member_ids) != design.n_sats:
+            raise ValueError(f"o desenho tem {design.n_sats} satélites, recebeu {len(member_ids)}")
+        return cls(
+            name, design.n_revs, design.n_days, tuple(member_ids), roll_rad,
+            dict(maintenance or {}), families=design.n_families,
+        )  # fmt: skip
 
     @property
     def grid_deg(self) -> float:
         """Passo da grade de trilhas no equador, 360°/N."""
         return 360.0 / self.n_revs
 
+    @property
+    def tracks_per_day(self) -> int | None:
+        """Trilhas por dia, N·P/D, quando D divide P (Sem4 §8.3); ``None`` se não."""
+        n_sats = len(self.member_ids)
+        return None if n_sats % self.n_days else self.n_revs * n_sats // self.n_days
+
+    def family_of(self, sat_id: str) -> int:
+        """Família do membro ``sat_id``: posição em ``member_ids`` mod m."""
+        return self.member_ids.index(sat_id) % (self.families or 1)
+
     def meta(self) -> dict[str, Any]:
         """``meta.constellation`` do contrato."""
-        return {
+        out: dict[str, Any] = {
             "name": self.name,
             "n_revs": self.n_revs,
             "n_days": self.n_days,
@@ -212,6 +283,14 @@ class SceneConstellation:
             "member_ids": list(self.member_ids),
             "roll_deg": (None if self.roll_rad is None else round(math.degrees(self.roll_rad), 4)),
         }
+        if self.families is not None:
+            tracks = self.tracks_per_day
+            out["tracks_per_day"] = tracks
+            out["daily_grid_deg"] = (
+                None if tracks is None else round(360.0 / tracks, ANGLE_DECIMALS)
+            )
+            out["families"] = self.families
+        return out
 
 
 def maintenance_summary(status: MaintenanceStatus) -> dict[str, float | None]:
@@ -272,6 +351,8 @@ def build_scene(
     tle_source: str | None = None,
     sun_geometry: bool = False,
     constellation_info: SceneConstellation | None = None,
+    variants: Sequence[Mapping[str, str]] | None = None,
+    precision: ScenePrecision = FULL_PRECISION,
 ) -> dict[str, Any]:
     """Monta a cena (contrato JSON do ADR 0001) amostrando todos os satélites no tempo.
 
@@ -289,7 +370,11 @@ def build_scene(
         tle_source: origem do TLE (``"network"``, ``"cache"``, ``"bundled"`` ou um arquivo).
         sun_geometry: acrescenta ``ltan_h``, ``beta_deg`` e ``eclipse`` a cada satélite (S4-06).
         constellation_info: acrescenta ``meta.constellation`` e, nos membros, ``nodes``,
-            ``swath_deg`` e ``maintenance`` (S5-06).
+            ``swath_deg`` e ``maintenance`` (S5-06); com ``families``, também ``family`` (S6-02).
+        variants: cenas irmãs para ``meta.variants`` (S6-02): ``{id, label, href}`` cada, com
+            ``href`` relativo (sem esquema nem barra inicial).
+        precision: casas decimais das séries por amostra (S6-02; padrão, as das semanas
+            anteriores).
 
     Returns:
         ``dict`` serializável com ``meta``, ``earth``, ``satellites``, ``stations`` e
@@ -297,7 +382,7 @@ def build_scene(
 
     Raises:
         ValueError: época naive, passo não positivo, duração que não é múltiplo do passo ou
-            membro da constelação ausente da cena.
+            membro da constelação ausente da cena, variante incompleta ou com ``href`` absoluto.
     """
     if epoch.tzinfo is None or epoch.utcoffset() is None:
         raise ValueError("epoch deve ser um datetime tz-aware")
@@ -317,6 +402,9 @@ def build_scene(
         missing = members - {sat.id for sat in satellites}
         if missing:
             raise ValueError(f"membros da constelação ausentes da cena: {sorted(missing)}")
+
+    variants_out = _variants_json(variants) if variants is not None else None
+    pr = precision
 
     t = np.arange(n_steps + 1) * float(step_s)
     epoch_jd = datetime_to_jd(epoch)
@@ -341,35 +429,35 @@ def build_scene(
         lla = subpoint_geodetic(r_ecef)
         lla_rounded = np.column_stack(
             [
-                np.round(lla[:, 0], ANGLE_DECIMALS),
-                np.round(lla[:, 1], ANGLE_DECIMALS),
-                np.round(lla[:, 2], ALT_DECIMALS),
+                np.round(lla[:, 0], pr.angle),
+                np.round(lla[:, 1], pr.angle),
+                np.round(lla[:, 2], pr.alt),
             ]
         )
         sat_out = {
             "id": sat.id,
             "name": sat.name,
             "color": sat.color,
-            "eci_km": np.round(r_eci / 1e3, ECI_DECIMALS).tolist(),
+            "eci_km": np.round(r_eci / 1e3, pr.eci).tolist(),
             "lla": lla_rounded.tolist(),
         }
         if sun_geometry:
             raan = state_to_elements(r_eci, v_eci).raan
-            sat_out["ltan_h"] = np.round(ltan_hours(raan, jd), LTAN_DECIMALS).tolist()
+            sat_out["ltan_h"] = np.round(ltan_hours(raan, jd), pr.ltan).tolist()
             beta = np.degrees(beta_angle(r_eci, v_eci, jd))
-            sat_out["beta_deg"] = np.round(beta, BETA_DECIMALS).tolist()
+            sat_out["beta_deg"] = np.round(beta, pr.beta).tolist()
             sat_out["eclipse"] = in_shadow_cylindrical(r_eci, sun_dir).tolist()
         if el_min_deg is not None:
             el_min = math.radians(el_min_deg)
             # a partir da altitude publicada em lla: o JSON é verificável por quem o lê
             footprint = np.degrees(footprint_half_angle(lla_rounded[:, 2] * 1e3, el_min))
-            sat_out["footprint_deg"] = np.round(footprint, FOOTPRINT_DECIMALS).tolist()
+            sat_out["footprint_deg"] = np.round(footprint, pr.footprint).tolist()
             for j, (st, gs) in enumerate(zip(stations, ground, strict=True)):
                 az, el, rng = gs.look_angles(r_ecef)
                 looks[j][sat.id] = {
-                    "az_deg": np.round(np.degrees(az), LOOK_DECIMALS).tolist(),
-                    "el_deg": np.round(np.degrees(el), LOOK_DECIMALS).tolist(),
-                    "range_km": np.round(rng / 1e3, RANGE_DECIMALS).tolist(),
+                    "az_deg": np.round(np.degrees(az), pr.look).tolist(),
+                    "el_deg": np.round(np.degrees(el), pr.look).tolist(),
+                    "range_km": np.round(rng / 1e3, pr.range).tolist(),
                 }
                 found = find_passes(sat.propagator, gs, epoch, duration_s, el_min_deg,
                                     step_s=min(20.0, float(step_s)), sat_id=sat.id)  # fmt: skip
@@ -391,6 +479,8 @@ def build_scene(
         meta["el_min_deg"] = float(el_min_deg)
     if constellation_info is not None:
         meta["constellation"] = constellation_info.meta()
+    if variants_out is not None:
+        meta["variants"] = variants_out
     if tle is not None:
         meta["tle"] = {
             "name": tle.name,
@@ -444,7 +534,23 @@ def _constellation_fields(
         # raio médio na janela: a órbita é quase circular (e ≈ 1e-3), λ varia ≈ 0,1% na volta
         radius = float(np.mean(np.linalg.norm(r_eci, axis=1)))
         out["swath_deg"] = round(math.degrees(swath_half_angle(radius, info.roll_rad)), 6)
+    if info.families is not None:
+        out["family"] = info.family_of(sat.id)
     status = info.maintenance.get(sat.id)
     if status is not None:
         out["maintenance"] = maintenance_summary(status)
+    return out
+
+
+def _variants_json(variants: Sequence[Mapping[str, str]]) -> list[dict[str, str]]:
+    """``meta.variants``: ``{id, label, href}`` com ``href`` relativo (S6-02)."""
+    out = []
+    for v in variants:
+        missing = {"id", "label", "href"} - set(v)
+        if missing:
+            raise ValueError(f"variante sem {sorted(missing)}: {dict(v)}")
+        href = str(v["href"])
+        if href.startswith(("/", "//")) or "://" in href or href.startswith(("http:", "https:")):
+            raise ValueError(f"href da variante deve ser relativo: {href}")
+        out.append({"id": str(v["id"]), "label": str(v["label"]), "href": href})
     return out

@@ -24,6 +24,9 @@ data/cache/
 # Demo visual gerada por scripts/build_demo.py
 demo/
 
+# Site estático gerado por scripts/build_site.py (publicado pelo workflow pages.yml)
+site/
+
 # PDFs: só os teóricos de docs/referencias/ são versionados
 *.pdf
 !docs/referencias/*.pdf

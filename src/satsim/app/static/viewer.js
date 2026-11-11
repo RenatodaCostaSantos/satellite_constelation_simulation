@@ -14,6 +14,17 @@
  * S4-06 (campos opcionais por satélite): ``ltan_h``, ``beta_deg`` e ``eclipse``. O painel
  * Informações mostra LTAN, β e "iluminado / em eclipse" do satélite selecionado, e o marcador
  * fica esmaecido em eclipse (no globo e no mapa). Tudo vem calculado do Python.
+ *
+ * S6-02: (1) interpolação Hermite cúbica no vetor unitário de (lat, lon), com a velocidade
+ * derivada das amostras vizinhas (Catmull-Rom), e altitude Hermite: a interpolação linear em
+ * lat/lon errava até 29 km com passo de 60 s perto da latitude máxima; com Hermite no vetor
+ * unitário, 0,03 km a 60 s e 0,3 km a 120 s (tests/test_scene_export.py reimplementa o método).
+ * É geometria de desenho, não física. Com passo > 30 s, os traços ganham pontos intermediários.
+ * (2) ``meta.variants`` (opcional): seletor "6 satélites | 18 satélites" que navega para o
+ * arquivo irmão levando no hash da URL o instante, a velocidade, as camadas e o satélite
+ * selecionado (funciona em file://). (3) ``meta.constellation.tracks_per_day``,
+ * ``daily_grid_deg``, ``families`` e ``family`` por membro (opcionais): legenda por família,
+ * contador "grade: X de 273" e painel com família e rolagem para cobertura diária.
  */
 (function () {
   "use strict";
@@ -36,6 +47,8 @@
   var FOOTPRINT_POINTS = 96; // vértices do círculo de visibilidade no mapa
   var LOS_POINTS = 24; // vértices da linha estação → satélite no globo
   var VIS_COLORS = { up: "#3ddc84", low: "#ffd166", down: "#8a97ad" };
+  var DENSE_S = 30; // S6-02: com passo maior que isso, os traços ganham pontos a cada DENSE_S
+  var FAMILY_LETTERS = "ABCDEFGH";
 
   var scene = window.SATSIM_SCENE;
   if (!scene || typeof Globe === "undefined") {
@@ -60,6 +73,11 @@
   // S5-06: constelação (opcional). Membros ligados; os demais satélites começam desligados.
   var CONST = scene.meta.constellation || null;
   var MEMBER_IDS = CONST ? CONST.member_ids : [];
+  // S6-02 (opcionais): grade diária (273 trilhas com 18 satélites), famílias e variantes
+  var TRACKS = CONST ? CONST.tracks_per_day || CONST.n_revs : 0;
+  var TRACK_GRID_DEG = CONST ? CONST.daily_grid_deg || CONST.grid_deg : 0;
+  var FAMILIES = CONST && CONST.families > 1 ? CONST.families : 1;
+  var VARIANTS = scene.meta.variants || null;
   var sats = scene.satellites.map(function (s) {
     var member = MEMBER_IDS.indexOf(s.id) >= 0;
     return {
@@ -73,6 +91,7 @@
       beta: s.beta_deg || null, // S4-06 (opcional)
       eclipse: s.eclipse || null, // S4-06 (opcional)
       member: member, // S5-06 (opcional)
+      family: typeof s.family === "number" ? s.family : 0, // S6-02 (opcional)
       nodes: s.nodes || null,
       swath: typeof s.swath_deg === "number" ? s.swath_deg : null,
       maintenance: s.maintenance || null,
@@ -128,6 +147,67 @@
     return sats.length ? sats[0] : null;
   }
 
+  // --- S6-02: estado levado no hash da URL pela troca de variante ------------------------------
+  // #t=<UTC ms>&v=<velocidade>&grid=1&swath=1&play=1&sel=<id>&p=<P de origem>&on=<ids>
+  function readHash() {
+    var h = (window.location.hash || "").replace(/^#/, "");
+    if (!h) return;
+    var q = {};
+    h.split("&").forEach(function (kv) {
+      var i = kv.indexOf("=");
+      if (i > 0) q[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+    });
+    var ms = Number(q.t);
+    if (q.t && isFinite(ms)) state.simTime = Math.max(0, Math.min(DURATION, (ms - EPOCH_MS) / 1000));
+    if (SPEEDS.indexOf(Number(q.v)) >= 0) state.speed = Number(q.v);
+    if (q.grid) state.showGrid = q.grid !== "0";
+    if (q.swath) state.showSwath = q.swath !== "0";
+    if (q.play) state.playing = q.play !== "0";
+    if ("on" in q) {
+      var on = q.on ? q.on.split(",") : [];
+      sats.forEach(function (s) {
+        if (!s.member) s.visible = on.indexOf(s.id) >= 0;
+      });
+    }
+    if (q.sel) {
+      var target = mapSelection(q.sel, Number(q.p));
+      if (target) state.selected = target;
+    }
+    if (Number(q.bench) > 0) state.bench = Math.min(5000, Math.floor(Number(q.bench)));
+  }
+
+  // Satélite correspondente a ``id`` de uma cena com ``p`` membros: membros (s1 … sP, em ordem
+  // de fase) vão para o de fase mais próxima nesta cena (s4 de 18 → S2 de 6); os outros, pelo id.
+  function mapSelection(id, p) {
+    var m = /^s(\d+)$/.exec(id);
+    if (m && members.length && p > 0 && p !== members.length) {
+      var j = Number(m[1]) - 1;
+      return members[Math.round((j * members.length) / p) % members.length];
+    }
+    for (var i = 0; i < sats.length; i++) if (sats[i].id === id) return sats[i];
+    return null;
+  }
+
+  function stateHash() {
+    var params = [
+      "t=" + Math.round(EPOCH_MS + state.simTime * 1000),
+      "v=" + state.speed,
+      "grid=" + (state.showGrid ? 1 : 0),
+      "swath=" + (state.showSwath ? 1 : 0),
+      "play=" + (state.playing ? 1 : 0),
+      "on=" + sats.filter(function (s) {
+        return !s.member && s.visible;
+      }).map(function (s) {
+        return encodeURIComponent(s.id);
+      }).join(","),
+    ];
+    if (state.selected) params.push("sel=" + encodeURIComponent(state.selected.id));
+    if (CONST) params.push("p=" + members.length);
+    return "#" + params.join("&");
+  }
+
+  readHash(); // S6-02
+
   // --- interpolação temporal (trata o salto de ±180° na longitude) -----------------------------
   function wrapLon(lon) {
     if (lon >= 180) return lon - 360;
@@ -135,19 +215,62 @@
     return lon;
   }
 
+  // S6-02: vetores unitários de (lat, lon) de cada série lla, calculados uma vez (cache).
+  var unitCache = typeof Map === "function" ? new Map() : null;
+  function unitsOf(lla) {
+    var u = unitCache && unitCache.get(lla);
+    if (u) return u;
+    u = new Float64Array(3 * lla.length);
+    for (var i = 0; i < lla.length; i++) {
+      var la = lla[i][0] * D2R;
+      var lo = lla[i][1] * D2R;
+      u[3 * i] = Math.cos(la) * Math.cos(lo);
+      u[3 * i + 1] = Math.cos(la) * Math.sin(lo);
+      u[3 * i + 2] = Math.sin(la);
+    }
+    if (unitCache) unitCache.set(lla, u);
+    return u;
+  }
+
+  // Posição (lat, lon, alt) no instante t: Hermite cúbica (Catmull-Rom) no vetor unitário de
+  // (lat, lon) e na altitude, com as tangentes por diferença central das amostras vizinhas
+  // (unilateral nas pontas). Reproduz as amostras exatamente; entre elas, o erro é ≈ 0,03 km com
+  // passo de 60 s e ≈ 0,3 km com 120 s (a interpolação linear em lat/lon errava até 29 km a
+  // 60 s perto da latitude máxima). Geometria de desenho: nenhuma equação orbital.
   function sampleAt(lla, t) {
     var n = lla.length;
     var f = t / STEP;
-    if (f <= 0) return lla[0].slice();
+    if (f <= 0 || n < 2) return lla[0].slice();
     if (f >= n - 1) return lla[n - 1].slice();
     var k = Math.floor(f);
     var u = f - k;
-    var a = lla[k];
-    var b = lla[k + 1];
-    var dlon = b[1] - a[1];
-    if (dlon > 180) dlon -= 360;
-    else if (dlon < -180) dlon += 360;
-    return [a[0] + u * (b[0] - a[0]), wrapLon(a[1] + u * dlon), a[2] + u * (b[2] - a[2])];
+    if (u === 0) return lla[k].slice();
+    var i0 = Math.max(0, k - 1);
+    var i3 = Math.min(n - 1, k + 2);
+    var d1 = k + 1 - i0; // passos entre os pontos da diferença central (1 ou 2)
+    var d2 = i3 - k;
+    var u2 = u * u;
+    var u3 = u2 * u;
+    var h00 = 2 * u3 - 3 * u2 + 1;
+    var h10 = u3 - 2 * u2 + u;
+    var h01 = -2 * u3 + 3 * u2;
+    var h11 = u3 - u2;
+    var U = unitsOf(lla);
+    var v = [0, 0, 0];
+    for (var c = 0; c < 3; c++) {
+      var p0 = U[3 * i0 + c];
+      var p1 = U[3 * k + c];
+      var p2 = U[3 * (k + 1) + c];
+      var p3 = U[3 * i3 + c];
+      v[c] = h00 * p1 + h10 * ((p2 - p0) / d1) + h01 * p2 + h11 * ((p3 - p1) / d2);
+    }
+    var a0 = lla[i0][2];
+    var a1 = lla[k][2];
+    var a2 = lla[k + 1][2];
+    var a3 = lla[i3][2];
+    var alt = h00 * a1 + h10 * ((a2 - a0) / d1) + h01 * a2 + h11 * ((a3 - a1) / d2);
+    var r = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    return [Math.asin(v[2] / r) / D2R, wrapLon(Math.atan2(v[1], v[0]) / D2R), alt];
   }
 
   // Interpolação linear de um array amostrado a cada STEP (footprint, el, distância).
@@ -214,6 +337,14 @@
     t0 = Math.max(0, t0);
     t1 = Math.min(DURATION, t1);
     if (t1 <= t0) return [sampleAt(lla, t0)];
+    if (STEP > DENSE_S) {
+      // S6-02: passo grande (cenas de vários dias): pontos interpolados a cada DENSE_S, para o
+      // traço seguir a curva entre as amostras
+      var dense = [];
+      for (var tt = t0; tt < t1; tt += DENSE_S) dense.push(sampleAt(lla, tt));
+      dense.push(sampleAt(lla, t1));
+      return dense;
+    }
     var pts = [sampleAt(lla, t0)];
     var k0 = Math.floor(t0 / STEP) + 1;
     var k1 = Math.ceil(t1 / STEP) - 1;
@@ -738,8 +869,8 @@
   }
 
   // S5-06: grade do dia: os nós ascendentes já percorridos pelos membros visíveis, marcados no
-  // equador com a cor do satélite. Devolve quantas das N trilhas da grade já foram percorridas
-  // (nó arredondado à trilha mais próxima, contada a partir do primeiro nó de S1).
+  // equador com a cor do satélite. Devolve quantas das trilhas da grade diária (N·P/D) já foram
+  // percorridas (nó arredondado à trilha mais próxima, contada a partir do primeiro nó de S1).
   function drawNodes(t, w, h, dpr) {
     var ref = members[0].nodes;
     var lon0 = ref && ref.lon_deg.length ? ref.lon_deg[0] : 0;
@@ -752,8 +883,9 @@
       ctx.beginPath();
       for (var i = 0; i < s.nodes.t_s.length && s.nodes.t_s[i] <= t; i++) {
         var lon = s.nodes.lon_deg[i];
-        var k = Math.round((lon - lon0) / CONST.grid_deg);
-        seen[((k % CONST.n_revs) + CONST.n_revs) % CONST.n_revs] = true;
+        // S6-02: trilha da grade diária (273 com 18 satélites; 91 com 6 ou em cenas antigas)
+        var k = Math.round((lon - lon0) / TRACK_GRID_DEG);
+        seen[((k % TRACKS) + TRACKS) % TRACKS] = true;
         var x = mapX(lon, w);
         ctx.moveTo(x, y - 7 * dpr);
         ctx.lineTo(x, y + 7 * dpr);
@@ -848,8 +980,8 @@
       mapNote.textContent =
         tracksSeen === null
           ? ""
-          : " · grade: " + tracksSeen + " de " + CONST.n_revs + " trilhas percorridas (ciclo de " +
-            CONST.n_days + " dias)";
+          : " · grade: " + tracksSeen + " de " + TRACKS + " trilhas percorridas (" +
+            fmtNum(TRACK_GRID_DEG, 2) + "° no equador)";
     }
   }
 
@@ -895,13 +1027,80 @@
   }
 
   var groupBox = null;
-  function syncGroupBox() {
-    if (!groupBox) return;
-    var on = members.filter(function (s) {
+  var familyBoxes = []; // S6-02: [{box, sats}] das subdivisões por família
+  function syncBox(box, list) {
+    var on = list.filter(function (s) {
       return s.visible;
     }).length;
-    groupBox.checked = on === members.length;
-    groupBox.indeterminate = on > 0 && on < members.length;
+    box.checked = on === list.length;
+    box.indeterminate = on > 0 && on < list.length;
+  }
+  function syncGroupBox() {
+    if (!groupBox) return;
+    syncBox(groupBox, members);
+    familyBoxes.forEach(function (fb) {
+      syncBox(fb.box, fb.sats);
+    });
+  }
+
+  function familyName(f) {
+    return FAMILY_LETTERS.charAt(f) || String(f);
+  }
+
+  // S6-02: subdivisão "Família A/B/C" da legenda: caixa que liga/desliga a família e botão que
+  // recolhe a lista (recolher só esconde as linhas; os satélites continuam no globo e no mapa).
+  function legendFamily(f) {
+    var fam = members.filter(function (s) {
+      return s.family === f;
+    });
+    if (!fam.length) return;
+    var li = document.createElement("li");
+    li.className = "group subgroup";
+    li.innerHTML =
+      '<button class="fam-toggle" type="button"></button><input type="checkbox">' +
+      '<span class="gname"></span><span class="fam-note"></span>';
+    var names = fam.map(function (s) {
+      return s.name;
+    });
+    li.querySelector(".gname").textContent =
+      "Família " + familyName(f) + " · " + names[0] + ", " + names[1] + ", …, " + names[names.length - 1];
+    li.querySelector(".fam-note").textContent =
+      f === 0
+        ? "as posições da constelação de " + fam.length
+        : "a " + f + "/" + FAMILIES + " de passo de grade a oeste da família A";
+    var box = li.querySelector("input");
+    box.title = "Mostrar / ocultar a família " + familyName(f);
+    box.addEventListener("change", function () {
+      fam.forEach(function (s) {
+        s.visible = box.checked;
+        s.checkbox.checked = box.checked;
+      });
+      syncGroupBox();
+      render();
+    });
+    familyBoxes.push({ box: box, sats: fam });
+    legend.appendChild(li);
+    var items = fam.map(function (s) {
+      var item = legendItem(s);
+      item.classList.add("fam-item");
+      legend.appendChild(item);
+      return item;
+    });
+    var toggle = li.querySelector(".fam-toggle");
+    // a família do satélite selecionado começa aberta; as outras, só a A
+    var open = f === 0 || (state.selected && state.selected.member && state.selected.family === f);
+    function setOpen(o) {
+      open = o;
+      toggle.textContent = o ? "▾" : "▸";
+      toggle.title = o ? "Recolher a família " + familyName(f) : "Mostrar a família " + familyName(f);
+      items.forEach(function (it) {
+        it.hidden = !o;
+      });
+    }
+    toggle.addEventListener("click", function () {
+      setOpen(!open);
+    });
+    setOpen(open);
   }
 
   if (CONST) {
@@ -915,9 +1114,13 @@
       syncGroupBox();
       render();
     });
-    members.forEach(function (s) {
-      legend.appendChild(legendItem(s));
-    });
+    if (FAMILIES > 1) {
+      for (var f = 0; f < FAMILIES; f++) legendFamily(f);
+    } else {
+      members.forEach(function (s) {
+        legend.appendChild(legendItem(s));
+      });
+    }
     syncGroupBox();
     var others = sats.filter(function (s) {
       return !s.member;
@@ -933,10 +1136,14 @@
     layers.hidden = false;
     [
       ["showGrid", "grade do dia (nós ascendentes)"],
-      ["showSwath", "faixa alcançável (rolagem ±" + fmtNum(CONST.roll_deg || 0, 1) + "°)"],
+      [
+        "showSwath",
+        "faixa alcançável (rolagem para cobertura diária ±" + fmtNum(CONST.roll_deg || 0, 2) + "°)",
+      ],
     ].forEach(function (item) {
       var label = document.createElement("label");
-      label.innerHTML = '<input type="checkbox" checked> <span></span>';
+      label.innerHTML = '<input type="checkbox"> <span></span>';
+      label.querySelector("input").checked = state[item[0]];
       label.querySelector("span").textContent = item[1];
       label.querySelector("input").addEventListener("change", function (e) {
         state[item[0]] = e.target.checked;
@@ -948,6 +1155,11 @@
     Array.prototype.forEach.call(document.querySelectorAll(".k-const"), function (el) {
       el.hidden = false;
     });
+    if (FAMILIES > 1) {
+      Array.prototype.forEach.call(document.querySelectorAll(".k-fam"), function (el) {
+        el.hidden = false;
+      });
+    }
   } else {
     sats.forEach(function (s) {
       legend.appendChild(legendItem(s));
@@ -964,6 +1176,8 @@
     beta: document.getElementById("info-beta"),
     light: document.getElementById("info-light"),
     phase: document.getElementById("info-phase"),
+    family: document.getElementById("info-family"),
+    roll: document.getElementById("info-roll"),
     maint: document.getElementById("info-maint"),
     dv: document.getElementById("info-dv"),
   };
@@ -1007,18 +1221,27 @@
 
   // S5-06: fase em relação a S1, próxima correção do traço e Δv/ano (resumo do S5-05).
   function updateConstellationInfo(s, t) {
+    info.roll.textContent = CONST.roll_deg === null ? "—" : "±" + fmtNum(CONST.roll_deg, 2) + "°";
     if (!s.member) {
       info.phase.textContent = "— (fora da constelação)";
+      info.family.textContent = "—";
       info.maint.textContent = "—";
       info.dv.textContent = "—";
       return;
     }
+    info.family.textContent =
+      familyName(s.family) + " (" + (s.family === 0 ? "posições da constelação de 6" :
+        s.family + "/" + FAMILIES + " de passo a oeste") + ")";
     if (s === members[0]) {
       info.phase.textContent = "0,0° (referência)";
     } else {
+      // S6-02: em passos de 360°/P (20° com 18 satélites, 60° com 6)
       var du = phaseDeg(s, t);
+      var stepDeg = 360 / members.length;
+      var n = Math.round(Math.abs(du) / stepDeg);
       info.phase.textContent =
-        fmtNum(du, 1) + "° (" + (du < 0 ? "atrás de " : "à frente de ") + members[0].name + ")";
+        fmtNum(du, 1) + "° (" + n + " × " + fmtNum(stepDeg, 0) + "° " +
+        (du < 0 ? "atrás de " : "à frente de ") + members[0].name + ")";
     }
     var m = s.maintenance;
     if (!m) {
@@ -1211,8 +1434,33 @@
     ")" +
     (CONST
       ? " · " + CONST.name + ": " + CONST.n_revs + " voltas em " + CONST.n_days +
-        " dias, grade de " + fmtNum(CONST.grid_deg, 3) + "° no equador"
+        " dias, grade de " + fmtNum(CONST.grid_deg, 3) + "° no equador" +
+        (TRACKS !== CONST.n_revs
+          ? "; com " + members.length + " satélites, " + TRACKS + " trilhas por dia (" +
+            fmtNum(TRACK_GRID_DEG, 3) + "°)"
+          : "")
       : "");
+
+  // S6-02: seletor de variantes (só com meta.variants): navega para o arquivo irmão levando o
+  // estado no hash (instante, velocidade, camadas, satélites e seleção).
+  var variantsEl = document.getElementById("variants");
+  if (VARIANTS && VARIANTS.length > 1) {
+    var currentId = CONST ? "p" + members.length : null;
+    variantsEl.hidden = false;
+    VARIANTS.forEach(function (v) {
+      var b = document.createElement("button");
+      b.className = "btn" + (v.id === currentId ? " active" : "");
+      b.textContent = v.label;
+      b.title = v.id === currentId ? "Cena atual" : "Abrir " + v.label + " no mesmo instante";
+      b.dataset.variant = v.id;
+      if (v.id !== currentId) {
+        b.addEventListener("click", function () {
+          window.location.href = v.href + stateHash();
+        });
+      }
+      variantsEl.appendChild(b);
+    });
+  }
 
   var speedsEl = document.getElementById("speeds");
   SPEEDS.forEach(function (v) {
@@ -1233,6 +1481,7 @@
     state.playing = p;
     playBtn.textContent = p ? "❚❚" : "▶";
   }
+  setPlaying(state.playing); // S6-02: o hash pode chegar pausado
   playBtn.addEventListener("click", function () {
     setPlaying(!state.playing);
   });
@@ -1270,14 +1519,46 @@
     render();
   }
 
+  // S6-02: tempo médio de update3D (montagem dos dados do globo) e do quadro 2D nos últimos
+  // FRAME_WINDOW quadros, em SATSIM_VIEWER.stats e em <body data-map2d-ms> (medição headless).
+  var FRAME_WINDOW = 120;
+  var stats = { frames: 0, map2d_ms: 0, update3d_ms: 0 };
+  var acc2d = [];
+  var acc3d = [];
+  function recordFrame(ms3d, ms2d) {
+    acc2d.push(ms2d);
+    acc3d.push(ms3d);
+    if (acc2d.length > FRAME_WINDOW) {
+      acc2d.shift();
+      acc3d.shift();
+    }
+    stats.frames += 1;
+    if (stats.frames % 10 === 0) {
+      var mean = function (a) {
+        return a.reduce(function (x, y) {
+          return x + y;
+        }, 0) / a.length;
+      };
+      stats.map2d_ms = mean(acc2d);
+      stats.update3d_ms = mean(acc3d);
+      document.body.dataset.map2dMs = stats.map2d_ms.toFixed(3);
+      document.body.dataset.update3dMs = stats.update3d_ms.toFixed(3);
+      document.body.dataset.frames = String(stats.frames);
+    }
+  }
+
   function render(wallMs) {
     wallMs = wallMs || performance.now();
     var t = state.simTime;
     sats.forEach(function (s) {
       s.now = sampleAt(s.lla, t);
     });
+    var t0 = performance.now();
     update3D(t);
+    var t1 = performance.now();
     drawMap(t, wallMs);
+    var t2 = performance.now();
+    recordFrame(t1 - t0, t2 - t1);
     clockEl.textContent = fmtUtc(EPOCH_MS + t * 1000);
     if (!state.dragging) timeline.value = String(t);
     if (wallMs - lastReadout > 100) {
@@ -1303,8 +1584,53 @@
   if (state.selected) state.selected.legendEl.classList.add("selected");
   buildPassList();
 
+  // S6-02: #bench=N mede o custo do quadro sem depender do WebGL: N quadros em instantes
+  // espalhados pela janela, com tudo ligado (ISS e Sentinel-2A também). Cada quadro 2D é medido
+  // com a rasterização do canvas forçada (getImageData de 1 pixel), para que nenhum quadro pague
+  // pelos anteriores; é um limite superior (no Chrome headless a rasterização é por software).
+  // Mede também o JavaScript de montagem do globo (update3D). Resultado em <body data-bench-*>
+  // [ms]. A renderização WebGL do globo fica pausada durante a medição.
+  function runBench(n) {
+    sats.forEach(function (s) {
+      s.visible = true;
+    });
+    setPlaying(false);
+    if (typeof globe.pauseAnimation === "function") globe.pauseAnimation();
+    var b2d = [];
+    var b3d = [];
+    for (var i = 0; i < n; i++) {
+      state.simTime = ((i + 0.5) / n) * DURATION;
+      var a = performance.now();
+      sats.forEach(function (s) {
+        s.now = sampleAt(s.lla, state.simTime);
+      });
+      update3D(state.simTime);
+      var b = performance.now();
+      drawMap(state.simTime, b);
+      ctx.getImageData(0, 0, 1, 1);
+      b3d.push(b - a);
+      b2d.push(performance.now() - b);
+    }
+    var mean = function (arr) {
+      return arr.reduce(function (x, y) {
+        return x + y;
+      }, 0) / arr.length;
+    };
+    var sorted = b2d.slice().sort(function (x, y) {
+      return x - y;
+    });
+    document.body.dataset.benchFrames = String(n);
+    document.body.dataset.benchObjects = String(sats.length);
+    document.body.dataset.benchMap2dMs = mean(b2d).toFixed(3);
+    document.body.dataset.benchMap2dP95Ms = sorted[Math.floor(0.95 * (n - 1))].toFixed(3);
+    document.body.dataset.benchMap2dMaxMs = sorted[n - 1].toFixed(3);
+    document.body.dataset.benchUpdate3dMs = mean(b3d).toFixed(3);
+  }
+  if (state.bench) runBench(state.bench);
+
   var lastWall = null;
   function frame(wallMs) {
+    if (state.bench) return; // S6-02: a medição desenha os seus próprios quadros
     if (lastWall !== null && state.playing && !state.dragging) {
       var dt = Math.min(0.25, (wallMs - lastWall) / 1000);
       state.simTime += dt * state.speed;
@@ -1316,5 +1642,6 @@
   }
   requestAnimationFrame(frame);
 
-  window.SATSIM_VIEWER = { state: state, globe: globe, render: render }; // inspeção/depuração
+  // inspeção/depuração e medição de desempenho (S6-02)
+  window.SATSIM_VIEWER = { state: state, globe: globe, render: render, stats: stats, sampleAt: sampleAt };
 })();

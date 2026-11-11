@@ -43,6 +43,7 @@ ruff format .        # formatação (use --check para só verificar)
 ```
 pyproject.toml               empacotamento, pytest e ruff
 .github/workflows/ci.yml     CI: lint + testes em Python 3.11 e 3.12
+.github/workflows/pages.yml  GitHub Pages: testes + build do site + deploy (S6-03)
 docs/adr/                    decisões de arquitetura (ADR)
 docs/creditos.md             créditos e licenças dos assets do viewer e dos TLEs
 docs/semana3_fechamento.md   fechamento da Semana 3 e revisão do planejamento
@@ -50,6 +51,7 @@ docs/codigo_explicado/       explicação detalhada do código (HTML; o PDF é g
 src/satsim/                  código da biblioteca
 src/satsim/app/              GUI: exportação da cena (Python) e viewer (static/)
 scripts/build_demo.py        gera a demo visual demo/index.html
+scripts/build_site.py        monta o site estático site/ (página inicial + 4 cenas)
 scripts/                     também: relatório da Semana 2, traço no solo, Tabela 1 (SSO),
                              TLE da ISS (fetch_tle.py)
 reports/s2_comparacao/       figuras e relatório da Semana 2 (versionados)
@@ -92,6 +94,32 @@ com `--days 6`, com oito satélites:
   Sentinel-2A ficam em "Outros satélites", desligados no início. Com a constelação, o círculo de
   visibilidade da estação aparece só para o satélite selecionado.
 
+### 6 ou 18 satélites (Semana 6)
+
+![O mesmo instante com 6 e com 18 satélites: com 18, o mapa conta 182 de 273 trilhas (3 × 61 de 91), os traços formam um feixe três vezes mais denso e a faixa alcançável é bem mais estreita](docs/img/demo_constelacao18.png)
+
+A barra superior ganha o seletor **"6 satélites | 18 satélites"**. A troca abre o arquivo irmão
+(`demo/index.html` ↔ `demo/constelacao18.html`, ou `ciclo_6dias.html` ↔ `ciclo_6dias_18.html`)
+**no mesmo instante**, com a mesma velocidade, as mesmas camadas e o satélite correspondente
+selecionado (S4 de 18 ↔ S2 de 6). Funciona com duplo clique, sem servidor.
+
+- **18 satélites no mesmo plano**, 20° entre vizinhos: cada um passa 5,3 min depois do anterior
+  e deixa o seu traço um terço de passo de grade a oeste. São **273 trilhas por dia** (1,32° no
+  equador), e não 3 passagens sobre as mesmas 91. O título do mapa conta "grade: X de 273".
+- **Faixa** com a rolagem que fecha a grade diária: **±8,18°** com 18, contra ±23,2° com 6. A
+  demonstração da semana: com a camada "grade do dia" ligada, alterne entre 6 e 18 no mesmo
+  instante e veja as trilhas triplicarem enquanto a faixa encolhe.
+- **Legenda por família:** "Constelação 91/6 · 18 satélites" com uma caixa para todos e três
+  famílias recolhíveis. A família A (S1, S4, …, S16) ocupa as posições da constelação de 6, com
+  as mesmas cores; B e C são cópias deslocadas de 1/3 e 2/3 de passo, com as cores escurecidas e
+  clareadas.
+- **Painel Informações:** fase Δu em passos de 20° (S2 = −20°), família, rolagem para cobertura
+  diária, próxima correção e Δv/ano (os mesmos dos 6: mesma órbita, mesmo arrasto).
+- **Desempenho:** com 20 objetos (18 + ISS + Sentinel-2A), o quadro 2D leva ≈ 6 ms no Chrome
+  headless com rasterização por software (≈ 4 ms de JavaScript). A posição entre amostras é uma
+  interpolação Hermite cúbica no vetor unitário (erro ≤ 1,1 km com passo de 120 s), o que permite
+  a cena de 6 dias com 18 satélites caber em 11,6 MB.
+
 E, para a estação de São Bento do Sapucaí (elevação mínima de 10°):
 
 - **painel "ISS × São Bento do Sapucaí"**: elevação, azimute e distância atuais e o estado,
@@ -122,16 +150,23 @@ As passagens do viewer são as mesmas de `scripts/list_passes.py` (a mesma funç
 ```bash
 python scripts/build_demo.py              # constelação + ISS e Sentinel-2A reais, 24 h (~7 MB, ~10 s)
 python scripts/build_demo.py --days 6     # o ciclo inteiro de 6 dias, passo de 60 s (~11 MB, ~40 s)
+python scripts/build_demo.py --sats 18    # 18 satélites → demo/constelacao18.html (~11 MB, ~30 s)
+python scripts/build_demo.py --all        # as quatro cenas ligadas pelo seletor 6 | 18 (~3 min)
 python scripts/build_demo.py --offline    # sem rede: cache local ou TLE embarcado
 python scripts/build_demo.py --tle-file tests/data/iss_sample.tle --start tle-epoch   # reprodutível
 ```
+
+O seletor "6 satélites | 18 satélites" só aparece nas cenas geradas com `--all` (as quatro têm a
+mesma época e se referenciam por caminhos relativos). Passos e tamanhos: 6 satélites, 20 s em 1
+dia (6,7 MB) e 60 s em 6 dias (11,2 MB); 18 satélites, 20 s em 1 dia (11,4 MB) e 120 s em 6 dias
+(11,6 MB).
 
 **Abrir:** dê dois cliques em `demo/index.html`, ou rode `xdg-open demo/index.html` no Linux
 (`open` no macOS). Não precisa de servidor nem de internet: biblioteca, textura e cena vão
 embutidas no arquivo. A rede só é usada ao **gerar** a demo, para baixar um TLE recente, e é
 opcional. A pasta `demo/` não é versionada; gere de novo para atualizar a ISS.
 
-**Adicionar um satélite:** acrescente-o à lista `satellites` montada em `main` de
+**Adicionar um satélite:** acrescente-o à lista `satellites` montada em `build_demo` de
 [`scripts/build_demo.py`](scripts/build_demo.py): um `SceneSatellite(id, nome, cor,
 propagador)` ou um `Satellite` com qualquer propagador (a constelação, em
 `build_constellation`, usa a receita "elementos médios → `mean_to_osculating` → Cowell
@@ -165,6 +200,63 @@ subponto é geodésico WGS84 (latitude da vertical local, altitude acima do elip
 aqui é visibilidade por rádio (satélite acima de 10°); ver a ISS a olho nu, com o Sol abaixo do
 horizonte e a ISS iluminada, entra na Semana 4. Os créditos e licenças dos assets estão em
 [`docs/creditos.md`](docs/creditos.md).
+
+## Site na web (Semana 6)
+
+**Endereço previsto:** <https://renatodacostasantos.github.io/satellite_constelation_simulation/>
+(em geral, `https://<usuário>.github.io/<repositório>/`). Ele só existe depois da publicação
+descrita abaixo.
+
+O site é estático, sem servidor de aplicação. Tem uma página inicial leve (≈ 6 kB), que explica
+o projeto, a órbita 91/6 e a diferença entre 6 e 18 satélites. Ela tem quatro botões, um para
+cada cena:
+
+- 6 satélites, 1 dia;
+- 18 satélites, 1 dia;
+- 6 satélites, ciclo de 6 dias;
+- 18 satélites, ciclo de 6 dias.
+
+A página também mostra a imagem da demo e a data e a fonte dos TLEs. As cenas são as mesmas da
+demo (`build_demo.build_all`, o equivalente a `--all`), com o seletor 6 | 18. Todos os links
+são relativos e nada é carregado de fora, então o mesmo `site/` funciona no GitHub Pages, num
+servidor local ou em `file://`. O Pages serve os arquivos com compressão, então as cenas de
+≈ 11 MB chegam menores ao navegador.
+
+```
+site/index.html                 página inicial
+site/img/demo_constelacao18.png imagem da demo
+site/cenas/index.html           6 satélites · 1 dia
+site/cenas/constelacao18.html   18 satélites · 1 dia
+site/cenas/ciclo_6dias.html     6 satélites · ciclo de 6 dias
+site/cenas/ciclo_6dias_18.html  18 satélites · ciclo de 6 dias
+```
+
+**Gerar e ver localmente** (sem rede, ≈ 3 min; `site/` não é versionado):
+
+```bash
+python scripts/build_site.py --offline     # imprime o tamanho de cada arquivo e o total
+python -m http.server -d site              # abra http://localhost:8000/
+```
+
+Sem `--offline`, os TLEs da ISS e do Sentinel-2A vêm da CelesTrak. Se a rede falhar, o build
+continua com o cache ou com os TLEs embutidos no pacote, e a página inicial mostra um aviso com
+a fonte e a idade do TLE.
+
+**Publicar** (feito por você; o Claude Code não faz push):
+
+1. No GitHub, abra **Settings → Pages → Build and deployment → Source** e escolha **GitHub
+   Actions**. Isso só precisa ser feito uma vez.
+2. Faça merge na `main` e o push. O workflow
+   [`.github/workflows/pages.yml`](.github/workflows/pages.yml) roda em todo push na `main`, e
+   também à mão em **Actions → Pages → Run workflow**. Ele tem dois jobs:
+   - **test**: `ruff check .`, `ruff format --check .` e `pytest`, em Python 3.11;
+   - **deploy**: só roda se o `test` passar. Ele executa `python scripts/build_site.py` com rede
+     e fallback, depois `actions/upload-pages-artifact` e `actions/deploy-pages`.
+
+   O workflow usa só actions oficiais (`actions/*`) e nenhum segredo: o token OIDC do job basta.
+3. O endereço aparece no resumo do job **deploy** e em Settings → Pages. O site é refeito a cada
+   push, então a ISS fica com o TLE do dia do deploy. Para atualizar sem commit, rode o workflow
+   à mão.
 
 ## Relatório da Semana 2
 
