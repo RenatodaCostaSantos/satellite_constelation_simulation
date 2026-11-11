@@ -5,7 +5,8 @@
 Proposto — 2026-09-29. Atualizado na S5-06 (2026-11-06): `Satellite` e `Constellation`
 implementados (S5-01); constelação na cena (S5-06). Atualizado na S6-02 (2026-11-10):
 `ConstellationDesign` (S6-01), R7 concluído (6 ou 18 satélites pelo seletor do viewer), variantes
-e famílias na cena, interpolação Hermite no viewer.
+e famílias na cena, interpolação Hermite no viewer. Atualizado na S6-03 (2026-11-11): deploy
+como site estático no GitHub Pages (seção Deploy).
 
 ## Contexto
 
@@ -358,8 +359,9 @@ Aceita qualquer `Propagator` (Kepler, MeanJ2, Cowell, SGP4), cada um com a sua �
 
 **Decisão:** viewer HTML/JS estático e autocontido: **globe.gl (UMD, versão fixada)** no 3D e
 **canvas 2D** no mapa equiretangular com a mesma textura, alimentados pelo JSON do Python. É a
-única opção que atende R1, R2 e R9–R10 juntos, sem servidor nem token. Na **Semana 6**, um
-serviço Python (Streamlit ou FastAPI) hospeda o mesmo viewer, sem mudá-lo. **Atualização
+única opção que atende R1, R2 e R9–R10 juntos, sem servidor nem token. O plano original era
+hospedar o viewer num serviço Python (Streamlit ou FastAPI) na Semana 6; a S6-03 o publica como
+**site estático** (seção Deploy), sem servidor de aplicação. **Atualização
 S6-02:** as cenas de 6 e 18 satélites são **arquivos irmãos**, não um arquivo com as duas (juntas
 passariam de 15 MB), ligados por `meta.variants` e links relativos; navegar entre arquivos
 locais funciona offline, sem servidor.
@@ -367,6 +369,43 @@ locais funciona offline, sem servidor.
 usamos scripts clássicos (UMD) e embutimos textura (data URI) e cena (`<script>`) no
 `demo/index.html`. **Vista 3D:** Terra fixa (ECEF) a partir de `lla` nesta fase; modo inercial
 (ECI) no backlog, já suportado pelo contrato (`eci_km`, `earth`).
+
+### Deploy (S6-03)
+
+**Decisão:** o simulador é publicado como **site estático no GitHub Pages**. Não há servidor de
+aplicação: a física já sai de Python como cena, e o viewer só desenha.
+
+- **Build:** `scripts/build_site.py [--offline] [-o site/]` monta `site/`, que não é versionado:
+  - `index.html`: uma página inicial leve (≈ 6 kB, sem cena nem script), com o texto para
+    leigos, quatro botões, a imagem da demo e a data e a fonte dos TLEs;
+  - `img/demo_constelacao18.png`: a imagem da demo;
+  - `cenas/`: as quatro cenas de `build_demo.build_all`. São as mesmas da demo `--all`, ligadas
+    por `meta.variants`.
+
+  O script imprime o tamanho de cada arquivo e o total, e falha se a página inicial tiver
+  ≥ 1 MB ou se alguma cena tiver ≥ 15 MB.
+- **Links relativos, nada externo:** os `href`/`src` são relativos e as cenas embutem CSS, JS,
+  globe.gl e textura. O mesmo `site/` funciona em `https://<usuário>.github.io/<repositório>/`
+  (um subcaminho, por isso nada começa com `/`), num `python -m http.server` local e em
+  `file://`. `tests/test_build_site.py` verifica que todo link interno aponta para um arquivo
+  existente dentro do site.
+- **TLEs:** sem `--offline`, o build usa `get_tle`, na ordem CelesTrak → cache → embutidos no
+  pacote. Se a CelesTrak falhar no CI, o site é montado com o fallback e a página inicial avisa,
+  com a fonte e a época do TLE. Para a constelação 91/6 isso não importa, porque ela não depende
+  de TLE.
+- **Workflow** `.github/workflows/pages.yml`, que roda em push na `main` e por `workflow_dispatch`:
+  - job `test`: Python 3.11, `pip install -e .[dev]`, ruff (check e format) e pytest;
+  - job `deploy`, com `needs: test`: `build_site.py`, depois `actions/configure-pages`,
+    `actions/upload-pages-artifact` e `actions/deploy-pages`.
+
+  Usa só actions oficiais (`actions/*`), sem segredos. As permissões `pages: write` e
+  `id-token: write` ficam apenas no job de deploy, e `concurrency: pages` evita dois deploys ao
+  mesmo tempo. O `ci.yml` continua rodando lint e testes em 3.11 e 3.12 em todo push.
+- **Tamanho:** cerca de 41 MB por deploy (cenas de 6,7 a 11,6 MB), dentro dos limites do Pages
+  (100 MB por arquivo, 1 GB por site). O Pages serve com compressão (gzip), então a transferência
+  é menor que o arquivo.
+- **Fora do escopo:** servidor de aplicação, propagação no navegador, contas de usuário e
+  domínio próprio. A ativação do Pages (Source: GitHub Actions) e o push ficam com o mantenedor.
 
 ## Alternativas rejeitadas
 
@@ -405,7 +444,7 @@ usamos scripts clássicos (UMD) e embutimos textura (data URI) e cena (`<script>
 ## Consequências
 
 - Positivas: trocar de propagador ou ir de 1 a 18 satélites não muda a análise nem o viewer;
-  números verificáveis contra PDFs e Skyfield; o mesmo viewer serve à demo offline e ao deploy.
+  números verificáveis contra PDFs e Skyfield; o mesmo viewer e as mesmas cenas servem à demo offline e ao site no GitHub Pages (S6-03).
 - Negativas: contratos de shape e da cena exigem testes de vetorização e de export em cada card;
   o HTML da demo cresce com a janela e o número de satélites; as simplificações de quadro e tempo
   limitam a precisão a centenas de metros (aceitável para visibilidade).

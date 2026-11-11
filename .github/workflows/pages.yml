@@ -1,0 +1,85 @@
+# Publica o simulador no GitHub Pages (S6-03): testes → build do site → deploy.
+# Ativação (uma vez): Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# Site: https://<usuário>.github.io/<repositório>/ (ver README, seção "Site na web").
+# Só actions oficiais (actions/*) e nenhum segredo: o deploy usa o token OIDC do próprio job.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# um deploy por vez; um push novo não cancela o deploy em andamento
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff check)
+        run: ruff check .
+
+      - name: Format (ruff format --check)
+        run: ruff format --check .
+
+      - name: Tests (pytest)
+        run: pytest
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # TLEs da CelesTrak; se a rede falhar, get_tle cai nos TLEs embutidos no pacote e a
+      # página inicial avisa (o build não falha por isso)
+      - name: Build site
+        run: python scripts/build_site.py -o site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

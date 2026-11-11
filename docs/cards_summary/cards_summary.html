@@ -23,142 +23,77 @@
 </head>
 <body>
 
-<h1>Resumo dos cards — Semana 5</h1>
-<div class="subtitle">Constelação de 6 satélites em órbita heliossíncrona (SSO) com repetição
-91/6, simulada no pacote <code>satsim</code>. Cada bullet resume, em linguagem simples, o que o
-card acrescentou.</div>
+<h1>Resumo dos cards — Semana 6</h1>
+<div class="subtitle">Constelação de 18 satélites (P = 3·D) na órbita 91/6, viewer com escolha 6
+ou 18 satélites e publicação do simulador na web. Última semana do projeto <code>satsim</code>.
+Cada bullet resume, em linguagem simples, o que o card acrescentou.</div>
 
 <div class="box">
-<b>Contexto em uma frase:</b> seis satélites dividem a mesma órbita, espaçados igualmente, e o
-traço deles no solo se repete exatamente a cada 6 dias, depois de 91 voltas.
+<b>Contexto em uma frase:</b> com 18 satélites no mesmo plano (20° entre vizinhos), o traço no
+solo forma 273 trilhas por dia, em vez de 91, e a câmera só precisa inclinar 8,2° para ver
+qualquer ponto todo dia; o simulador agora abre num site, sem instalar nada.
 </div>
 
 <section>
-<h2>Card S5-01 · Satellite, Constellation e a constelação 91/6</h2>
+<h2>Card S6-01 · Constelação de 18 satélites: P = 3·D no Cowell completo</h2>
 <ul>
-  <li>Até a Semana 4 o código propagava um satélite por vez; este card cria a noção de
-      "satélite" e de "constelação".</li>
-  <li>A classe <code>Satellite</code> junta num só objeto o nome, a cor, os dados de arrasto e o
-      propagador (quem calcula a posição ao longo do tempo).</li>
-  <li>A classe <code>Constellation</code> agrupa vários satélites com a mesma época e calcula a
-      posição de todos de uma vez (<code>propagate</code>).</li>
-  <li>A função <code>repeat_orbit</code> encontra a altitude e a inclinação em que o traço no solo
-      se repete após 91 voltas em 6 dias.</li>
-  <li>A função <code>constellation_phases</code> distribui os 6 satélites igualmente espaçados ao
-      longo da órbita (60° entre vizinhos).</li>
-  <li>A função <code>sso_constellation</code> monta a constelação completa, já com todas as forças
-      (gravidade não esférica, Sol, Lua, radiação solar e arrasto).</li>
-  <li>O exportador da cena 3D (<code>build_scene</code>) passou a aceitar uma constelação
-      inteira, sem quebrar o formato antigo.</li>
+  <li>A nova classe <code>ConstellationDesign</code> descreve uma constelação pelo número de
+      voltas do ciclo (91), de dias (6) e de satélites (6 ou 18), e calcula dela as trilhas por
+      dia, o espaçamento da grade e a inclinação de câmera que fecha a cobertura diária.</li>
+  <li>Os desenhos prontos <code>DESIGN_91_6_P6</code> e <code>DESIGN_91_6_P18</code> montam a
+      constelação completa com <code>build</code>; o de 6 sai idêntico ao da Semana 5.</li>
+  <li>Os 18 satélites formam três "famílias" de 6: a família A (S1, S4, …, S16) ocupa exatamente
+      as posições da constelação de 6; as outras duas são cópias deslocadas de 1/3 e 2/3 do
+      espaço entre trilhas. A paleta mantém a cor de cada família e varia o tom.</li>
+  <li>Medido no Cowell completo: cada satélite cruza o equador 316,5 s depois do vizinho; em 1
+      dia são 273 trilhas uniformes, a 1,32° (≈ 147 km) uma da outra.</li>
+  <li>Com inclinação de câmera de ±8,2°, os 18 veem 100% da faixa de latitudes em 1 dia; os 6,
+      com a mesma inclinação, só 74% em 3 dias.</li>
+  <li>Com a inclinação de ±23,2°, o intervalo entre visitas quase não muda (13,8 h com 18, contra
+      14,0 h com 6): os vizinhos
+      passam com minutos de diferença, em "trens".</li>
+  <li>Na estação de São Bento do Sapucaí: 49 passagens por dia, em dois trens de 24 e 25, com até
+      dois satélites visíveis ao mesmo tempo.</li>
+  <li>O relatório <code>scripts/constellation_report.py --sats 18</code> gera os gráficos e os
+      números em <code>reports/s6_constelacao18/</code>.</li>
 </ul>
 </section>
 
 <section>
-<h2>Card S5-02 · Nós ascendentes, grade de 91 trilhas e repetição calibrada</h2>
+<h2>Card S6-02 · Visualizador com escolha 6 ou 18 satélites</h2>
 <ul>
-  <li>Este card verifica se a constelação realmente se comporta como projetado, medindo o traço
-      no solo.</li>
-  <li>A função <code>node_crossings</code> encontra os instantes e as longitudes em que o satélite
-      cruza o equador indo para o norte (nó ascendente).</li>
-  <li>A função <code>grid_metrics</code> confere se esses cruzamentos formam uma grade de 91
-      trilhas igualmente espaçadas no equador.</li>
-  <li>A função <code>repeat_closure</code> mede quanto o traço do dia 7 erra em relação ao dia 1,
-      ou seja, se o ciclo de 6 dias "fecha".</li>
-  <li>Com todas as forças, o ciclo não fecha sozinho: as perturbações mudam o período alguns
-      segundos.</li>
-  <li>A função <code>repeat_semi_major_axis_calibrated</code> corrige o semieixo maior (+19 m) até
-      o ciclo fechar no simulador completo.</li>
+  <li>A barra superior do viewer ganha o seletor <b>6 satélites | 18 satélites</b>. A troca abre
+      o arquivo irmão no mesmo instante, com a mesma velocidade, as mesmas camadas e o satélite
+      correspondente selecionado, mesmo sem servidor.</li>
+  <li>Com 18, o mapa conta "grade: X de 273 trilhas" e a faixa alcançável encolhe para ±8,2°.</li>
+  <li>A legenda agrupa os 18 em três famílias que abrem e fecham; o painel de informações mostra
+      a família e a inclinação de câmera da cobertura diária.</li>
+  <li><code>build_demo.py --all</code> gera as quatro cenas (6 ou 18 satélites × 1 dia ou 6
+      dias), cada uma abaixo de 15 MB (6,7 a 11,6 MB).</li>
+  <li>A posição entre duas amostras passou a ser calculada por uma curva suave (Hermite) em vez
+      de uma reta em latitude/longitude: o erro caiu de até 29 km para menos de 1,2 km.</li>
+  <li>O desenho de um quadro com 20 objetos leva cerca de 6 ms, folgado para uma animação suave.</li>
+  <li>O formato da cena continua compatível: campos novos são opcionais e cenas antigas abrem
+      como antes.</li>
 </ul>
 </section>
 
 <section>
-<h2>Card S5-03 · Cobertura diária e revisita</h2>
+<h2>Card S6-03 · Site estático e deploy web</h2>
 <ul>
-  <li>Este card mede quais pontos da Terra a constelação consegue observar e com que
-      frequência.</li>
-  <li>A função <code>swath_half_angle</code> calcula a largura da faixa de solo que a câmera vê
-      quando o satélite inclina (rola) para o lado.</li>
-  <li>A função <code>roll_for_half_grid</code> calcula a inclinação da câmera (≈ 23°) para que
-      faixas vizinhas se encostem e não deixem buracos.</li>
-  <li>A classe <code>TargetGrid</code> espalha pontos-alvo sobre a Terra entre as latitudes −80° e
-      +80°.</li>
-  <li>A função <code>access_times</code> lista em que instantes cada alvo é visto, com a opção de
-      exigir que o local esteja iluminado pelo Sol.</li>
-  <li>A função <code>coverage_stats</code> resume esses acessos: fração de alvos vistos e tempo
-      entre duas observações (revisita).</li>
-  <li>Resultado: 100% dos alvos entre ±80° são vistos em 1 dia; a revisita é menor perto dos
-      polos, onde as faixas se sobrepõem.</li>
-</ul>
-</section>
-
-<section>
-<h2>Card S5-04 · Plano de contatos com a estação de solo</h2>
-<ul>
-  <li>Este card responde quando e quais satélites passam sobre a estação de São Bento do Sapucaí
-      para comunicação.</li>
-  <li>A função <code>contact_plan</code> junta as passagens dos 6 satélites num só plano, em ordem
-      de horário.</li>
-  <li>A função <code>sun_elevation_deg</code> calcula a altura do Sol na estação, para marcar cada
-      passagem como "dia" ou "noite".</li>
-  <li>As passagens chegam em dois "trens": um à noite (≈ 21h30–23h30) e outro de manhã
-      (≈ 9h–11h), cada um com 8 passagens em fila.</li>
-  <li>Os trens existem porque a estação, girando com a Terra, cruza o plano da órbita só duas
-      vezes por dia.</li>
-  <li>A classe <code>ContactPlan</code> informa o tempo total de antena (≈ 97 min/dia), o maior
-      intervalo sem contato e as sobreposições.</li>
-  <li>A função <code>format_contact_plan</code> imprime o plano em horário de Brasília; o script
-      <code>list_passes.py --constellation</code> usa essa saída.</li>
-</ul>
-</section>
-
-<section>
-<h2>Card S5-05 · Manutenção da constelação: deriva do traço e do LTAN</h2>
-<ul>
-  <li>O arrasto atmosférico, a principal força dissipativa nesta altitude, faz o satélite perder
-      altura aos poucos (≈ 24 m/dia).</li>
-  <li>Com órbita mais baixa, a volta fica mais curta e o traço no solo escorrega para leste,
-      saindo da grade de 91 trilhas.</li>
-  <li>A função <code>measure_decay_rate</code> mede no simulador quanto o semieixo maior,
-      <i>a</i>, cai por dia devido ao arrasto.</li>
-  <li>A função <code>track_drift</code> calcula quanto o traço se desloca no equador; o desvio
-      cresce com o quadrado do tempo.</li>
-  <li>A função <code>time_to_deadband</code> calcula em quantos dias o traço sai da tolerância de
-      ±5 km (≈ 7 dias).</li>
-  <li>As funções <code>delta_v_for_semi_major_axis</code> e <code>track_delta_v_per_year</code>
-      calculam o empurrão do motor para corrigir <i>a</i> (≈ 4,8 m/s/ano).</li>
-  <li>A gravidade do Sol (não o arrasto) muda lentamente a inclinação, <i>i</i>, e isso altera o
-      giro do plano da órbita, Ω.</li>
-  <li>Esse giro alterado desloca o LTAN (a hora local em que o satélite cruza o equador);
-      <code>ltan_drift_from_inclination</code> calcula essa taxa.</li>
-  <li>A função <code>ltan_offset</code> calcula quantos minutos o LTAN acumula ao longo do tempo
-      (≈ 3,4 min em 1 ano, crescendo com t²).</li>
-  <li>A função <code>time_to_ltan_band</code> diz quando o LTAN sai da tolerância de ±5 min
-      (≈ 1,2 ano).</li>
-  <li><code>inclination_delta_v_per_year</code> calcula o custo de corrigir a inclinação
-      (≈ 4,75 m/s/ano), parecido com o da altitude.</li>
-  <li>A classe <code>MaintenanceStatus</code> reúne, por satélite, quando será a próxima correção
-      e quanto ela custa, pronta para exibição na cena 3D.</li>
-  <li>Conclusão: o custo anual das duas correções é parecido, mas a altitude pede uma manobra
-      por semana e a inclinação, uma por ano.</li>
-</ul>
-</section>
-
-<section>
-<h2>Card S5-06 · Interface da constelação</h2>
-<ul>
-  <li>A demo no navegador agora mostra os seis satélites da constelação 91/6, em fila no mesmo
-      plano, no lugar do satélite único das semanas anteriores.</li>
-  <li>Os nós ascendentes de cada volta viram traços no equador e um contador mostra a grade se
-      completando: 91 de 91 trilhas em um dia.</li>
-  <li>Uma faixa colorida mostra a área que cada satélite consegue observar inclinando a câmera
-      ±23°; as faixas vizinhas se encostam e cobrem o equador.</li>
-  <li>A legenda agrupa os seis em "Constelação 91/6" com uma caixa liga/desliga; ISS e
-      Sentinel-2A ficam disponíveis, mas começam desligados.</li>
-  <li>O painel mostra, para o satélite escolhido, a distância angular até S1, os dias até a
-      próxima correção do traço e o Δv por ano.</li>
-  <li>A opção <code>--days 6</code> gera o ciclo completo de 6 dias (≈ 11 MB) e a nova velocidade
-      5000x permite assisti-lo em menos de 2 minutos.</li>
-  <li>A cena continua compatível: arquivos antigos, sem constelação, abrem como antes.</li>
+  <li>O script <code>scripts/build_site.py</code> monta a pasta <code>site/</code>: uma página
+      inicial leve, com texto para leigos, e as quatro cenas.</li>
+  <li>A página inicial explica o projeto, a órbita 91/6 e a diferença entre 6 e 18 satélites, tem
+      quatro botões (6 ou 18 × 1 dia ou ciclo de 6 dias), a imagem da demo e a data e a fonte dos
+      TLEs.</li>
+  <li>Todos os links são relativos e nada vem de fora: o mesmo site funciona no GitHub Pages, num
+      servidor local ou abrindo o arquivo direto.</li>
+  <li>Se a CelesTrak não responder na montagem, o site usa os TLEs guardados no pacote e a
+      página inicial avisa.</li>
+  <li>O workflow <code>.github/workflows/pages.yml</code> roda os testes e, se passarem, monta o
+      site e o publica no GitHub Pages, só com actions oficiais e sem segredos.</li>
+  <li>O README explica como ativar o Pages e publicar; o push e a ativação ficam com o
+      mantenedor.</li>
 </ul>
 </section>
 

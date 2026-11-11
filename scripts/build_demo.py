@@ -294,6 +294,24 @@ def build_demo(
     return scene
 
 
+def build_all(
+    out_dir: Path, tle: Tle, source: str, start: datetime, sentinel: SceneSatellite | None
+) -> dict[tuple[int, int], Path]:
+    """As quatro cenas de ``--all`` (P em ``CONSTELLATION_DESIGNS`` × ``ALL_DAYS``) em
+    ``out_dir``, ligadas como variantes; devolve o arquivo de cada (P, dias). Usada também por
+    scripts/build_site.py (S6-03)."""
+    outputs: dict[tuple[int, int], Path] = {}
+    for n_sats in sorted(CONSTELLATION_DESIGNS):
+        # uma constelação por P: a cena de 6 dias reaproveita a integração da de 1 dia
+        constellation = build_constellation(start, n_sats=n_sats)
+        for days in ALL_DAYS:
+            output = default_output(n_sats, days, out_dir)
+            build_demo(output, tle, source, start, constellation, sentinel, days,
+                       variants_for(days))  # fmt: skip
+            outputs[(n_sats, days)] = output
+    return outputs
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-o", "--output", type=Path, default=None,
@@ -324,12 +342,7 @@ def main(argv: list[str] | None = None) -> None:
     start = round_ms(scene_start(args.start, tle))
     sentinel = sentinel_2a(start, args.offline, args.cache_dir)
     if args.all:
-        for n_sats in sorted(CONSTELLATION_DESIGNS):
-            # uma constelação por P: a cena de 6 dias reaproveita a integração da de 1 dia
-            constellation = build_constellation(start, n_sats=n_sats)
-            for days in ALL_DAYS:
-                build_demo(default_output(n_sats, days, args.out_dir), tle, source, start,
-                           constellation, sentinel, days, variants_for(days))  # fmt: skip
+        build_all(args.out_dir, tle, source, start, sentinel)
         output = default_output(6, 1, args.out_dir)
     else:
         output = args.output or default_output(args.sats, args.days, args.out_dir)
