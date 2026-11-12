@@ -165,7 +165,12 @@ Acrescente-o à lista `satellites` montada em `build_demo` de
 propagador)` com qualquer propagador. Por exemplo, com elementos médios de J2:
 
 ```python
-SceneSatellite("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator(KeplerianElements(7200e3, 0.01, math.radians(30), math.radians(200), 0.0, math.radians(90)), start)),
+elements = KeplerianElements(
+    7200e3, 0.01, math.radians(30), math.radians(200), 0.0, math.radians(90)
+)
+satellites.append(
+    SceneSatellite("kep2", "Quarto (i = 30°)", "#b26bff", MeanJ2Propagator(elements, start))
+)
 ```
 
 O visualizador lê quantos satélites houver na cena, e cada um ganha o seu footprint e as suas
@@ -290,10 +295,10 @@ from satsim.passes import find_passes, format_passes
 from satsim.propagators import SGP4Propagator
 from satsim.tle import get_tle
 
-result = get_tle()                      # ISS: cache → CelesTrak → TLE embutido
+result = get_tle()  # ISS: cache → CelesTrak → TLE embutido
 iss = SGP4Propagator(result.tle)
 
-lat, lon, alt = subpoint(iss, 0.0)      # subponto geodésico na época do TLE
+lat, lon, alt = subpoint(iss, 0.0)  # subponto geodésico na época do TLE
 print(f"{math.degrees(lat[0]):.2f}°, {math.degrees(lon[0]):.2f}°, {alt[0] / 1e3:.0f} km")
 
 passes = find_passes(iss, SAO_BENTO_DO_SAPUCAI, iss.epoch, timedelta(days=1), el_min_deg=10)
