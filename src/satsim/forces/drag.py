@@ -35,7 +35,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from satsim.constants import OMEGA_EARTH, R_EARTH
-from satsim.forces.atmosphere import ExponentialAtmosphere
+from satsim.forces.atmosphere import Atmosphere, ExponentialAtmosphere
 from satsim.geodesy import ecef_to_geodetic
 
 AltitudeModel = Literal["geodetic", "spherical"]
@@ -68,7 +68,8 @@ class DragAcceleration:
     Args:
         cd: coeficiente de arrasto C_D (≈ 2,2 em LEO, Sem3 §2.2).
         area_over_mass: A/m [m²/kg] (ISS ≈ 0,004, Sem3 §2.4).
-        atmosphere: modelo de densidade com ``density(h_m)``; padrão ``ExponentialAtmosphere()``.
+        atmosphere: modelo de densidade com ``density(h_m)`` (``Atmosphere``); padrão
+            ``ExponentialAtmosphere()``.
         altitude_model: ``"geodetic"`` (WGS84) ou ``"spherical"`` (|r| − R⊕, como nos PDFs).
         corotating: ``True`` usa v_rel = v − ω⊕ × r (Sem3 eq. 5); ``False`` usa v_rel = v.
 
@@ -80,7 +81,7 @@ class DragAcceleration:
         self,
         cd: float = 2.2,
         area_over_mass: float = 0.004,
-        atmosphere: ExponentialAtmosphere | None = None,
+        atmosphere: Atmosphere | None = None,
         altitude_model: AltitudeModel = "geodetic",
         corotating: bool = True,
     ) -> None:

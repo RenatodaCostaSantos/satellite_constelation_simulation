@@ -33,6 +33,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.optimize import least_squares
 
+from satsim.constants import MU
 from satsim.forces import AccelerationModel, DragAcceleration
 from satsim.forces.drag import AltitudeModel
 from satsim.propagators.base import Propagator
@@ -55,6 +56,7 @@ class OrbitFitResult:
     success: convergência reportada por ``least_squares``.
     epoch: época (t = 0) da referência.
     models: forças usadas (já com o arrasto ajustado, se houver).
+    mu: µ do termo central do Cowell usado no ajuste [m³/s²].
     """
 
     r0: NDArray[np.float64]
@@ -67,10 +69,12 @@ class OrbitFitResult:
     success: bool
     epoch: datetime
     models: tuple[AccelerationModel, ...]
+    mu: float = MU
 
     def propagator(self, **cowell_kwargs) -> CowellPropagator:
         """Cowell com o estado e as forças ajustados (``cowell_kwargs`` vai ao construtor)."""
-        return CowellPropagator((self.r0, self.v0), self.epoch, self.models, **cowell_kwargs)
+        kwargs = {"mu": self.mu, **cowell_kwargs}
+        return CowellPropagator((self.r0, self.v0), self.epoch, self.models, **kwargs)
 
 
 def fit_initial_state(
@@ -85,6 +89,7 @@ def fit_initial_state(
     rtol: float = 1e-10,
     atol: float = 1e-3,
     initial: tuple[ArrayLike, ArrayLike] | None = None,
+    mu: float = MU,
 ) -> OrbitFitResult:
     """Ajusta (r0, v0) e, opcionalmente, C_D·A/m do Cowell às posições de ``reference``.
 
@@ -99,6 +104,7 @@ def fit_initial_state(
         altitude_model: altitude do arrasto.
         rtol, atol: tolerâncias do DOP853 em cada propagação (as do experimento do A.8).
         initial: chute inicial (r0, v0) [m, m/s]; padrão: o estado de ``reference`` em t = 0.
+        mu: µ do termo central do Cowell [m³/s²] (ex.: ``WGS72_MU`` para as premissas do SGP4).
 
     Returns:
         ``OrbitFitResult``.
@@ -134,7 +140,7 @@ def fit_initial_state(
 
     def residuals(x: NDArray[np.float64]) -> NDArray[np.float64]:
         r0, v0, cd_a_m = unpack(x)
-        prop = CowellPropagator((r0, v0), epoch, build_models(cd_a_m), rtol=rtol, atol=atol)
+        prop = CowellPropagator((r0, v0), epoch, build_models(cd_a_m), mu=mu, rtol=rtol, atol=atol)
         r, _ = prop.propagate(t)
         res = ((r - r_ref) / _KM).ravel()
         history.append(float(np.sqrt(np.mean(np.sum(((r - r_ref) / _KM) ** 2, axis=1)))))
@@ -170,4 +176,5 @@ def fit_initial_state(
         success=bool(sol.success),
         epoch=epoch,
         models=build_models(cd_a_m),
+        mu=mu,
     )

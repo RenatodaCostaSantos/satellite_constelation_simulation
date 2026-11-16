@@ -20,6 +20,7 @@ Limites do modelo
 
 import logging
 from collections.abc import Sequence
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -27,6 +28,13 @@ from numpy.typing import ArrayLike, NDArray
 logger = logging.getLogger(__name__)
 
 FloatOrArray = float | NDArray[np.float64]
+
+
+class Atmosphere(Protocol):
+    """Modelo de densidade aceito pelo ``DragAcceleration``: ρ [kg/m³] em função de h [m]."""
+
+    def density(self, h_m: ArrayLike) -> FloatOrArray: ...
+
 
 VALLADO: tuple[tuple[float, float, float], ...] = (
     # (h0 [km], ρ0 [kg/m³], H [km]) — Vallado, exponencial por partes (Apêndice A.3 do prompt

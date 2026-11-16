@@ -85,6 +85,7 @@ def test_sample_tle_fields_a1():
     assert tle.inclination_deg == pytest.approx(ISS_TLE_A1.inclination_deg, abs=1e-12)
     assert tle.mean_motion_rev_day == pytest.approx(ISS_TLE_A1.mean_motion_rev_day, abs=1e-12)
     assert tle.bstar == pytest.approx(ISS_TLE_A1.bstar, rel=1e-12)
+    assert tle.eccentricity == pytest.approx(0.0007417, abs=1e-15)  # linha 2, "0007417"
 
 
 def test_three_and_two_lines_give_same_tle():

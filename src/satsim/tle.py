@@ -178,6 +178,11 @@ class Tle:
         return float(self.line2[8:16])
 
     @property
+    def eccentricity(self) -> float:
+        """Excentricidade média (linha 2, colunas 27–33, ponto decimal implícito)."""
+        return float("0." + self.line2[26:33])
+
+    @property
     def mean_motion_rev_day(self) -> float:
         """Movimento médio [rev/dia] (linha 2, colunas 53–63)."""
         return float(self.line2[52:63])

@@ -231,6 +231,7 @@ ativo e aceitam `--help`.
 | `compare_propagators.py` | relatório Kepler × J2 médio × Cowell ([`reports/s2_comparacao/`](reports/s2_comparacao/)) |
 | `compare_sgp4_cowell.py` | relatório Cowell com arrasto × SGP4 da ISS ([`reports/s3_arrasto/`](reports/s3_arrasto/)) |
 | `compare_high_fidelity.py` | ablação de forças do Cowell × SGP4, ISS e Sentinel-2A ([`reports/s4_alta_fidelidade/`](reports/s4_alta_fidelidade/), ~10 min) |
+| `compare_sgp4_equivalent.py` | ablação a partir do Cowell com as premissas do SGP4 (WGS-72, arrasto do B\*): verifica o integrador ([`reports/sgp4_equivalente/`](reports/sgp4_equivalente/), ~13 min) |
 | `constellation_report.py` | grade, cobertura, contatos e manutenção da constelação; `--sats 6` ([`reports/s5_constelacao/`](reports/s5_constelacao/)) ou `--sats 18` ([`reports/s6_constelacao18/`](reports/s6_constelacao18/)) |
 
 ### TLEs
